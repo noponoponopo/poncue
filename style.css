@@ -1207,6 +1207,10 @@
       border-top: 1px solid var(--border-color);
       z-index: 901;
       flex-shrink: 0;
+      position: sticky;
+      bottom: calc(var(--waveform-area-height) + var(--meter-area-height));
+      left: 0;
+      width: 100%;
     }
 
     .knob-separator {
