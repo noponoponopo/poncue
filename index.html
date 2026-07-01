@@ -57,12 +57,6 @@
         <button id="scene-settings-btn" title="シーン設定">
           <i class="fas fa-cog"></i>
         </button>
-        <label class="switch" aria-label="ダークモード切り替え">
-          <input type="checkbox" id="dark-mode-toggle" />
-          <span class="slider round"></span>
-          <span class="mode-icon"><i class="fas fa-sun"></i></span>
-          <span class="mode-icon"><i class="fas fa-moon"></i></span>
-        </label>
       </div>
     </header>
 
@@ -176,6 +170,15 @@
             <div class="waveform-setting">
               <input type="checkbox" id="waveform-toggle-checkbox" />
               <label for="waveform-toggle-checkbox">波形表示を有効化</label>
+            </div>
+            <div class="theme-setting">
+              <span>テーマ:</span>
+              <label class="switch" aria-label="ライト/ダークモード切り替え">
+                <input type="checkbox" id="dark-mode-toggle" />
+                <span class="slider round"></span>
+                <span class="mode-icon"><i class="fas fa-sun"></i></span>
+                <span class="mode-icon"><i class="fas fa-moon"></i></span>
+              </label>
             </div>
             <div class="pad-size-setting">
               <label for="pad-size-slider"

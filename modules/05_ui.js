@@ -458,7 +458,7 @@ export function createMasterEffectKnobs(allValues, onChange) {
         {
             name: 'DELAY',
             params: [
-                { key: 'delay.time',  label: 'TIME', min: 0, max: 2,    step: 0.01, unit: 's' },
+                { key: 'delay.time',  label: 'TIME', min: 0, max: 2,    step: 0.01, unit: 's', dragPixels: 600 },
                 { key: 'delay.level', label: 'MIX',  min: 0, max: 1,    step: 0.01, unit: '%' }
             ]
         }
@@ -522,9 +522,8 @@ export function createMasterEffectKnobs(allValues, onChange) {
 
                 const onWindowMove = (ev) => {
                     const delta = startY - ev.clientY;
-                    const sensitivity = spec.unit === '%' ? 400 : (spec.max - spec.min) * 8;
-                    let raw = startVal + delta / sensitivity * (spec.max - spec.min);
-                    if (spec.unit === '%') raw = startVal + delta / sensitivity;
+                    const dragPixels = spec.dragPixels ?? (spec.unit === '%' ? 400 : (spec.max - spec.min) * 8);
+                    let raw = startVal + delta / dragPixels * (spec.max - spec.min);
                     raw = Math.min(spec.max, Math.max(spec.min, raw));
                     const stepped = Math.round(raw / spec.step) * spec.step;
 

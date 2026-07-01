@@ -105,6 +105,8 @@ export function setMasterParam(dottedKey, value) {
             } else if (group === 'delay') {
                 if (param === 'level') {
                     state.masterDelayReturn?.gain?.setTargetAtTime?.(value, state.audioContext.currentTime, 0.01);
+                } else if (param === 'time') {
+                    node.delayTime.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
                 } else {
                     node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
                 }

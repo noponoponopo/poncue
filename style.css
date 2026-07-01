@@ -735,6 +735,7 @@
 
     .popup-setting,
     .sortable-setting,
+    .theme-setting,
     .waveform-setting {
       display: flex;
       align-items: center;
@@ -756,6 +757,7 @@
 
     .popup-setting label,
     .sortable-setting label,
+    .theme-setting label,
     .waveform-setting label {
       cursor: pointer;
       /* ラベルクリックでも反応するように */
@@ -1476,6 +1478,7 @@
       }
 
       .sortable-setting,
+      .theme-setting,
       .waveform-setting,
       .pad-size-setting,
       .performance-mode-setting {
