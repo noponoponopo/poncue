@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ポン出しWebアプリ</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Font Awesome CDN -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="manifest" href="manifest.json" />
+    <!-- Google tag (gtag.js) -->
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-XHL6NE7JLD"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+
+      gtag("config", "G-XHL6NE7JLD");
+    </script>
+  </head>
+
+  <body>
+    <header>
+      <h1><i class="fas fa-headphones-alt"></i> ポン出し</h1>
+      <div class="controls">
+        <button id="add-sound-btn" aria-label="現在のシーンに音声を追加">
+          <i class="fas fa-plus"></i> <span>追加</span>
+        </button>
+        <div class="master-volume-control" id="master-volume-control">
+          <i class="fas fa-volume-down"></i>
+          <input
+            type="range"
+            id="master-volume"
+            min="0"
+            max="2"
+            step="0.01"
+            value="1"
+            aria-label="マスター音量"
+          />
+          <i class="fas fa-volume-up"></i>
+        </div>
+        <button id="scene-settings-btn" title="シーン設定">
+          <i class="fas fa-cog"></i>
+        </button>
+        <label class="switch" aria-label="ダークモード切り替え">
+          <input type="checkbox" id="dark-mode-toggle" />
+          <span class="slider round"></span>
+          <span class="mode-icon"><i class="fas fa-sun"></i></span>
+          <span class="mode-icon"><i class="fas fa-moon"></i></span>
+        </label>
+      </div>
+    </header>
+
+    <main id="soundboard">
+      <!-- サウンドボタンまたはメッセージがここに挿入されます -->
+    </main>
+
+    <!-- レベルメーターと波形表示エリア -->
+    <div id="master-effect-bar"></div>
+    <div id="level-meter-area" class="no-waveform">
+      <!-- 初期状態は波形なし -->
+      <!-- レベルメーターがここに動的に追加されます -->
+    </div>
+    <div id="waveform-display-area">
+      <canvas id="waveform-canvas"></canvas>
+    </div>
+
+    <input
+      type="file"
+      id="file-input"
+      accept=".mp3,.wav,.m4a,.aac,.ogg,.opus,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/opus,audio/*"
+      style="display: none"
+      multiple
+    />
+    <input
+      type="file"
+      id="import-file-input"
+      accept=".json,.zip"
+      style="display: none"
+    />
+
+    <!-- Custom Alert/Confirm Modals -->
+    <div id="custom-modal-overlay" class="modal-overlay">
+      <div
+        id="custom-modal-content"
+        class="modal-content"
+        style="width: 400px; max-width: 90%"
+      >
+        <h3
+          id="custom-modal-title"
+          class="modal-title"
+          style="font-size: 1.2em; margin-bottom: 15px"
+        ></h3>
+        <div
+          id="custom-modal-body"
+          class="modal-body"
+          style="
+            margin-bottom: 0;
+            padding-bottom: 15px;
+            font-size: 1em;
+            line-height: 1.5;
+          "
+        >
+          <p id="custom-modal-message"></p>
+        </div>
+        <div
+          id="custom-modal-footer"
+          class="modal-footer"
+          style="justify-content: flex-end; gap: 10px"
+        >
+          <button id="custom-modal-cancel-btn">キャンセル</button>
+          <button id="custom-modal-ok-btn">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="scene-settings-modal" class="modal-overlay">
+      <div class="modal-content">
+        <button
+          id="modal-close-btn"
+          class="modal-close-btn"
+          aria-label="閉じる"
+        >
+          ×
+        </button>
+        <h2 class="modal-title">シーン設定</h2>
+        <div class="modal-body">
+          <ul id="modal-scene-list" class="modal-scene-list">
+            <!-- シーンリストがここに挿入されます -->
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <div class="settings-toggles">
+            <div class="interaction-mode-setting">
+              <label>操作モード:</label>
+              <div class="performance-mode-selector">
+                <input
+                  type="radio"
+                  id="interaction-click"
+                  name="interaction-mode"
+                  value="click"
+                />
+                <label
+                  for="interaction-click"
+                  title="クリック優先: pointerdownで最速再生し、ドラッグ並び替えを無効化"
+                  >クリック</label
+                >
+                <input
+                  type="radio"
+                  id="interaction-drag"
+                  name="interaction-mode"
+                  value="drag"
+                />
+                <label
+                  for="interaction-drag"
+                  title="ドラッグ編集: 並び替えを有効化し、再生は通常クリックで行う"
+                  >ドラッグ</label
+                >
+              </div>
+            </div>
+            <div class="waveform-setting">
+              <input type="checkbox" id="waveform-toggle-checkbox" />
+              <label for="waveform-toggle-checkbox">波形表示を有効化</label>
+            </div>
+            <div class="pad-size-setting">
+              <label for="pad-size-slider"
+                >パッドサイズ: <span id="pad-size-value">160</span>px</label
+              >
+              <input
+                type="range"
+                id="pad-size-slider"
+                min="80"
+                max="320"
+                step="1"
+                value="160"
+              />
+            </div>
+            <div class="performance-mode-setting">
+              <label>パフォーマンスモード:</label>
+              <div class="performance-mode-selector">
+                <input
+                  type="radio"
+                  id="perf-high"
+                  name="performance-mode"
+                  value="high-performance"
+                />
+                <label
+                  for="perf-high"
+                  title="高パフォーマンスモード: バランスの取れた設定"
+                  >高</label
+                >
+                <input
+                  type="radio"
+                  id="perf-low"
+                  name="performance-mode"
+                  value="low-memory"
+                />
+                <label
+                  for="perf-low"
+                  title="低メモリモード: メモリ使用量を最小限に抑える"
+                  >低</label
+                >
+              </div>
+            </div>
+          </div>
+          <div class="io-controls">
+            <button id="modal-import-btn" title="インポート">
+              <i class="fas fa-upload"></i> インポート
+            </button>
+            <button id="modal-export-btn" title="全シーンをエクスポート">
+              <i class="fas fa-download"></i> 全シーンをエクスポート
+            </button>
+          </div>
+          <div class="add-scene-btn-wrapper">
+            <button id="modal-add-scene-btn">
+              <i class="fas fa-plus-square"></i> 新しいシーンを追加
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="script.js" type="module"></script>
+  </body>
+</html>

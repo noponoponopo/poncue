@@ -1,0 +1,18 @@
+{
+  "name": "jizi-soundboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "for f in script.js service-worker.js modules/*.js; do node --check \"$f\" || exit 1; done"
+  },
+  "dependencies": {
+    "tone": "^15.1.22"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

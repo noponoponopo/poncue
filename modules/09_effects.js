@@ -1,0 +1,168 @@
+// modules/09_effects.js
+//
+// Tone.js based effect rack with serial chain.
+//
+// Serial chain contract:
+//   input → compensation → EQ3 → Compressor → [dry tap] → dryGain → output
+//                                              ↘ feedbackDelay → delayReturn → output
+//
+// Every effect feeds the next. Disabling an effect makes it transparent
+// (flat EQ, unity compressor) rather than removing it from the chain.
+// The delay taps from the compressor output, so echoes are always shaped by
+// EQ and compressor.
+//
+// Uniform latency: every signal passes through the compensation delay,
+// so dry and wet stay time-aligned regardless of effect settings.
+
+import * as Tone from 'tone';
+import { AUDIO_PARAM_RAMP_SECONDS, DEFAULT_EFFECT_SETTINGS } from './01_config.js';
+
+export const UNIFORM_COMPENSATION_SECONDS = 0.006;
+
+function clamp(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+    return Math.min(max, Math.max(min, number));
+}
+
+function rampParam(param, value, seconds = AUDIO_PARAM_RAMP_SECONDS) {
+    if (!param) return;
+    const ctx = param.context || Tone.getContext();
+    const now = ctx.currentTime;
+    try {
+        param.cancelScheduledValues(now);
+        param.setTargetAtTime(value, now, seconds);
+    } catch (e) {
+        try { param.value = value; } catch (_) { /* param not settable */ }
+    }
+}
+
+export function normalizeEffectSettings(settings = {}) {
+    const base = DEFAULT_EFFECT_SETTINGS;
+    const eq = settings.eq ?? {};
+    const delay = settings.delay ?? {};
+    const compressor = settings.compressor ?? {};
+
+    return {
+        enabled: Boolean(settings.enabled ?? base.enabled),
+        wet: clamp(settings.wet ?? base.wet, 0, 1),
+        eq: {
+            enabled: Boolean(eq.enabled ?? base.eq.enabled),
+            low: clamp(eq.low ?? base.eq.low, -12, 12),
+            mid: clamp(eq.mid ?? base.eq.mid, -12, 12),
+            high: clamp(eq.high ?? base.eq.high, -12, 12),
+            lowFrequency: clamp(eq.lowFrequency ?? base.eq.lowFrequency, 50, 2000),
+            highFrequency: clamp(eq.highFrequency ?? base.eq.highFrequency, 1000, 12000)
+        },
+        delay: {
+            enabled: Boolean(delay.enabled ?? base.delay.enabled),
+            time: clamp(delay.time ?? base.delay.time, 0, 2),
+            feedback: clamp(delay.feedback ?? base.delay.feedback, 0, 0.85),
+            level: clamp(delay.level ?? base.delay.level, 0, 1)
+        },
+        compressor: {
+            enabled: Boolean(compressor.enabled ?? base.compressor.enabled),
+            threshold: clamp(compressor.threshold ?? base.compressor.threshold, -60, 0),
+            ratio: clamp(compressor.ratio ?? base.compressor.ratio, 1, 20)
+        }
+    };
+}
+
+export function createEffectRack(settings = {}) {
+    const input = new Tone.Gain(1);
+    const compensation = new Tone.Delay(UNIFORM_COMPENSATION_SECONDS, UNIFORM_COMPENSATION_SECONDS * 2);
+    const eq3 = new Tone.EQ3({ low: 0, mid: 0, high: 0, lowFrequency: 400, highFrequency: 2500 });
+    const compressor = new Tone.Compressor({ threshold: 0, ratio: 1, attack: 0.003, release: 0.12 });
+    const dryGain = new Tone.Gain(1);
+    const wetGain = new Tone.Gain(0);
+    const feedbackDelay = new Tone.FeedbackDelay({ delayTime: 0.18, feedback: 0, maxDelay: 2 });
+    const delayReturn = new Tone.Gain(0);
+    const output = new Tone.Gain(1);
+
+    // Serial chain: input → compensation → EQ3 → Compressor
+    input.connect(compensation);
+    compensation.connect(eq3);
+    eq3.connect(compressor);
+
+    // Dry tap: from compressor output (post-EQ, post-Comp, pre-delay)
+    compressor.connect(dryGain);
+    dryGain.connect(output);
+
+    // Wet (EQ+Comp) level control
+    compressor.connect(wetGain);
+    wetGain.connect(output);
+
+    // Delay taps from compressor output — echoes are always shaped by EQ + Comp
+    compressor.connect(feedbackDelay);
+    feedbackDelay.connect(delayReturn);
+    delayReturn.connect(output);
+
+    const rack = {
+        input, output, compensation,
+        eq3, compressor,
+        dryGain, wetGain,
+        feedbackDelay, delayReturn,
+        entry: input.input,
+        exit: output.input
+    };
+
+    applyEffectSettings(rack, settings, null, true);
+    return rack;
+}
+
+export function applyEffectSettings(rack, settings, _audioContext = null, immediate = false) {
+    if (!rack) return;
+    const normalized = normalizeEffectSettings(settings);
+    const ramp = immediate ? 0.001 : AUDIO_PARAM_RAMP_SECONDS;
+
+    // EQ3: disabled = flat (0 dB all bands)
+    const eqActive = normalized.eq.enabled;
+    rampParam(rack.eq3.low, eqActive ? normalized.eq.low : 0, ramp);
+    rampParam(rack.eq3.mid, eqActive ? normalized.eq.mid : 0, ramp);
+    rampParam(rack.eq3.high, eqActive ? normalized.eq.high : 0, ramp);
+    try {
+        rack.eq3.lowFrequency.value = normalized.eq.lowFrequency;
+        rack.eq3.highFrequency.value = normalized.eq.highFrequency;
+    } catch (e) { /* frequency signals are set directly */ }
+
+    // Compressor: disabled = unity (ratio 1, no reduction)
+    const compActive = normalized.compressor.enabled;
+    rampParam(rack.compressor.threshold, compActive ? normalized.compressor.threshold : 0, ramp);
+    rampParam(rack.compressor.ratio, compActive ? normalized.compressor.ratio : 1, ramp);
+
+    // Delay: taps from compressor output, disabled = zero return
+    const delayActive = normalized.delay.enabled;
+    rampParam(rack.feedbackDelay.delayTime, normalized.delay.time, ramp);
+    rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
+    rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
+
+    // Dry / wet balance
+    // dryGain is always active — it carries the post-EQ+Comp signal at a
+    // level that depends on whether EQ/Comp effects are engaged.
+    // wetGain boosts the same signal further when effects are active.
+    const hasEqOrComp = normalized.eq.enabled || normalized.compressor.enabled;
+    const anyEffect = normalized.enabled && (hasEqOrComp || delayActive);
+
+    if (anyEffect) {
+        const wetLevel = normalized.wet;
+        // dryGain carries (1 - wet) of the signal so total doesn't double
+        rampParam(rack.dryGain.gain, 1 - Math.min(wetLevel, 0.95), ramp);
+        rampParam(rack.wetGain.gain, hasEqOrComp ? wetLevel : 0, ramp);
+    } else {
+        rampParam(rack.dryGain.gain, 1, ramp);
+        rampParam(rack.wetGain.gain, 0, ramp);
+    }
+}
+
+export function disposeEffectRack(rack) {
+    if (!rack) return;
+    const nodes = [
+        rack.input, rack.output, rack.compensation,
+        rack.eq3, rack.compressor,
+        rack.dryGain, rack.wetGain,
+        rack.feedbackDelay, rack.delayReturn
+    ];
+    for (const node of nodes) {
+        try { node?.dispose(); } catch (e) { /* ignore */ }
+    }
+}
