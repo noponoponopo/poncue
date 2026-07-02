@@ -12,7 +12,7 @@ import {
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
-import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -113,6 +113,7 @@ export function setupEventListeners() {
 
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
 }
 
 
@@ -271,7 +272,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newTriggerMode, newFadeDuration, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -292,6 +293,9 @@ async function handleSoundSettings(soundId) {
 
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
+        if (TRIGGER_MODES.includes(newTriggerMode)) {
+            sound.triggerMode = newTriggerMode;
+        }
         sound.effects = newEffects;
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
@@ -331,8 +335,36 @@ async function handleKeyDown(event) {
     if (soundId) {
         event.preventDefault();
         const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
-        if (soundButtonElement) {
+        if (!soundButtonElement) return;
+        const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+        if (soundData?.triggerMode === 'momentary') {
+            // キーリピート対策: 既に再生中なら無視
+            if (!state.activeAudios[soundId]) {
+                startMomentaryPlayback(soundId, soundButtonElement);
+            }
+        } else {
             handleSoundButtonClick(soundId, soundButtonElement);
+        }
+    }
+}
+
+function handleKeyUp(event) {
+    if (dom.customModalOverlay.classList.contains('active') ||
+        dom.sceneSettingsModal.classList.contains('active') ||
+        document.activeElement.tagName === 'INPUT' ||
+        document.activeElement.tagName === 'TEXTAREA') {
+        return;
+    }
+
+    const normalizedKey = normalizeKey(event);
+    const soundId = state.shortcuts[normalizedKey];
+
+    if (soundId) {
+        const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+        if (soundData?.triggerMode === 'momentary' && state.activeAudios[soundId]) {
+            event.preventDefault();
+            const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
+            stopMomentaryPlayback(soundId, soundButtonElement);
         }
     }
 }
@@ -355,6 +387,27 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
         stopSound(soundId, soundButtonElement); 
     } else { 
         playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
+    }
+}
+
+// momentary（ホールド）モード用の再生開始。既に再生中なら何もしない（キーリピート/重複押下対策）。
+async function startMomentaryPlayback(soundId, soundButtonElement) {
+    const clickTime = performance.now();
+    if (!state.audioContext) { if (!initAudioContext()) { return; } }
+    await resumeAudioContext();
+    if (state.audioContext?.state !== 'running') { return; }
+    if (state.activeAudios[soundId]) { return; }
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (soundData?.error) {
+        showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
+        return;
+    }
+    playSound(soundId, soundButtonElement, clickTime);
+}
+
+function stopMomentaryPlayback(soundId, soundButtonElement) {
+    if (state.activeAudios[soundId]) {
+        stopSound(soundId, soundButtonElement);
     }
 }
 
@@ -597,6 +650,7 @@ function createSoundButton(sound) {
     buttonWrapper.dataset.id = sound.id;
     buttonWrapper.title = sound.name;
     if (sound.loop) buttonWrapper.classList.add('loop-on');
+    if (sound.triggerMode === 'momentary') buttonWrapper.classList.add('momentary');
     if (sound.error) buttonWrapper.classList.add('error');
 
     let settingsButtonContent = '<i class="fas fa-cog"></i>';
@@ -618,6 +672,7 @@ function createSoundButton(sound) {
 
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
+        <span class="hold-indicator">HOLD</span>
         <div class="button-content">
             <i class="fas fa-play sound-icon"></i>
             <span class="sound-name">${sound.name}</span>
@@ -640,15 +695,55 @@ function createSoundButton(sound) {
     const setPointerFlag = () => { pointerFlag = true; setTimeout(() => pointerFlag = false, 150); };
 
     const buttonContent = buttonWrapper.querySelector('.button-content');
-    buttonContent.addEventListener('pointerdown', e => {
-        if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
+
+    if (sound.triggerMode === 'momentary') {
+        // ホールドモード: 押している間だけ再生、離すと停止
+        buttonContent.addEventListener('pointerdown', e => {
+            if (state.isSortableEnabled || isDraggingViaTouch) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
             e.preventDefault();
-            handleSoundButtonClick(sound.id, buttonWrapper);
             setPointerFlag();
-        }
-    });
-    buttonContent.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); handleSoundButtonClick(sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
-    buttonContent.addEventListener('click', () => { if (!touchFlag && !pointerFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper); });
+            startMomentaryPlayback(sound.id, buttonWrapper);
+            // ボタン外で離しても停止できるよう window で捕捉
+            const onWinPointerUp = () => {
+                window.removeEventListener('pointerup', onWinPointerUp);
+                stopMomentaryPlayback(sound.id, buttonWrapper);
+            };
+            window.addEventListener('pointerup', onWinPointerUp);
+        });
+        buttonContent.addEventListener('touchstart', () => {
+            if (state.isSortableEnabled || isDraggingViaTouch) return;
+            startMomentaryPlayback(sound.id, buttonWrapper);
+        }, { passive: true });
+        buttonContent.addEventListener('touchend', e => {
+            if (!isDraggingViaTouch) {
+                e.preventDefault();
+                setTouchFlag();
+                stopMomentaryPlayback(sound.id, buttonWrapper);
+            }
+            clearTimeout(longPressTimeoutId);
+        }, { passive: false });
+        buttonContent.addEventListener('touchcancel', () => {
+            stopMomentaryPlayback(sound.id, buttonWrapper);
+        });
+        // ドラッグ編集モード時のみ通常クリックでトグルを許可
+        buttonContent.addEventListener('click', () => {
+            if (!touchFlag && !pointerFlag && !isDraggingViaTouch && state.isSortableEnabled) {
+                handleSoundButtonClick(sound.id, buttonWrapper);
+            }
+        });
+    } else {
+        // トグルモード（既定）: クリックで再生/停止
+        buttonContent.addEventListener('pointerdown', e => {
+            if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
+                e.preventDefault();
+                handleSoundButtonClick(sound.id, buttonWrapper);
+                setPointerFlag();
+            }
+        });
+        buttonContent.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); handleSoundButtonClick(sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
+        buttonContent.addEventListener('click', () => { if (!touchFlag && !pointerFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper); });
+    }
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
     loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });

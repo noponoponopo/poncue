@@ -5,7 +5,7 @@ import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -39,6 +39,15 @@ function dataURLtoBlob(dataurl) {
     } catch (e) {
         return null;
     }
+}
+
+/**
+ * sound オブジェクトの起動モードを正規化する。
+ */
+export function normalizeSoundTriggerMode(sound) {
+    if (!sound || typeof sound !== 'object') return sound;
+    if (!TRIGGER_MODES.includes(sound.triggerMode)) sound.triggerMode = DEFAULT_TRIGGER_MODE;
+    return sound;
 }
 
 // --- V1からV2へのデータ移行処理 ---
@@ -403,6 +412,7 @@ export async function handleAudioFileSelect(event) {
                 loop: false,
                 volume: 1.0,
                 audioId: audioId,
+                triggerMode: DEFAULT_TRIGGER_MODE,
                 fadeDuration: 0.0,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
@@ -571,6 +581,7 @@ async function handleZipImport(file) {
         importedScene.id = generateUniqueId('scn');
 
         for (const sound of importedScene.sounds) {
+            normalizeSoundTriggerMode(sound);
             if (sound.fileName) {
                 const audioFileInZip = zip.file(sound.fileName);
                 if (audioFileInZip) {
@@ -632,6 +643,7 @@ async function handleLegacyJsonImport(file) {
             existingNames.push(newName);
 
             for (const sound of importedScene.sounds) {
+                normalizeSoundTriggerMode(sound);
                 if (sound.dataUrl) {
                     const blob = dataURLtoBlob(sound.dataUrl);
                     if (blob) {

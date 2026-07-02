@@ -4,6 +4,15 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
+import { TRIGGER_MODES } from './01_config.js';
+
+// 起動モードの表示ラベル（type リストは 01_config.js の TRIGGER_MODES と同期）
+const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド' };
+function triggerOptions(selected) {
+    return TRIGGER_MODES
+        .map(m => `<option value="${m}"${m === selected ? ' selected' : ''}>${TRIGGER_LABELS[m] ?? m}</option>`)
+        .join('');
+}
 
 // --- Custom Modal ---
 export function showModal(title, message, type = 'showAlert', inputPlaceholder = '', inputDefaultValue = '') {
@@ -108,12 +117,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
                 <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
+                </div>
+                <div class="effect-param-row">
+                    <label for="trigger-mode-input" class="effect-param-label">起動</label>
+                    <select id="trigger-mode-input" class="modal-input effect-select">${triggerOptions(triggerMode)}</select>
                 </div>
                 <div class="effect-param-row">
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
@@ -184,6 +198,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
+        const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
@@ -201,6 +216,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
 
         let newShortcut = currentShortcut;
+        let newTriggerMode = triggerMode;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
         let newEffects = effectSettings;
 
@@ -233,6 +249,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             newFadeDuration = parseFloat(e.target.value);
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
         };
+
+        const handleTriggerModeInput = (e) => { newTriggerMode = e.target.value; };
 
         const readEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
@@ -270,6 +288,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
+        triggerModeInput.addEventListener('change', handleTriggerModeInput);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
@@ -280,15 +299,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            triggerModeInput.removeEventListener('change', handleTriggerModeInput);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newTriggerMode, newFadeDuration, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            triggerModeInput.removeEventListener('change', handleTriggerModeInput);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
@@ -600,7 +621,7 @@ export function createGhostElement(originalElement, touch) {
     removeGhostElement();
     const ghost = originalElement.cloneNode(true);
     ghost.classList.add('ghost-element');
-    ghost.classList.remove('playing', 'loop-on', 'dragging', 'drag-over');
+    ghost.classList.remove('playing', 'loop-on', 'momentary', 'dragging', 'drag-over');
     ghost.style.width = `${originalElement.offsetWidth}px`;
     ghost.style.height = `${originalElement.offsetHeight}px`;
     const rect = originalElement.getBoundingClientRect();
