@@ -145,6 +145,39 @@ function recordStartMetric(soundId, requestedAt, startedAt) {
 
 // --- Audio Playback ---
 
+const FADE_EASING_FUNCTIONS = {
+    linear: t => t,
+    easeIn: t => t * t,
+    easeOut: t => 1 - (1 - t) * (1 - t),
+    sCurve: t => t * t * (3 - 2 * t)
+};
+
+/**
+ * AudioParam にイージングカーブ付きのフェードをスケジュールする。
+ * setValueCurveAtTime でサンプル配列を与えるため、任意の曲線（直線/イーズイン/アウト/S字）を表現可能。
+ * fromVal/toVal は 0 を含むため exponentialRamp ではなく setValueCurve を使用（0 到達可）。
+ */
+function applyFadeCurve(param, fromVal, toVal, startTime, duration, easing) {
+    const safeFrom = Number.isFinite(fromVal) ? fromVal : 0.0001;
+    const safeTo = Number.isFinite(toVal) ? toVal : 0.0001;
+    const safeDuration = Math.max(duration, MIN_GAIN_RAMP_SECONDS);
+    const now = startTime;
+
+    param.cancelScheduledValues(now);
+    // 現在の開始値をピン留めし、カーブ開始前のクリックノイズを防止
+    param.setValueAtTime(safeFrom, now);
+
+    const fn = FADE_EASING_FUNCTIONS[easing] || FADE_EASING_FUNCTIONS.linear;
+    const sampleStep = 0.005; // 5ms 粒度
+    const samples = Math.max(2, Math.min(2048, Math.ceil(safeDuration / sampleStep)));
+    const curve = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) {
+        const t = i / (samples - 1);
+        curve[i] = safeFrom + (safeTo - safeFrom) * fn(t);
+    }
+    param.setValueCurveAtTime(curve, now, safeDuration);
+}
+
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
 
@@ -286,9 +319,10 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
 
     const { audioElement, sourceNode, individualGain } = audioInfo;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    const fadeDurationSeconds = useFadeOut
-        ? Math.max(soundData?.fadeDuration ?? 0, MIN_STOP_FADE_SECONDS)
+    const fadeOutDurationSeconds = useFadeOut
+        ? Math.max(soundData?.fadeOutDuration ?? 0, MIN_STOP_FADE_SECONDS)
         : MIN_STOP_FADE_SECONDS;
+    const fadeOutEasing = useFadeOut ? (soundData?.fadeOutEasing || 'linear') : 'linear';
 
     const stopPlayback = () => {
         try {
@@ -305,10 +339,8 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
     };
 
     if (state.audioContext && individualGain && individualGain.gain.value > 0.0001) {
-        individualGain.gain.cancelScheduledValues(state.audioContext.currentTime);
-        individualGain.gain.setValueAtTime(individualGain.gain.value, state.audioContext.currentTime);
-        individualGain.gain.exponentialRampToValueAtTime(0.0001, state.audioContext.currentTime + fadeDurationSeconds);
-        setTimeout(stopPlayback, fadeDurationSeconds * 1000);
+        applyFadeCurve(individualGain.gain, individualGain.gain.value, 0.0001, state.audioContext.currentTime, fadeOutDurationSeconds, fadeOutEasing);
+        setTimeout(stopPlayback, fadeOutDurationSeconds * 1000);
     } else {
         if (individualGain && state.audioContext) {
             individualGain.gain.cancelScheduledValues(state.audioContext.currentTime);
@@ -350,13 +382,12 @@ function fadeInSound(soundId, targetVolume) {
     if (!audioInfo || !state.audioContext || !audioInfo.individualGain) return;
     const { individualGain } = audioInfo;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    const fadeDurationSeconds = Math.max(soundData?.fadeDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
+    const fadeDurationSeconds = Math.max(soundData?.fadeInDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
+    const easing = soundData?.fadeInEasing || 'linear';
     const finalTargetVolume = Math.max(0.0001, targetVolume);
     const startTime = state.audioContext.currentTime;
 
-    individualGain.gain.cancelScheduledValues(startTime);
-    individualGain.gain.setValueAtTime(0.0001, startTime);
-    individualGain.gain.exponentialRampToValueAtTime(finalTargetVolume, startTime + fadeDurationSeconds);
+    applyFadeCurve(individualGain.gain, 0.0001, finalTargetVolume, startTime, fadeDurationSeconds, easing);
 }
 
 export function updateActiveSoundEffects(soundId) {

@@ -5,7 +5,7 @@ import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -39,6 +39,25 @@ function dataURLtoBlob(dataurl) {
     } catch (e) {
         return null;
     }
+}
+
+/**
+ * sound オブジェクトのフェード関連フィールドを正規化する。
+ * 旧スキーマ (fadeDuration 単体) を新スキーマ (fadeInDuration/fadeOutDuration + 各 easing) に寄せる。
+ * DB保存時に呼ばれるため、安全に冪等に動作する。
+ */
+export function normalizeSoundFade(sound) {
+    if (!sound || typeof sound !== 'object') return sound;
+    const legacyFadeDuration = Number.isFinite(sound.fadeDuration) ? sound.fadeDuration : 0;
+    if (!Number.isFinite(sound.fadeInDuration)) {
+        sound.fadeInDuration = Math.max(0, legacyFadeDuration);
+    }
+    if (!Number.isFinite(sound.fadeOutDuration)) {
+        sound.fadeOutDuration = Math.max(0, legacyFadeDuration);
+    }
+    if (!FADE_EASING_TYPES.includes(sound.fadeInEasing)) sound.fadeInEasing = DEFAULT_FADE_EASING;
+    if (!FADE_EASING_TYPES.includes(sound.fadeOutEasing)) sound.fadeOutEasing = DEFAULT_FADE_EASING;
+    return sound;
 }
 
 // --- V1からV2へのデータ移行処理 ---
@@ -178,6 +197,33 @@ export async function initializeApp() {
         }
         console.log("Duration migration finished.");
         hideModal(); // Hide the "Updating..." message
+    }
+
+    // --- Data Migration: fadeDuration → fadeInDuration/fadeOutDuration + easing ---
+    let fadeMigrationNeeded = false;
+    for (const sceneId in state.scenes) {
+        for (const sound of state.scenes[sceneId].sounds) {
+            if ('fadeDuration' in sound) { fadeMigrationNeeded = true; break; }
+        }
+        if (fadeMigrationNeeded) break;
+    }
+    if (fadeMigrationNeeded) {
+        console.log("Fade schema migration needed. Starting...");
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            let sceneUpdated = false;
+            for (const sound of scene.sounds) {
+                if ('fadeDuration' in sound) {
+                    normalizeSoundFade(sound);
+                    delete sound.fadeDuration;
+                    sceneUpdated = true;
+                }
+            }
+            if (sceneUpdated) {
+                await saveCurrentSceneSounds(`migration-fade-${sceneId}`);
+            }
+        }
+        console.log("Fade schema migration finished.");
     }
     // --- End of Data Migration ---
 
@@ -403,7 +449,10 @@ export async function handleAudioFileSelect(event) {
                 loop: false,
                 volume: 1.0,
                 audioId: audioId,
-                fadeDuration: 0.0,
+                fadeInDuration: 0.0,
+                fadeOutDuration: 0.0,
+                fadeInEasing: DEFAULT_FADE_EASING,
+                fadeOutEasing: DEFAULT_FADE_EASING,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };
@@ -571,6 +620,8 @@ async function handleZipImport(file) {
         importedScene.id = generateUniqueId('scn');
 
         for (const sound of importedScene.sounds) {
+            normalizeSoundFade(sound);
+            if ('fadeDuration' in sound) delete sound.fadeDuration;
             if (sound.fileName) {
                 const audioFileInZip = zip.file(sound.fileName);
                 if (audioFileInZip) {
@@ -632,6 +683,8 @@ async function handleLegacyJsonImport(file) {
             existingNames.push(newName);
 
             for (const sound of importedScene.sounds) {
+                normalizeSoundFade(sound);
+                if ('fadeDuration' in sound) delete sound.fadeDuration;
                 if (sound.dataUrl) {
                     const blob = dataURLtoBlob(sound.dataUrl);
                     if (blob) {
