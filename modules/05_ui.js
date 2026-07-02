@@ -108,6 +108,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const initialPan = Number.isFinite(sound.pan) ? sound.pan : 0;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -119,6 +120,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
                     <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
                     <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="pan-input" class="effect-param-label">Pan</label>
+                    <span class="effect-param-value"><span id="pan-value">${Math.round(initialPan * 100)}</span>%</span>
+                    <input type="range" id="pan-input" min="-1" max="1" step="0.01" value="${initialPan}" class="modal-input effect-slider">
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -186,6 +192,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const panInput = dom.customModalMessage.querySelector('#pan-input');
+        const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -202,6 +210,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         let newShortcut = currentShortcut;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
+        let newPan = initialPan;
         let newEffects = effectSettings;
 
         const handleKeydown = (e) => {
@@ -232,6 +241,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const handleFadeDurationInput = (e) => {
             newFadeDuration = parseFloat(e.target.value);
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
+        };
+
+        const handlePanInput = (e) => {
+            newPan = parseFloat(e.target.value);
+            panValueSpan.textContent = Math.round(newPan * 100);
         };
 
         const readEffects = () => normalizeEffectSettings({
@@ -271,6 +285,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
+        panInput.addEventListener('input', handlePanInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
@@ -281,15 +296,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            panInput.removeEventListener('input', handlePanInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newFadeDuration, newPan, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            panInput.removeEventListener('input', handlePanInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
