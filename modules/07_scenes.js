@@ -402,6 +402,7 @@ export async function handleAudioFileSelect(event) {
                 name: file.name.replace(/\.[^/.]+$/, ""),
                 loop: false,
                 volume: 1.0,
+                pan: 0,
                 audioId: audioId,
                 fadeDuration: 0.0,
                 effects: { enabled: false },
