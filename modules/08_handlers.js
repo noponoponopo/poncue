@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, startMasterMeter, setMasterParam } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -342,6 +342,8 @@ async function handleKeyDown(event) {
             if (!state.activeAudios[soundId]) {
                 startMomentaryPlayback(soundId, soundButtonElement);
             }
+        } else if (soundData?.triggerMode === 'retrigger') {
+            startRetriggerPlayback(soundId, soundButtonElement);
         } else {
             handleSoundButtonClick(soundId, soundButtonElement);
         }
@@ -409,6 +411,21 @@ function stopMomentaryPlayback(soundId, soundButtonElement) {
     if (state.activeAudios[soundId]) {
         stopSound(soundId, soundButtonElement);
     }
+}
+
+// リトリガーモード用の再生開始。再生中なら即時停止（フェードなし）して頭出し再生。
+async function startRetriggerPlayback(soundId, soundButtonElement) {
+    const clickTime = performance.now();
+    if (!state.audioContext) { if (!initAudioContext()) { return; } }
+    await resumeAudioContext();
+    if (state.audioContext?.state !== 'running') { return; }
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (soundData?.error) {
+        showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
+        return;
+    }
+    forceStopSound(soundId, soundButtonElement);
+    playSound(soundId, soundButtonElement, clickTime);
 }
 
 async function toggleLoop(soundId, loopBtnElement, soundBtnElement) {
@@ -650,7 +667,9 @@ function createSoundButton(sound) {
     buttonWrapper.dataset.id = sound.id;
     buttonWrapper.title = sound.name;
     if (sound.loop) buttonWrapper.classList.add('loop-on');
-    if (sound.triggerMode === 'momentary') buttonWrapper.classList.add('momentary');
+    if (sound.triggerMode === 'momentary' || sound.triggerMode === 'retrigger') {
+        buttonWrapper.classList.add(`trigger-${sound.triggerMode}`);
+    }
     if (sound.error) buttonWrapper.classList.add('error');
 
     let settingsButtonContent = '<i class="fas fa-cog"></i>';
@@ -670,9 +689,11 @@ function createSoundButton(sound) {
 
     const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
 
+    const triggerIndicatorText = sound.triggerMode === 'momentary' ? 'HOLD' : (sound.triggerMode === 'retrigger' ? 'RETRIG' : '');
+
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
-        <span class="hold-indicator">HOLD</span>
+        <span class="trigger-indicator">${triggerIndicatorText}</span>
         <div class="button-content">
             <i class="fas fa-play sound-icon"></i>
             <span class="sound-name">${sound.name}</span>
@@ -732,6 +753,17 @@ function createSoundButton(sound) {
                 handleSoundButtonClick(sound.id, buttonWrapper);
             }
         });
+    } else if (sound.triggerMode === 'retrigger') {
+        // リトリガーモード: クリックで常に頭出し再生（再生中でも停止して即リスタート）
+        buttonContent.addEventListener('pointerdown', e => {
+            if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
+                e.preventDefault();
+                startRetriggerPlayback(sound.id, buttonWrapper);
+                setPointerFlag();
+            }
+        });
+        buttonContent.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); startRetriggerPlayback(sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
+        buttonContent.addEventListener('click', () => { if (!touchFlag && !pointerFlag && !isDraggingViaTouch) startRetriggerPlayback(sound.id, buttonWrapper); });
     } else {
         // トグルモード（既定）: クリックで再生/停止
         buttonContent.addEventListener('pointerdown', e => {
