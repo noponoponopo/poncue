@@ -113,6 +113,39 @@ export function setupEventListeners() {
 
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
+
+    // Show Mode (fullscreen)
+    dom.showModeBtn?.addEventListener('click', toggleShowMode);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+}
+
+
+// --- Show Mode (Fullscreen) ---
+function toggleShowMode() {
+    if (!state.showMode) {
+        try {
+            const el = document.documentElement;
+            if (el.requestFullscreen) el.requestFullscreen();
+            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        } catch (e) { /* fullscreen request may fail silently */ }
+        document.body.classList.add('show-mode');
+        updateState({ showMode: true });
+    } else {
+        try {
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        } catch (e) { /* exit fullscreen may fail silently */ }
+        document.body.classList.remove('show-mode');
+        updateState({ showMode: false });
+    }
+}
+
+function handleFullscreenChange() {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        document.body.classList.remove('show-mode');
+        updateState({ showMode: false });
+    }
 }
 
 

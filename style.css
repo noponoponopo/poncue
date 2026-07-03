@@ -1198,6 +1198,15 @@
         font-size: 1.1em; /* Adjust icon size */
     }
 
+    /* --- Show Mode: hide editing UI, keep playback & volume --- */
+    body.show-mode #add-sound-btn,
+    body.show-mode #scene-settings-btn,
+    body.show-mode .sound-button .delete-button,
+    body.show-mode .sound-button .settings-button,
+    body.show-mode .sound-button .loop-button {
+        display: none !important;
+    }
+
     /* --- START: Master Effect Knob Bar --- */
     #master-effect-bar {
       display: flex;
