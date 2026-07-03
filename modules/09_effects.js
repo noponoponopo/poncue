@@ -3,18 +3,22 @@
 // Tone.js based effect rack with serial chain.
 //
 // Serial chain contract:
-//   input → compensation → EQ3 → Compressor → Distortion → PitchShift → Reverb → [dry tap] → dryGain → output
-//                                                                        ↘ feedbackDelay → delayReturn → output
-//                                                                          ↘ wetGain → output
+//   input → compensation → EQ3 → Compressor → Distortion → Reverb → [dry tap] → dryGain → output
+//                                                                ↘ feedbackDelay → delayReturn → output
+//                                                                  ↘ wetGain → output
 //
 // Every effect feeds the next. Disabling an effect makes it transparent
-// (flat EQ, unity compressor, wet=0 for distortion/pitch/reverb) rather
+// (flat EQ, unity compressor, wet=0 for distortion/reverb) rather
 // than removing it from the chain. The delay taps from the reverb output,
-// so echoes are always shaped by EQ, compressor, distortion, pitch and
-// reverb.
+// so echoes are always shaped by EQ, compressor, distortion and reverb.
 //
 // Uniform latency: every signal passes through the compensation delay,
 // so dry and wet stay time-aligned regardless of effect settings.
+//
+// Latency note: PitchShift is intentionally excluded — real-time pitch
+// shifting requires a processing window (typically 50ms+) that violates
+// the sub-20ms latency budget. Distortion (WaveShaper) and Reverb
+// (ConvolverNode) are sample-accurate and add no inherent delay.
 
 import * as Tone from 'tone';
 import { AUDIO_PARAM_RAMP_SECONDS, DEFAULT_EFFECT_SETTINGS } from './01_config.js';
@@ -45,7 +49,6 @@ export function normalizeEffectSettings(settings = {}) {
     const delay = settings.delay ?? {};
     const compressor = settings.compressor ?? {};
     const distortion = settings.distortion ?? {};
-    const pitch = settings.pitch ?? {};
     const reverb = settings.reverb ?? {};
 
     return {
@@ -74,10 +77,6 @@ export function normalizeEffectSettings(settings = {}) {
             enabled: Boolean(distortion.enabled ?? base.distortion.enabled),
             amount: clamp(distortion.amount ?? base.distortion.amount, 0, 1)
         },
-        pitch: {
-            enabled: Boolean(pitch.enabled ?? base.pitch.enabled),
-            shift: clamp(pitch.shift ?? base.pitch.shift, -12, 12)
-        },
         reverb: {
             enabled: Boolean(reverb.enabled ?? base.reverb.enabled),
             decay: clamp(reverb.decay ?? base.reverb.decay, 0.1, 10),
@@ -93,7 +92,6 @@ export function createEffectRack(settings = {}) {
     const eq3 = new Tone.EQ3({ low: 0, mid: 0, high: 0, lowFrequency: 400, highFrequency: 2500 });
     const compressor = new Tone.Compressor({ threshold: 0, ratio: 1, attack: 0.003, release: 0.12 });
     const distortionNode = new Tone.Distortion({ distortion: 0.4, wet: 0 });
-    const pitchShiftNode = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, wet: 0 });
     const reverbNode = new Tone.Reverb({ decay: 2.0, preDelay: 0.01, wet: 0 });
     const dryGain = new Tone.Gain(1);
     const wetGain = new Tone.Gain(0);
@@ -101,19 +99,18 @@ export function createEffectRack(settings = {}) {
     const delayReturn = new Tone.Gain(0);
     const output = new Tone.Gain(1);
 
-    // Serial chain: input → compensation → EQ3 → Compressor → Distortion → PitchShift → Reverb
+    // Serial chain: input → compensation → EQ3 → Compressor → Distortion → Reverb
     input.connect(compensation);
     compensation.connect(eq3);
     eq3.connect(compressor);
     compressor.connect(distortionNode);
-    distortionNode.connect(pitchShiftNode);
-    pitchShiftNode.connect(reverbNode);
+    distortionNode.connect(reverbNode);
 
-    // Dry tap: from reverb output (post-EQ/Comp/Distortion/Pitch/Reverb)
+    // Dry tap: from reverb output (post-EQ/Comp/Distortion/Reverb)
     reverbNode.connect(dryGain);
     dryGain.connect(output);
 
-    // Wet (EQ+Comp+Distortion+Pitch+Reverb) level control
+    // Wet (EQ+Comp+Distortion+Reverb) level control
     reverbNode.connect(wetGain);
     wetGain.connect(output);
 
@@ -125,7 +122,7 @@ export function createEffectRack(settings = {}) {
     const rack = {
         input, output, compensation,
         eq3, compressor,
-        distortionNode, pitchShiftNode, reverbNode,
+        distortionNode, reverbNode,
         dryGain, wetGain,
         feedbackDelay, delayReturn,
         entry: input.input,
@@ -163,13 +160,6 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
         try { rack.distortionNode.distortion = normalized.distortion.amount; } catch (e) { /* amount set directly */ }
     }
 
-    // PitchShift: disabled = wet 0 (bypass)
-    const pitchActive = normalized.pitch.enabled;
-    rampParam(rack.pitchShiftNode.wet, pitchActive ? 1 : 0, ramp);
-    if (pitchActive) {
-        try { rack.pitchShiftNode.pitch = normalized.pitch.shift; } catch (e) { /* pitch set directly */ }
-    }
-
     // Reverb: disabled = wet 0 (bypass). decay/preDelay set directly (async generate, immediate .value is fine)
     const reverbActive = normalized.reverb.enabled;
     try {
@@ -186,11 +176,11 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
 
     // Dry / wet balance
     // dryGain is always active — it carries the post-chain signal at a
-    // level that depends on whether serial effects (EQ/Comp/Distortion/Pitch)
+    // level that depends on whether serial effects (EQ/Comp/Distortion)
     // are engaged. wetGain boosts the same signal further when those are active.
     // Reverb mixes internally via its own wet param, so it is not part of wetGain.
     const hasSerialEffect = normalized.eq.enabled || normalized.compressor.enabled ||
-        normalized.distortion.enabled || normalized.pitch.enabled;
+        normalized.distortion.enabled;
     const anyEffect = normalized.enabled && (hasSerialEffect || delayActive || reverbActive);
 
     if (anyEffect) {
@@ -209,7 +199,7 @@ export function disposeEffectRack(rack) {
     const nodes = [
         rack.input, rack.output, rack.compensation,
         rack.eq3, rack.compressor,
-        rack.distortionNode, rack.pitchShiftNode, rack.reverbNode,
+        rack.distortionNode, rack.reverbNode,
         rack.dryGain, rack.wetGain,
         rack.feedbackDelay, rack.delayReturn
     ];

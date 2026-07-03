@@ -189,14 +189,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
-                    <legend><label><input type="checkbox" id="pitch-enabled-input" ${effectSettings.pitch.enabled ? 'checked' : ''}> ピッチシフト</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Shift</span>
-                        <span class="effect-param-value"><span id="pitch-shift-value">${effectSettings.pitch.shift > 0 ? '+' : ''}${effectSettings.pitch.shift}</span>半音</span>
-                        <input type="range" id="pitch-shift-input" min="-12" max="12" step="1" value="${effectSettings.pitch.shift}" class="modal-input effect-slider">
-                    </div>
-                </fieldset>
-                <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="reverb-enabled-input" ${effectSettings.reverb.enabled ? 'checked' : ''}> リバーブ</label></legend>
                     <div class="effect-param-row">
                         <span class="effect-param-label">Decay</span>
@@ -235,8 +227,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
         const distortionEnabledInput = dom.customModalMessage.querySelector('#distortion-enabled-input');
         const distortionAmountInput = dom.customModalMessage.querySelector('#distortion-amount-input');
-        const pitchEnabledInput = dom.customModalMessage.querySelector('#pitch-enabled-input');
-        const pitchShiftInput = dom.customModalMessage.querySelector('#pitch-shift-input');
         const reverbEnabledInput = dom.customModalMessage.querySelector('#reverb-enabled-input');
         const reverbDecayInput = dom.customModalMessage.querySelector('#reverb-decay-input');
         const reverbPreDelayInput = dom.customModalMessage.querySelector('#reverb-preDelay-input');
@@ -300,10 +290,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                 enabled: distortionEnabledInput.checked,
                 amount: parseFloat(distortionAmountInput.value)
             },
-            pitch: {
-                enabled: pitchEnabledInput.checked,
-                shift: parseInt(pitchShiftInput.value, 10)
-            },
             reverb: {
                 enabled: reverbEnabledInput.checked,
                 decay: parseFloat(reverbDecayInput.value),
@@ -324,7 +310,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             dom.customModalMessage.querySelector('#compressor-threshold-value').textContent = newEffects.compressor.threshold;
             dom.customModalMessage.querySelector('#compressor-ratio-value').textContent = newEffects.compressor.ratio.toFixed(1);
             dom.customModalMessage.querySelector('#distortion-amount-value').textContent = Math.round(newEffects.distortion.amount * 100);
-            dom.customModalMessage.querySelector('#pitch-shift-value').textContent = (newEffects.pitch.shift > 0 ? '+' : '') + newEffects.pitch.shift;
             dom.customModalMessage.querySelector('#reverb-decay-value').textContent = newEffects.reverb.decay.toFixed(1);
             dom.customModalMessage.querySelector('#reverb-preDelay-value').textContent = (newEffects.reverb.preDelay * 1000).toFixed(0);
             dom.customModalMessage.querySelector('#reverb-wet-value').textContent = Math.round(newEffects.reverb.wet * 100);
@@ -332,7 +317,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
-        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, pitchEnabledInput, pitchShiftInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
+        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
         dom.customModalOkBtn.textContent = '保存';
@@ -342,7 +327,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, pitchEnabledInput, pitchShiftInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
             resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
@@ -351,7 +336,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, pitchEnabledInput, pitchShiftInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
             resolve(null); // User cancelled
