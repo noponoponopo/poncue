@@ -7,7 +7,7 @@ import { normalizeEffectSettings } from './09_effects.js';
 import { TRIGGER_MODES } from './01_config.js';
 
 // 起動モードの表示ラベル（type リストは 01_config.js の TRIGGER_MODES と同期）
-const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド' };
+const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
 function triggerOptions(selected) {
     return TRIGGER_MODES
         .map(m => `<option value="${m}"${m === selected ? ' selected' : ''}>${TRIGGER_LABELS[m] ?? m}</option>`)
@@ -630,7 +630,7 @@ export function createGhostElement(originalElement, touch) {
     removeGhostElement();
     const ghost = originalElement.cloneNode(true);
     ghost.classList.add('ghost-element');
-    ghost.classList.remove('playing', 'loop-on', 'momentary', 'dragging', 'drag-over');
+    ghost.classList.remove('playing', 'loop-on', 'momentary', 'retrigger', 'dragging', 'drag-over');
     ghost.style.width = `${originalElement.offsetWidth}px`;
     ghost.style.height = `${originalElement.offsetHeight}px`;
     const rect = originalElement.getBoundingClientRect();

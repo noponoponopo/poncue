@@ -937,7 +937,7 @@
       display: inline-block;
     }
 
-    .hold-indicator {
+    .trigger-indicator {
       position: absolute;
       top: 8px;
       right: 8px;
@@ -953,7 +953,8 @@
       pointer-events: none;
     }
 
-    .sound-button.momentary .hold-indicator {
+    .sound-button.trigger-momentary .trigger-indicator,
+    .sound-button.trigger-retrigger .trigger-indicator {
       display: inline-block;
     }
 

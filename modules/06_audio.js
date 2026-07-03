@@ -322,6 +322,20 @@ export function stopAllSounds(fadeOut = true) {
     Object.keys(state.activeAudios).forEach(id => stopSound(id, null, fadeOut));
 }
 
+// 即時停止（フェードなし）。retrigger の頭出し再再生で使用。
+// 通常の stopSound は最低でも MIN_STOP_FADE_SECONDS の遅延が入るため、即座に playSound し直したい場合はこれを使う。
+export function forceStopSound(soundId, soundButtonElement = null) {
+    const audioInfo = state.activeAudios[soundId];
+    if (!audioInfo) return;
+    if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
+    if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
+    try {
+        if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
+        if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
+    } catch (e) { /* ignore */ }
+    cleanupAfterStop(soundId, soundButtonElement);
+}
+
 export function seekSound(soundId, seekTime) {
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo || !state.audioContext) return;
