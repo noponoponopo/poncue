@@ -271,7 +271,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newFadeDuration, newReverse, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -292,6 +292,11 @@ async function handleSoundSettings(soundId) {
 
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
+        // 逆再生設定。変更時に反転バッファキャッシュを破棄（次回再生で再生成）
+        if (sound.reverse !== newReverse) {
+            sound.reverse = newReverse;
+            if (state.reversedAudioBuffers) delete state.reversedAudioBuffers[soundId];
+        }
         sound.effects = newEffects;
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);

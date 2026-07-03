@@ -28,6 +28,7 @@ export const state = {
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
+    reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
     audioStartMetrics: [],
     
     // UI and Settings State
