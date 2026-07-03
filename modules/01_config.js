@@ -46,5 +46,19 @@ export const DEFAULT_EFFECT_SETTINGS = {
         enabled: false,
         threshold: -18,
         ratio: 3
+    },
+    distortion: {
+        enabled: false,
+        amount: 0.4
+    },
+    pitch: {
+        enabled: false,
+        shift: 0
+    },
+    reverb: {
+        enabled: false,
+        decay: 2.0,
+        preDelay: 0.01,
+        wet: 0.35
     }
 };
