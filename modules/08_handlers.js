@@ -189,7 +189,7 @@ async function handleModalAddScene() {
     const sceneName = await showPrompt(`新しいシーンの名前:`, `新しいシーン`, `Scene ${Object.keys(state.scenes).length + 1}`);
     if (sceneName?.trim()) {
         const newSceneId = generateUniqueId('scn');
-        const newSceneData = { id: newSceneId, name: sceneName.trim(), sounds: [] };
+        const newSceneData = { id: newSceneId, name: sceneName.trim(), color: null, sounds: [] };
         state.scenes[newSceneId] = newSceneData;
         await dbRequest('scenes', 'readwrite', 'put', newSceneData);
         populateSceneModalList();
@@ -204,8 +204,10 @@ async function handleModalRenameScene(sceneId) {
     if (newName && newName.trim() !== scene.name) {
         scene.name = newName.trim();
         if (sceneId === state.currentSceneId) {
+            const sceneColor = scene.color;
+            const iconStyle = sceneColor ? ` style="color: ${sceneColor};"` : '';
             const h1 = document.querySelector('header h1');
-            if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${scene.name}`;
+            if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"${iconStyle}></i> ${scene.name}`;
         }
         populateSceneModalList();
         debouncedSaveCurrentSceneSounds("modalRename");
@@ -244,16 +246,50 @@ function handleModalSceneListClick(event) {
     if (!listItem) return;
     const sceneId = listItem.dataset.sceneId;
     const actionButton = event.target.closest('button[data-action]');
+    const colorDot = event.target.closest('.scene-color-dot');
+    if (colorDot && !actionButton) {
+        event.stopPropagation();
+        handleSceneColorChange(sceneId);
+        return;
+    }
     if (actionButton) {
         event.stopPropagation();
         const action = actionButton.dataset.action;
         if (action === 'rename') handleModalRenameScene(sceneId);
+        else if (action === 'color') handleSceneColorChange(sceneId);
         else if (action === 'delete') handleModalDeleteScene(sceneId);
         else if (action === 'export') exportSceneAsZip(sceneId);
     } else {
         if (sceneId !== state.currentSceneId) selectScene(sceneId);
         closeSceneSettingsModal();
     }
+}
+
+async function handleSceneColorChange(sceneId) {
+    const scene = state.scenes[sceneId];
+    if (!scene) return;
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = scene.color || '#808080';
+    input.style.position = 'absolute';
+    input.style.opacity = '0';
+    input.style.width = '0';
+    input.style.height = '0';
+    document.body.appendChild(input);
+    const cleanup = () => { input.remove(); };
+    input.addEventListener('change', async () => {
+        const newColor = input.value;
+        scene.color = newColor;
+        cleanup();
+        await saveCurrentSceneSounds(`sceneColor-${sceneId}`);
+        populateSceneModalList();
+        if (sceneId === state.currentSceneId) {
+            const h1 = document.querySelector('header h1');
+            if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt" style="color: ${newColor};"></i> ${scene.name}`;
+        }
+    });
+    input.addEventListener('blur', cleanup, { once: true });
+    input.click();
 }
 
 async function handleSoundSettings(soundId) {
