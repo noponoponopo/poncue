@@ -415,6 +415,50 @@ export async function getAudioBufferFromDataUrl(soundId, dataUrl) {
     }
 }
 
+/**
+ * 指定サウンドのピークを検出し、targetPeak に揃うよう音量を自動調整する。
+ * HIGH_PERFORMANCE はキャッシュの AudioBuffer を使用、LOW_MEMORY は都度デコード。
+ * 戻り値は { peak, recommendedVolume }、失敗時は null。
+ */
+export async function normalizeSoundVolume(soundId, targetPeak = 0.99) {
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!soundData?.audioId || !state.audioContext) return null;
+
+    let audioBuffer = state.decodedAudioBuffers[soundId];
+    if (!audioBuffer) {
+        try {
+            const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+            const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+            if (!blob) return null;
+            const arrayBuffer = await blob.arrayBuffer();
+            audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        } catch (e) {
+            return null;
+        }
+    }
+    if (!audioBuffer) return null;
+
+    let peak = 0;
+    for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+        const data = audioBuffer.getChannelData(ch);
+        for (let i = 0; i < data.length; i++) {
+            const abs = Math.abs(data[i]);
+            if (abs > peak) peak = abs;
+        }
+    }
+    if (peak <= 0) return null;
+
+    const recommendedVolume = Math.min(1.0, targetPeak / peak);
+    soundData.volume = recommendedVolume;
+
+    const activeAudio = state.activeAudios[soundId];
+    if (activeAudio?.individualGain && !activeAudio.isFadingOut) {
+        activeAudio.individualGain.gain.setTargetAtTime(recommendedVolume, state.audioContext.currentTime, 0.01);
+    }
+
+    return { peak, recommendedVolume };
+}
+
 // --- UI Update Loops (Progress, Meter, Waveform) ---
 
 function startProgressBarUpdate(soundId, soundButtonElement) {

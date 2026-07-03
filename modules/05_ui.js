@@ -91,7 +91,7 @@ export async function showPrompt(message, title = '入力', defaultValue = '') {
     return await showModal(title, message, 'showPrompt', '', defaultValue);
 }
 
-export async function showSoundSettingsModal(soundId, currentShortcut = '') {
+export async function showSoundSettingsModal(soundId, currentShortcut = '', callbacks = {}) {
     return new Promise(resolve => {
         if (!dom.customModalOverlay) {
             showAlert("設定モーダルを表示できません。", "エラー");
@@ -119,6 +119,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
                     <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
                     <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row effect-action-row">
+                    <button type="button" id="normalize-btn" class="modal-input effect-action-btn">音量をノーマライズ</button>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -186,6 +189,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const normalizeBtn = dom.customModalMessage.querySelector('#normalize-btn');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -234,6 +238,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
         };
 
+        const handleNormalize = () => { callbacks.onNormalize?.(); };
+
         const readEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
             wet: parseFloat(effectWetInput.value),
@@ -271,6 +277,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
+        normalizeBtn.addEventListener('click', handleNormalize);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
@@ -281,6 +288,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            normalizeBtn.removeEventListener('click', handleNormalize);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
@@ -290,6 +298,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            normalizeBtn.removeEventListener('click', handleNormalize);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
