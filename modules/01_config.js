@@ -51,10 +51,6 @@ export const DEFAULT_EFFECT_SETTINGS = {
         enabled: false,
         amount: 0.4
     },
-    pitch: {
-        enabled: false,
-        shift: 0
-    },
     reverb: {
         enabled: false,
         decay: 2.0,
