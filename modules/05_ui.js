@@ -117,12 +117,18 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const initialSpeed = Number.isFinite(sound.playbackRate) ? sound.playbackRate : 1;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
                 <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
+                </div>
+                <div class="effect-param-row">
+                    <label for="playback-speed-input" class="effect-param-label">速度</label>
+                    <span class="effect-param-value"><span id="playback-speed-value">${initialSpeed.toFixed(2)}</span>x</span>
+                    <input type="range" id="playback-speed-input" min="0.5" max="2" step="0.05" value="${initialSpeed}" class="modal-input effect-slider">
                 </div>
                 <div class="effect-param-row">
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
@@ -193,6 +199,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
+        const playbackSpeedInput = dom.customModalMessage.querySelector('#playback-speed-input');
+        const playbackSpeedValueSpan = dom.customModalMessage.querySelector('#playback-speed-value');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
@@ -210,6 +218,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
 
         let newShortcut = currentShortcut;
+        let newPlaybackSpeed = initialSpeed;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
         let newEffects = effectSettings;
 
@@ -236,6 +245,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
             newShortcut = [...modifiers, displayKey].filter(Boolean).join('+');
             shortcutInput.value = newShortcut;
+        };
+
+        const handlePlaybackSpeedInput = (e) => {
+            newPlaybackSpeed = parseFloat(e.target.value);
+            playbackSpeedValueSpan.textContent = newPlaybackSpeed.toFixed(2);
         };
 
         const handleFadeDurationInput = (e) => {
@@ -279,6 +293,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
+        playbackSpeedInput.addEventListener('input', handlePlaybackSpeedInput);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
@@ -289,15 +304,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newPlaybackSpeed, newFadeDuration, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));

@@ -173,6 +173,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             objectUrl = URL.createObjectURL(blob);
             audioElement = new Audio(objectUrl);
             audioElement.loop = soundData.loop;
+            audioElement.playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
             audioElement.preload = 'auto';
             audioElement.currentTime = Math.max(0, startOffset);
             sourceNode = state.audioContext.createMediaElementSource(audioElement);
@@ -194,6 +195,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             sourceNode = state.audioContext.createBufferSource();
             sourceNode.buffer = audioBuffer;
             sourceNode.loop = soundData.loop;
+            sourceNode.playbackRate.setValueAtTime(Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1)), state.audioContext.currentTime);
         }
 
         const individualGain = state.audioContext.createGain();
@@ -364,6 +366,22 @@ export function updateActiveSoundEffects(soundId) {
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!audioInfo?.effectRack || !soundData || !state.audioContext) return;
     applyEffectSettings(audioInfo.effectRack, soundData.effects, state.audioContext, false);
+}
+
+export function updateActiveSoundSpeed(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!audioInfo || !soundData || !state.audioContext) return;
+    const rate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+    if (audioInfo.audioElement) {
+        audioInfo.audioElement.playbackRate = rate;
+    } else if (audioInfo.sourceNode?.playbackRate) {
+        try {
+            audioInfo.sourceNode.playbackRate.setTargetAtTime(rate, state.audioContext.currentTime, 0.05);
+        } catch (e) {
+            try { audioInfo.sourceNode.playbackRate.value = rate; } catch (_) { /* ignore */ }
+        }
+    }
 }
 
 function cleanupAfterStop(soundId, soundButtonElement) {
