@@ -108,12 +108,18 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
                 <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
+                </div>
+                <div class="effect-param-row">
+                    <label for="pad-color-input" class="effect-param-label">カラー</label>
+                    <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
+                    <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
                 </div>
                 <div class="effect-param-row">
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
@@ -184,6 +190,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
+        const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
+        const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
@@ -201,6 +209,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
 
         let newShortcut = currentShortcut;
+        let newColor = (typeof sound.color === 'string' && sound.color) ? sound.color : null;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
         let newEffects = effectSettings;
 
@@ -227,6 +236,12 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
             newShortcut = [...modifiers, displayKey].filter(Boolean).join('+');
             shortcutInput.value = newShortcut;
+        };
+
+        const handlePadColorInput = (e) => { newColor = e.target.value; };
+        const handlePadColorClear = () => {
+            newColor = null;
+            padColorInput.value = '#808080';
         };
 
         const handleFadeDurationInput = (e) => {
@@ -270,6 +285,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
+        padColorInput.addEventListener('input', handlePadColorInput);
+        padColorClearBtn.addEventListener('click', handlePadColorClear);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
@@ -280,15 +297,19 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newColor, newFadeDuration, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
