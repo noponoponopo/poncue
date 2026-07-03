@@ -619,6 +619,33 @@
       width: 100%;
     }
 
+    .effect-number-input {
+      width: 100%;
+      min-width: 0;
+      padding: 3px 4px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.8em;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .effect-number-input:disabled {
+      opacity: 0.5;
+    }
+
+    .effect-number-input::-webkit-outer-spin-button,
+    .effect-number-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .effect-number-input {
+      -moz-appearance: textfield;
+    }
+
     .effect-text-input {
       width: 100%;
       padding: 4px 8px;
