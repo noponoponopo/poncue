@@ -68,6 +68,7 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
+    dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
     dom.masterVolumeSlider?.addEventListener('input', handleMasterVolumeChange);
     dom.masterVolumeSlider?.addEventListener('change', () => saveSetting('masterVolume', state.masterVolume));
@@ -322,6 +323,12 @@ async function handleKeyDown(event) {
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
         document.activeElement.tagName === 'TEXTAREA') {
+        return;
+    }
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        stopAllSounds(true);
         return;
     }
 

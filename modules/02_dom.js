@@ -12,6 +12,7 @@ export function initDom() {
         // --- JS側で使うキー名 : HTMLのid属性 ---
         soundboard: 'soundboard',
         addSoundBtn: 'add-sound-btn',
+        stopAllBtn: 'stop-all-btn',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
         masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正

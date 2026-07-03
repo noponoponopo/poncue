@@ -306,6 +306,29 @@
       transform: scale(0.98);
     }
 
+    button#stop-all-btn {
+      background-color: var(--danger-color);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 500;
+      transition: background-color var(--transition-speed), transform 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button#stop-all-btn:hover {
+      background-color: var(--danger-hover);
+    }
+
+    button#stop-all-btn:active {
+      transform: scale(0.98);
+    }
+
     .switch {
       position: relative;
       display: inline-block;
