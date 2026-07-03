@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, startMasterMeter, setMasterParam } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, normalizeSoundVolume, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -268,7 +268,18 @@ async function handleSoundSettings(soundId) {
         }
     }
 
-    const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
+    const newSettings = await showSoundSettingsModal(soundId, currentShortcut, {
+        onNormalize: async () => {
+            const result = await normalizeSoundVolume(soundId);
+            if (result) {
+                showAlert(`ピーク ${Math.round(result.peak * 100)}% を検出しました。音量を ${Math.round(result.recommendedVolume * 100)}% に調整しました。`, 'ノーマライズ');
+                debouncedSaveCurrentSceneSounds(`normalize-${soundId}`);
+                renderers.renderSoundboard();
+            } else {
+                showAlert('ノーマライズできませんでした。音声データが破損している可能性があります。', 'エラー');
+            }
+        }
+    });
 
     if (newSettings !== null) { // User clicked Save or cleared
         const { newShortcut, newFadeDuration, newEffects } = newSettings;

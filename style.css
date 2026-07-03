@@ -629,6 +629,26 @@
       font-size: 0.85em;
     }
 
+    .effect-action-row {
+      grid-template-columns: 1fr;
+    }
+
+    .effect-action-btn {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.8em;
+      cursor: pointer;
+      transition: background-color var(--transition-speed);
+    }
+
+    .effect-action-btn:hover {
+      background: color-mix(in srgb, var(--primary-color) 15%, var(--bg-color));
+    }
+
     .modal-scene-list {
       list-style: none;
       padding: 0;
