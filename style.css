@@ -629,6 +629,28 @@
       font-size: 0.85em;
     }
 
+    .effect-color-input {
+      width: 42px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+      justify-self: start;
+    }
+
+    .effect-color-clear-btn {
+      justify-self: end;
+      padding: 4px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.75em;
+      cursor: pointer;
+    }
+
     .modal-scene-list {
       list-style: none;
       padding: 0;
@@ -903,6 +925,14 @@
 
     body.dark-mode .sound-button.playing {
       background-color: color-mix(in srgb, var(--card-bg) 85%, var(--primary-color) 15%);
+    }
+
+    .sound-button.has-color {
+      background-color: color-mix(in srgb, var(--pad-color) 35%, var(--card-bg));
+    }
+
+    .sound-button.has-color.playing {
+      background-color: color-mix(in srgb, var(--pad-color) 35%, var(--card-bg) 55%, var(--primary-color) 10%);
     }
 
     .loop-indicator {
