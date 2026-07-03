@@ -130,6 +130,34 @@ export async function initializeApp() {
 
     await Promise.all([loadSettings(), loadScenesFromDB()]);
 
+    // --- Audio integrity check: verify each sound's audioId exists in audio_files ---
+    try {
+        const allAudioRecords = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'getAll');
+        const existingAudioIds = new Set((allAudioRecords || []).map(r => r?.id));
+        const missingSounds = [];
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            for (const sound of scene.sounds) {
+                if (!sound.audioId || !existingAudioIds.has(sound.audioId)) {
+                    if (!sound.error) sound.error = 'Audio data missing';
+                    missingSounds.push(`${scene.name} / ${sound.name}`);
+                } else if (sound.error === 'Audio data missing') {
+                    delete sound.error;
+                }
+            }
+        }
+        if (missingSounds.length > 0) {
+            const list = missingSounds.map(s => `・${s}`).join('\n');
+            showAlert(
+                `以下のサウンドの音源が見つかりません。ファイルが削除されたかデータが破損しています。\n\n${list}`,
+                '音源チェック'
+            );
+        }
+    } catch (e) {
+        console.error('Audio integrity check failed:', e);
+    }
+    // --- End of audio integrity check ---
+
     // --- Data Migration for missing durations ---
     let migrationNeeded = false;
     for (const sceneId in state.scenes) {
