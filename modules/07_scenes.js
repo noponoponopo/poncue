@@ -404,6 +404,8 @@ export async function handleAudioFileSelect(event) {
                 volume: 1.0,
                 audioId: audioId,
                 fadeDuration: 0.0,
+                cueIn: 0,
+                cueOut: null,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };
