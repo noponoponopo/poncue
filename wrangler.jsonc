@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poncue",
+  "compatibility_date": "2026-07-06",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "poncue.nopo1.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist"
+  }
+}
