@@ -5,6 +5,15 @@ import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
 
+export function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // --- Custom Modal ---
 export function showModal(title, message, type = 'showAlert', inputPlaceholder = '', inputDefaultValue = '') {
     return new Promise(resolve => {
@@ -15,7 +24,7 @@ export function showModal(title, message, type = 'showAlert', inputPlaceholder =
         }
 
         dom.customModalTitle.textContent = title;
-        dom.customModalMessage.innerHTML = message.replace(/\n/g, '<br>');
+        dom.customModalMessage.innerHTML = escapeHtml(message).replace(/\n/g, '<br>');
 
         // Clear previous input if any
         const existingInput = dom.customModalBody.querySelector('input');

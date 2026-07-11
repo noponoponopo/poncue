@@ -4,7 +4,7 @@ import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
-import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal } from './05_ui.js';
+import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
@@ -208,7 +208,7 @@ export async function initializeApp() {
 }
 
 export function renderFallbackUI(message) {
-    if (dom.soundboard) { dom.soundboard.innerHTML = `<div class="fallback-message">${message}</div>`; }
+    if (dom.soundboard) { dom.soundboard.innerHTML = `<div class="fallback-message">${escapeHtml(message)}</div>`; }
     if (dom.levelMeterArea) dom.levelMeterArea.innerHTML = '';
 }
 
@@ -345,7 +345,7 @@ export async function selectScene(sceneId) {
     }
 
     const h1 = document.querySelector('header h1');
-    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${state.scenes[sceneId]?.name || 'シーンなし'}`;
+    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
     
     renderers.renderSoundboard();
     
@@ -681,7 +681,7 @@ export function populateSceneModalList() {
         li.title = `${scene.name} (${scene.sounds.length} サウンド)`;
         if (scene.id === state.currentSceneId) li.classList.add('active');
         li.innerHTML = `
-            <span class="modal-scene-name">${scene.name}</span>
+            <span class="modal-scene-name">${escapeHtml(scene.name)}</span>
             <div class="modal-scene-actions">
                 <button title="名前を変更" data-action="rename"><i class="fas fa-pencil-alt"></i></button>
                 <button title="このシーンをエクスポート (.zip)" data-action="export"><i class="fas fa-file-archive"></i></button>
