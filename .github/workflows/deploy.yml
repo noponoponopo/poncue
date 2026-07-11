@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "feat/**"
   workflow_dispatch:
 
 jobs:
@@ -23,8 +24,35 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Deploy
+      - name: Deploy production
+        if: github.ref_name == 'main'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun run deploy
+
+      - name: Prepare preview
+        if: startsWith(github.ref_name, 'feat/')
+        id: preview
+        shell: bash
+        run: |
+          preview_name="${GITHUB_REF_NAME#feat/}"
+          if [[ ! "$preview_name" =~ ^[a-z0-9]+([a-z0-9-]*[a-z0-9])?$ ]] || [[ ${#preview_name} -gt 42 ]]; then
+            echo "Preview branch suffix must be 1-42 lowercase letters, numbers, or hyphens: $preview_name" >&2
+            exit 1
+          fi
+          echo "worker=poncue-preview-$preview_name" >> "$GITHUB_OUTPUT"
+          echo "domain=$preview_name.poncue.dev.nopo1.com" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy preview
+        if: startsWith(github.ref_name, 'feat/')
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PREVIEW_WORKER: ${{ steps.preview.outputs.worker }}
+          PREVIEW_DOMAIN: ${{ steps.preview.outputs.domain }}
+        run: >-
+          bunx wrangler deploy
+          --config wrangler.preview.jsonc
+          --name "$PREVIEW_WORKER"
+          --domain "$PREVIEW_DOMAIN"
