@@ -601,6 +601,12 @@
       grid-template-columns: 64px 56px 1fr;
     }
 
+    .effect-checkbox-row label {
+      grid-column: 2 / -1;
+      font-size: 0.8em;
+      cursor: pointer;
+    }
+
     .effect-param-label {
       font-size: 0.8em;
       color: var(--secondary-color);

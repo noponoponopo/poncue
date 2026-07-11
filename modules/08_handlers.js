@@ -274,7 +274,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newPlaybackSpeed, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newPlaybackSpeed, preservePitch, newFadeDuration, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -297,8 +297,9 @@ async function handleSoundSettings(soundId) {
         sound.fadeDuration = newFadeDuration;
         if (Number.isFinite(newPlaybackSpeed)) {
             sound.playbackRate = Math.max(0.25, Math.min(4, newPlaybackSpeed));
-            updateActiveSoundSpeed(soundId);
         }
+        sound.preservePitch = preservePitch;
+        updateActiveSoundSpeed(soundId);
         sound.effects = newEffects;
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);

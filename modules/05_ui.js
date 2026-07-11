@@ -130,6 +130,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <span class="effect-param-value"><span id="playback-speed-value">${initialSpeed.toFixed(2)}</span>x</span>
                     <input type="range" id="playback-speed-input" min="0.5" max="2" step="0.05" value="${initialSpeed}" class="modal-input effect-slider">
                 </div>
+                <div class="effect-param-row effect-checkbox-row">
+                    <span class="effect-param-label">ピッチ</span>
+                    <label><input type="checkbox" id="preserve-pitch-input" ${sound.preservePitch ? 'checked' : ''}> 速度変更時も保持</label>
+                </div>
                 <div class="effect-param-row">
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
                     <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
@@ -201,6 +205,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const playbackSpeedInput = dom.customModalMessage.querySelector('#playback-speed-input');
         const playbackSpeedValueSpan = dom.customModalMessage.querySelector('#playback-speed-value');
+        const preservePitchInput = dom.customModalMessage.querySelector('#preserve-pitch-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
@@ -309,7 +314,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newPlaybackSpeed, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newFadeDuration, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
