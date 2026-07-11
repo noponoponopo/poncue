@@ -1009,7 +1009,7 @@
 
     /* --- 並び替えが無効な時のパッドのスタイル --- */
     .sound-button:not([draggable="true"]) {
-      cursor: default !important;
+      cursor: pointer !important;
       background-color: var(--card-bg);
     }
 

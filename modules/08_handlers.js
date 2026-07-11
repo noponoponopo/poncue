@@ -377,21 +377,28 @@ async function handleKeyDown(event) {
 
 // --- Sound Button and Board Handlers ---
 
+const _soundClickTimestamps = new Map();
+const SOUND_CLICK_DEBOUNCE_MS = 80;
+
 async function handleSoundButtonClick(soundId, soundButtonElement) {
     const clickTime = performance.now(); // Capture timestamp at click
     if (!state.audioContext) { if (!initAudioContext()) { showAlert("オーディオ機能の初期化に失敗。", "エラー"); return; } }
     await resumeAudioContext();
     if (state.audioContext.state !== 'running') { showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知"); return; }
-    
+
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (soundData?.error) {
         showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
         return;
     }
 
-    if (state.activeAudios[soundId]) { 
-        stopSound(soundId, soundButtonElement); 
-    } else { 
+    const lastClick = _soundClickTimestamps.get(soundId) ?? 0;
+    if (clickTime - lastClick < SOUND_CLICK_DEBOUNCE_MS) return;
+    _soundClickTimestamps.set(soundId, clickTime);
+
+    if (state.activeAudios[soundId]) {
+        stopSound(soundId, soundButtonElement);
+    } else {
         playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
     }
 }
@@ -677,16 +684,25 @@ function createSoundButton(sound) {
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
     const setPointerFlag = () => { pointerFlag = true; setTimeout(() => pointerFlag = false, 150); };
 
-    const buttonContent = buttonWrapper.querySelector('.button-content');
-    buttonContent.addEventListener('pointerdown', e => {
+    const isControlTarget = target => target instanceof Element && target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
+
+    buttonWrapper.addEventListener('pointerdown', e => {
+        if (isControlTarget(e.target)) return;
         if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
             e.preventDefault();
             handleSoundButtonClick(sound.id, buttonWrapper);
             setPointerFlag();
         }
     });
-    buttonContent.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); handleSoundButtonClick(sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
-    buttonContent.addEventListener('click', () => { if (!touchFlag && !pointerFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper); });
+    buttonWrapper.addEventListener('touchend', e => {
+        if (isControlTarget(e.target)) return;
+        if (!isDraggingViaTouch) { e.preventDefault(); handleSoundButtonClick(sound.id, buttonWrapper); setTouchFlag(); }
+        clearTimeout(longPressTimeoutId);
+    }, { passive: false });
+    buttonWrapper.addEventListener('click', e => {
+        if (isControlTarget(e.target)) return;
+        if (!touchFlag && !pointerFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper);
+    });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
     loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
