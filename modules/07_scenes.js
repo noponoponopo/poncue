@@ -366,7 +366,7 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
 
 export async function selectScene(sceneId) {
     stopAllSounds(false);
-    updateState({ decodedAudioBuffers: {} });
+    updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {} });
     triggerWaveformUpdate();
 
     if (!state.scenes[sceneId]) {
@@ -460,6 +460,7 @@ export async function handleAudioFileSelect(event) {
                 fadeOutDuration: 0.0,
                 fadeInEasing: DEFAULT_FADE_EASING,
                 fadeOutEasing: DEFAULT_FADE_EASING,
+                reverse: false,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };

@@ -138,6 +138,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const fadeInEasing = FADE_EASING_TYPES.includes(sound.fadeInEasing) ? sound.fadeInEasing : 'linear';
         const fadeOutEasing = FADE_EASING_TYPES.includes(sound.fadeOutEasing) ? sound.fadeOutEasing : 'linear';
         const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
+        const reverse = !!sound.reverse;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -179,6 +180,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                         <input type="range" id="pan-input" min="-1" max="1" step="0.01" value="${initialPan}" class="modal-input effect-slider">
                         <span class="pan-marker">R</span>
                     </div>
+                </div>
+                <div class="effect-param-row">
+                    <label for="reverse-input" class="effect-param-label">逆再生</label>
+                    <input type="checkbox" id="reverse-input" ${reverse ? 'checked' : ''}>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -281,6 +286,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const fadeOutEasingInput = dom.customModalMessage.querySelector('#fade-out-easing-input');
         const panInput = dom.customModalMessage.querySelector('#pan-input');
         const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
+        const reverseInput = dom.customModalMessage.querySelector('#reverse-input');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -308,6 +314,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         let newFadeInEasing = fadeInEasing;
         let newFadeOutEasing = fadeOutEasing;
         let newPan = initialPan;
+        let newReverse = reverse;
         let newEffects = effectSettings;
 
         const handleKeydown = (e) => {
@@ -362,6 +369,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             panInput.value = 0;
             panValueSpan.textContent = formatPanValue(0);
         };
+
+        const handleReverseInput = (e) => { newReverse = e.target.checked; };
 
         const readEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
@@ -421,6 +430,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         fadeOutEasingInput.addEventListener('change', handleFadeOutEasingInput);
         panInput.addEventListener('input', handlePanInput);
         panInput.addEventListener('dblclick', handlePanDoubleClick);
+        reverseInput.addEventListener('change', handleReverseInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
@@ -438,10 +448,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
+            reverseInput.removeEventListener('change', handleReverseInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
+            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
@@ -454,6 +465,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
+            reverseInput.removeEventListener('change', handleReverseInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');

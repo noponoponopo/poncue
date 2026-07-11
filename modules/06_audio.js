@@ -250,7 +250,11 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
     let audioBuffer = null;
 
     try {
-        if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) {
+        const wantsReverse = !!soundData.reverse;
+        // reverse の場合は LOW_MEMORY でも BufferSource を使用（反転バッファが必要なため）
+        const useBufferSource = state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY || wantsReverse;
+
+        if (!useBufferSource) {
             const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
             const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
 
@@ -264,7 +268,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             audioElement.preload = 'auto';
             audioElement.currentTime = Math.max(0, startOffset);
             sourceNode = state.audioContext.createMediaElementSource(audioElement);
-            
+
             // For waveform, we still need the buffer
             try {
                 const arrayBuffer = await blob.arrayBuffer();
@@ -273,8 +277,29 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
             }
 
-        } else { // HIGH_PERFORMANCE
-            audioBuffer = state.decodedAudioBuffers[soundId];
+        } else { // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
+            let baseBuffer = state.decodedAudioBuffers[soundId];
+            if (!baseBuffer && wantsReverse) {
+                // LOW_MEMORY + reverse: blob からデコードしてキャッシュ
+                const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+                const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+                if (!blob) {
+                    if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
+                    return;
+                }
+                try {
+                    const arrayBuffer = await blob.arrayBuffer();
+                    baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+                    state.decodedAudioBuffers[soundId] = baseBuffer;
+                } catch (decodeError) {
+                    console.error("Error decoding audio for reverse:", decodeError);
+                }
+            }
+
+            audioBuffer = wantsReverse
+                ? getReversedAudioBuffer(soundId, baseBuffer)
+                : baseBuffer;
+
             if (!audioBuffer) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データがキャッシュされていません。`);
                 return;
@@ -503,6 +528,31 @@ function cleanupAfterStop(soundId, soundButtonElement) {
     }
     removeMeterElement(soundId);
     triggerWaveformUpdate();
+}
+
+/**
+ * 指定サウンドの逆再生用バッファを取得（キャッシュ）。
+ * 元バッファのサンプルを逆順に並べ替えた新バッファを生成する。
+ */
+export function getReversedAudioBuffer(soundId, originalBuffer) {
+    if (!originalBuffer) return null;
+    const ctx = originalBuffer.context || state.audioContext;
+    if (!ctx) return null;
+    const cached = state.reversedAudioBuffers[soundId];
+    if (cached && cached.length === originalBuffer.length && cached.sampleRate === originalBuffer.sampleRate) {
+        return cached;
+    }
+    const reversed = ctx.createBuffer(originalBuffer.numberOfChannels, originalBuffer.length, originalBuffer.sampleRate);
+    for (let ch = 0; ch < originalBuffer.numberOfChannels; ch++) {
+        const src = originalBuffer.getChannelData(ch);
+        const dst = reversed.getChannelData(ch);
+        const len = src.length;
+        for (let i = 0; i < len; i++) {
+            dst[i] = src[len - 1 - i];
+        }
+    }
+    state.reversedAudioBuffers[soundId] = reversed;
+    return reversed;
 }
 
 export async function getAudioBufferFromDataUrl(soundId, dataUrl) {
