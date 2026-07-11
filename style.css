@@ -931,8 +931,10 @@
       background-color: color-mix(in srgb, var(--pad-color) 35%, var(--card-bg));
     }
 
-    .sound-button.has-color.playing {
-      background-color: color-mix(in srgb, var(--pad-color) 35%, var(--card-bg) 55%, var(--primary-color) 10%);
+    .sound-button.has-color.playing,
+    body.dark-mode .sound-button.has-color.playing {
+      border-color: var(--pad-color);
+      background-color: color-mix(in srgb, var(--pad-color) 55%, var(--card-bg));
     }
 
     .loop-indicator {
@@ -1014,7 +1016,6 @@
     /* --- 並び替えが無効な時のパッドのスタイル --- */
     .sound-button:not([draggable="true"]) {
       cursor: default !important;
-      background-color: var(--card-bg);
     }
 
     .sound-button:not([draggable="true"]):hover {
