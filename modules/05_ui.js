@@ -137,12 +137,18 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const fadeOutDuration = Number.isFinite(sound.fadeOutDuration) ? sound.fadeOutDuration : 0;
         const fadeInEasing = FADE_EASING_TYPES.includes(sound.fadeInEasing) ? sound.fadeInEasing : 'linear';
         const fadeOutEasing = FADE_EASING_TYPES.includes(sound.fadeOutEasing) ? sound.fadeOutEasing : 'linear';
+        const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
                 <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
+                </div>
+                <div class="effect-param-row">
+                    <label for="pad-color-input" class="effect-param-label">カラー</label>
+                    <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
+                    <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
                 </div>
                 <div class="effect-param-row">
                     <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
@@ -261,6 +267,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
+        const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
+        const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
         const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
         const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
         const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
@@ -290,6 +298,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const reverbWetInput = dom.customModalMessage.querySelector('#reverb-wet-input');
 
         let newShortcut = currentShortcut;
+        let newColor = (typeof sound.color === 'string' && sound.color) ? sound.color : null;
         let newFadeInDuration = fadeInDuration;
         let newFadeOutDuration = fadeOutDuration;
         let newFadeInEasing = fadeInEasing;
@@ -320,6 +329,12 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
             newShortcut = [...modifiers, displayKey].filter(Boolean).join('+');
             shortcutInput.value = newShortcut;
+        };
+
+        const handlePadColorInput = (e) => { newColor = e.target.value; };
+        const handlePadColorClear = () => {
+            newColor = null;
+            padColorInput.value = '#808080';
         };
 
         const handleFadeInDurationInput = (e) => {
@@ -394,6 +409,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
+        padColorInput.addEventListener('input', handlePadColorInput);
+        padColorClearBtn.addEventListener('click', handlePadColorClear);
         fadeInDurationInput.addEventListener('input', handleFadeInDurationInput);
         fadeOutDurationInput.addEventListener('input', handleFadeOutDurationInput);
         fadeInEasingInput.addEventListener('change', handleFadeInEasingInput);
@@ -409,6 +426,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
             fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
             fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
@@ -418,11 +437,13 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
+            resolve({ newShortcut, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
             fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
             fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);

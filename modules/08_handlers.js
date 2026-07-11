@@ -305,7 +305,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects } = newSettings;
+        const { newShortcut, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -323,6 +323,13 @@ async function handleSoundSettings(soundId) {
             state.shortcuts[newShortcut] = soundId;
         }
         await saveSetting('shortcuts', state.shortcuts);
+
+        // Update pad color
+        if (newColor === null) {
+            delete sound.color;
+        } else if (typeof newColor === 'string') {
+            sound.color = newColor;
+        }
 
         // Update fade (in/out split + easing)
         sound.fadeInDuration = newFadeInDuration;
@@ -644,6 +651,10 @@ function createSoundButton(sound) {
     buttonWrapper.dataset.id = sound.id;
     buttonWrapper.title = sound.name;
     if (sound.loop) buttonWrapper.classList.add('loop-on');
+    if (sound.color) {
+        buttonWrapper.style.setProperty('--pad-color', sound.color);
+        buttonWrapper.classList.add('has-color');
+    }
     if (sound.error) buttonWrapper.classList.add('error');
 
     let settingsButtonContent = '<i class="fas fa-cog"></i>';
