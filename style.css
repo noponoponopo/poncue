@@ -705,6 +705,7 @@
       align-items: center;
       padding: 10px 12px;
       border-bottom: 1px solid var(--border-color);
+      background-color: color-mix(in srgb, var(--card-bg) 90%, var(--scene-color, transparent) 10%);
       cursor: pointer;
       border-radius: var(--border-radius);
       transition: background-color var(--transition-speed);
@@ -715,11 +716,11 @@
     }
 
     .modal-scene-list li:hover {
-      background-color: var(--control-hover-bg);
+      background-color: color-mix(in srgb, var(--card-bg) 80%, var(--scene-color, transparent) 20%);
     }
 
     .modal-scene-list li.active {
-      background-color: color-mix(in srgb, var(--primary-color) 15%, transparent);
+      background-color: color-mix(in srgb, var(--card-bg) 75%, var(--scene-color, var(--primary-color)) 25%);
       font-weight: 500;
     }
 

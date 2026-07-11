@@ -394,8 +394,10 @@ export async function selectScene(sceneId) {
         }
     }
 
+    const sceneColor = state.scenes[sceneId]?.color;
+    const iconStyle = sceneColor ? ` style="color: ${sceneColor};"` : '';
     const h1 = document.querySelector('header h1');
-    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
+    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"${iconStyle}></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
     
     renderers.renderSoundboard();
     
@@ -738,11 +740,14 @@ export function populateSceneModalList() {
         li.dataset.sceneId = scene.id;
         li.title = `${scene.name} (${scene.sounds.length} サウンド)`;
         if (scene.id === state.currentSceneId) li.classList.add('active');
+        const sceneColor = scene.color || '';
+        li.style.setProperty('--scene-color', sceneColor || 'transparent');
         li.innerHTML = `
             <span class="modal-scene-name">${escapeHtml(scene.name)}</span>
             <div class="modal-scene-actions">
                 <button title="名前を変更" data-action="rename"><i class="fas fa-pencil-alt"></i></button>
                 <button title="このシーンをエクスポート (.zip)" data-action="export"><i class="fas fa-file-archive"></i></button>
+                <button title="色を変更" data-action="color"><i class="fas fa-palette"></i></button>
                 <button title="削除" class="danger" data-action="delete" ${sceneIds.length <= 1 ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
             </div>
         `;
