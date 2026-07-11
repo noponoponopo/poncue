@@ -516,6 +516,19 @@ export function createMasterEffectKnobs(allValues, onChange) {
                 { key: 'delay.time',  label: 'TIME', min: 0, max: 2,    step: 0.01, unit: 's', dragPixels: 600 },
                 { key: 'delay.level', label: 'MIX',  min: 0, max: 1,    step: 0.01, unit: '%' }
             ]
+        },
+        {
+            name: 'DIST',
+            params: [
+                { key: 'distortion.amount', label: 'AMOUNT', min: 0, max: 1, step: 0.01, unit: '%' }
+            ]
+        },
+        {
+            name: 'REVERB',
+            params: [
+                { key: 'reverb.decay', label: 'DECAY', min: 0.1, max: 10, step: 0.1,  unit: 's', dragPixels: 600 },
+                { key: 'reverb.wet',   label: 'MIX',   min: 0,   max: 1,  step: 0.01, unit: '%' }
+            ]
         }
     ];
 

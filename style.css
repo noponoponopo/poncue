@@ -1213,6 +1213,8 @@
       bottom: calc(var(--waveform-area-height) + var(--meter-area-height));
       left: 0;
       width: 100%;
+      overflow-x: auto;
+      flex-wrap: nowrap;
     }
 
     .knob-separator {
