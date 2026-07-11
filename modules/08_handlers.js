@@ -249,12 +249,6 @@ function handleModalSceneListClick(event) {
     if (!listItem) return;
     const sceneId = listItem.dataset.sceneId;
     const actionButton = event.target.closest('button[data-action]');
-    const colorDot = event.target.closest('.scene-color-dot');
-    if (colorDot && !actionButton) {
-        event.stopPropagation();
-        handleSceneColorChange(sceneId);
-        return;
-    }
     if (actionButton) {
         event.stopPropagation();
         const action = actionButton.dataset.action;

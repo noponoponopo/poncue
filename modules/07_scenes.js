@@ -685,7 +685,6 @@ export function populateSceneModalList() {
         const sceneColor = scene.color || '';
         li.style.setProperty('--scene-color', sceneColor || 'transparent');
         li.innerHTML = `
-            <span class="scene-color-dot" title="色を変更"></span>
             <span class="modal-scene-name">${escapeHtml(scene.name)}</span>
             <div class="modal-scene-actions">
                 <button title="名前を変更" data-action="rename"><i class="fas fa-pencil-alt"></i></button>

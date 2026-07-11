@@ -641,7 +641,7 @@
       align-items: center;
       padding: 10px 12px;
       border-bottom: 1px solid var(--border-color);
-      border-left: 4px solid var(--scene-color, transparent);
+      background-color: color-mix(in srgb, var(--card-bg) 90%, var(--scene-color, transparent) 10%);
       cursor: pointer;
       border-radius: var(--border-radius);
       transition: background-color var(--transition-speed);
@@ -652,11 +652,11 @@
     }
 
     .modal-scene-list li:hover {
-      background-color: var(--control-hover-bg);
+      background-color: color-mix(in srgb, var(--card-bg) 80%, var(--scene-color, transparent) 20%);
     }
 
     .modal-scene-list li.active {
-      background-color: color-mix(in srgb, var(--primary-color) 15%, transparent);
+      background-color: color-mix(in srgb, var(--card-bg) 75%, var(--scene-color, var(--primary-color)) 25%);
       font-weight: 500;
     }
 
@@ -701,23 +701,6 @@
 
     .modal-scene-actions button.danger:hover:not(:disabled) {
       color: var(--danger-color);
-    }
-
-    .scene-color-dot {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: var(--scene-color, var(--border-color));
-      border: 1px solid var(--border-color);
-      cursor: pointer;
-      flex-shrink: 0;
-      margin-right: 10px;
-      transition: transform 0.1s;
-    }
-
-    .scene-color-dot:hover {
-      transform: scale(1.15);
     }
 
     .modal-footer {
