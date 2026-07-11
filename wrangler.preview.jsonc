@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poncue-preview",
+  "compatibility_date": "2026-07-06",
+  "workers_dev": false,
+  "assets": {
+    "directory": "./dist"
+  }
+}
