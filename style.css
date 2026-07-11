@@ -689,6 +689,10 @@
       cursor: pointer;
     }
 
+    .hold-to-play-setting {
+      margin: 8px 0 10px;
+    }
+
     .modal-scene-list {
       list-style: none;
       padding: 0;

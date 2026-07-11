@@ -150,6 +150,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
                     <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
                 </div>
+                <label class="effect-toggle hold-to-play-setting">
+                    <input type="checkbox" id="hold-to-play-input" ${sound.holdToPlay ? 'checked' : ''}> ホールド中のみ再生
+                </label>
                 <div class="effect-param-row">
                     <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
                     <span class="effect-param-value"><span id="fade-in-duration-value">${fadeInDuration.toFixed(2)}</span>s</span>
@@ -269,6 +272,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
         const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
+        const holdToPlayInput = dom.customModalMessage.querySelector('#hold-to-play-input');
         const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
         const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
         const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
@@ -437,7 +441,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
+            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
