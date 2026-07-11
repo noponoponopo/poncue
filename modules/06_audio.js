@@ -162,6 +162,11 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
     let audioBuffer = null;
 
     try {
+        // cueIn 適用: 通常再生時は cueIn を開始位置に、seek 時は startOffset を優先
+        const effectiveStartOffset = startOffset > 0
+            ? startOffset
+            : Math.max(0, soundData.cueIn ?? 0);
+
         if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) {
             const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
             const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
@@ -174,7 +179,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             audioElement = new Audio(objectUrl);
             audioElement.loop = soundData.loop;
             audioElement.preload = 'auto';
-            audioElement.currentTime = Math.max(0, startOffset);
+            audioElement.currentTime = Math.max(0, effectiveStartOffset);
             sourceNode = state.audioContext.createMediaElementSource(audioElement);
             
             // For waveform, we still need the buffer
@@ -220,7 +225,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
-            startTime: state.audioContext.currentTime - Math.max(0, startOffset),
+            startTime: state.audioContext.currentTime - Math.max(0, effectiveStartOffset),
             soundId: soundId,
             peakL: 0, peakR: 0
         };
@@ -254,7 +259,7 @@ ${err.message}`);
         } else { // HIGH_PERFORMANCE
             sourceNode.onended = onEnd;
             const startedAt = performance.now();
-            sourceNode.start(0, Math.max(0, startOffset));
+            sourceNode.start(0, Math.max(0, effectiveStartOffset));
             recordStartMetric(soundId, clickTime, startedAt);
             updateButtonUI(soundId, soundButtonElement, true);
             createMeterElement(soundId, soundData.name);
@@ -431,6 +436,8 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
     const formatTime = (s) => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     const duration = soundData?.duration || 0;
+    const cueIn = Math.max(0, soundData?.cueIn ?? 0);
+    const cueOut = Number.isFinite(soundData?.cueOut) ? soundData.cueOut : null;
 
     const update = () => {
         if (!state.activeAudios[soundId] || !duration) {
@@ -442,6 +449,16 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
             currentTime = audioElement.currentTime;
         } else { // HIGH performance mode
             currentTime = (state.audioContext.currentTime - startTime) % duration;
+        }
+
+        // cueOut 監視: 終了位置に達したら停止（非ループ）または cueIn に戻る（ループ）
+        if (cueOut !== null && cueOut > 0 && currentTime >= cueOut) {
+            if (soundData.loop && cueOut > cueIn) {
+                seekSound(soundId, cueIn);
+            } else {
+                stopSound(soundId, soundButtonElement, true);
+            }
+            return;
         }
 
         progressBarValue.style.width = `${Math.min(100, (currentTime / duration) * 100)}%`;

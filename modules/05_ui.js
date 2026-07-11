@@ -117,6 +117,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const duration = sound.duration || 0;
+        const initialCueIn = Math.max(0, Math.min(duration, sound.cueIn ?? 0));
+        const initialCueOut = Number.isFinite(sound.cueOut) ? Math.max(initialCueIn, Math.min(duration, sound.cueOut)) : duration;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -128,6 +131,16 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
                     <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
                     <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="cue-in-input" class="effect-param-label">開始位置</label>
+                    <input type="number" id="cue-in-number" min="0" max="${duration.toFixed(3)}" step="0.01" value="${initialCueIn.toFixed(2)}" class="modal-input effect-number-input" ${duration <= 0 ? 'disabled' : ''}>
+                    <input type="range" id="cue-in-input" min="0" max="${duration.toFixed(3)}" step="0.01" value="${initialCueIn}" class="modal-input effect-slider" ${duration <= 0 ? 'disabled' : ''}>
+                </div>
+                <div class="effect-param-row">
+                    <label for="cue-out-input" class="effect-param-label">終了位置</label>
+                    <input type="number" id="cue-out-number" min="0" max="${duration.toFixed(3)}" step="0.01" value="${initialCueOut.toFixed(2)}" class="modal-input effect-number-input" ${duration <= 0 ? 'disabled' : ''}>
+                    <input type="range" id="cue-out-input" min="0" max="${duration.toFixed(3)}" step="0.01" value="${initialCueOut}" class="modal-input effect-slider" ${duration <= 0 ? 'disabled' : ''}>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -195,6 +208,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const cueInInput = dom.customModalMessage.querySelector('#cue-in-input');
+        const cueInNumberInput = dom.customModalMessage.querySelector('#cue-in-number');
+        const cueOutInput = dom.customModalMessage.querySelector('#cue-out-input');
+        const cueOutNumberInput = dom.customModalMessage.querySelector('#cue-out-number');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -211,6 +228,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         let newShortcut = currentShortcut;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
+        let newCueIn = initialCueIn;
+        let newCueOut = initialCueOut;
         let newEffects = effectSettings;
 
         const handleKeydown = (e) => {
@@ -241,6 +260,55 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const handleFadeDurationInput = (e) => {
             newFadeDuration = parseFloat(e.target.value);
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
+        };
+
+        const handleCueInInput = (e) => {
+            newCueIn = parseFloat(e.target.value);
+            cueInNumberInput.value = newCueIn.toFixed(2);
+            // 開始位置が終了位置を超えないよう同期
+            if (newCueIn > newCueOut) {
+                newCueOut = newCueIn;
+                cueOutInput.value = newCueOut;
+                cueOutNumberInput.value = newCueOut.toFixed(2);
+            }
+        };
+
+        const handleCueOutInput = (e) => {
+            newCueOut = parseFloat(e.target.value);
+            cueOutNumberInput.value = newCueOut.toFixed(2);
+            if (newCueOut < newCueIn) {
+                newCueIn = newCueOut;
+                cueInInput.value = newCueIn;
+                cueInNumberInput.value = newCueIn.toFixed(2);
+            }
+        };
+
+        const handleCueInNumberInput = (e) => {
+            let v = parseFloat(e.target.value);
+            if (!Number.isFinite(v)) v = 0;
+            v = Math.max(0, Math.min(duration, v));
+            newCueIn = v;
+            cueInInput.value = v;
+            e.target.value = v.toFixed(2);
+            if (newCueIn > newCueOut) {
+                newCueOut = newCueIn;
+                cueOutInput.value = newCueOut;
+                cueOutNumberInput.value = newCueOut.toFixed(2);
+            }
+        };
+
+        const handleCueOutNumberInput = (e) => {
+            let v = parseFloat(e.target.value);
+            if (!Number.isFinite(v)) v = duration;
+            v = Math.max(0, Math.min(duration, v));
+            newCueOut = v;
+            cueOutInput.value = v;
+            e.target.value = v.toFixed(2);
+            if (newCueOut < newCueIn) {
+                newCueIn = newCueOut;
+                cueInInput.value = newCueIn;
+                cueInNumberInput.value = newCueIn.toFixed(2);
+            }
         };
 
         const readEffects = () => normalizeEffectSettings({
@@ -280,6 +348,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
+        cueInInput.addEventListener('input', handleCueInInput);
+        cueInNumberInput.addEventListener('input', handleCueInNumberInput);
+        cueOutInput.addEventListener('input', handleCueOutInput);
+        cueOutNumberInput.addEventListener('input', handleCueOutNumberInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
@@ -290,15 +362,23 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            cueInInput.removeEventListener('input', handleCueInInput);
+            cueInNumberInput.removeEventListener('input', handleCueInNumberInput);
+            cueOutInput.removeEventListener('input', handleCueOutInput);
+            cueOutNumberInput.removeEventListener('input', handleCueOutNumberInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newFadeDuration, newCueIn, newCueOut, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            cueInInput.removeEventListener('input', handleCueInInput);
+            cueInNumberInput.removeEventListener('input', handleCueInNumberInput);
+            cueOutInput.removeEventListener('input', handleCueOutInput);
+            cueOutNumberInput.removeEventListener('input', handleCueOutNumberInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');

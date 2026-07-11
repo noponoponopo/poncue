@@ -274,7 +274,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newFadeDuration, newCueIn, newCueOut, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -295,6 +295,13 @@ async function handleSoundSettings(soundId) {
 
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
+        // キューポイント（開始/終了位置）。終了位置が duration 以上なら null（最後まで）
+        if (Number.isFinite(newCueIn)) {
+            sound.cueIn = Math.max(0, newCueIn);
+        }
+        if (Number.isFinite(newCueOut)) {
+            sound.cueOut = newCueOut >= sound.duration ? null : newCueOut;
+        }
         sound.effects = newEffects;
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
