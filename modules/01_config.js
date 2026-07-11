@@ -25,6 +25,37 @@ export const PERFORMANCE_MODE = {
 };
 export const DEFAULT_PERFORMANCE_MODE = PERFORMANCE_MODE.HIGH_PERFORMANCE;
 
+export const MIDI_PLAYBACK_MODE = {
+    TOGGLE: 'toggle',
+    ONESHOT: 'oneshot',
+    RETRIGGER: 'retrigger',
+    GATE: 'gate'
+};
+
+export const MIDI_GLOBAL_ACTIONS = {
+    STOP_ALL: 'global.stopAll',
+    FADE_ALL: 'global.fadeAll',
+    PANIC: 'global.panic',
+    SCENE_PREV: 'scene.prev',
+    SCENE_NEXT: 'scene.next'
+};
+
+export const DEFAULT_MIDI_SETTINGS = {
+    enabled: false,
+    deviceId: 'all',
+    deviceName: '',
+    channel: 'all',
+    fixedGridEnabled: true,
+    baseNote: 36,
+    globalMappings: {
+        [MIDI_GLOBAL_ACTIONS.STOP_ALL]: null,
+        [MIDI_GLOBAL_ACTIONS.FADE_ALL]: null,
+        [MIDI_GLOBAL_ACTIONS.PANIC]: null,
+        [MIDI_GLOBAL_ACTIONS.SCENE_PREV]: null,
+        [MIDI_GLOBAL_ACTIONS.SCENE_NEXT]: null
+    }
+};
+
 export const DEFAULT_EFFECT_SETTINGS = {
     enabled: false,
     wet: 0.35,

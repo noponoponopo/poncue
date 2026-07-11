@@ -12,6 +12,8 @@ export function initDom() {
         // --- JS側で使うキー名 : HTMLのid属性 ---
         soundboard: 'soundboard',
         addSoundBtn: 'add-sound-btn',
+        midiEnableBtn: 'midi-enable-btn',
+        panicStopBtn: 'panic-stop-btn',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
         masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正
@@ -41,7 +43,14 @@ export function initDom() {
         customModalOkBtn: 'custom-modal-ok-btn',
         customModalCancelBtn: 'custom-modal-cancel-btn',
         perfHighRadio: 'perf-high',
-        perfLowRadio: 'perf-low'
+        perfLowRadio: 'perf-low',
+        midiSettingsPanel: 'midi-settings-panel',
+        midiStatusText: 'midi-status-text',
+        midiDeviceSelect: 'midi-device-select',
+        midiChannelSelect: 'midi-channel-select',
+        midiBaseNoteInput: 'midi-base-note-input',
+        midiFixedGridCheckbox: 'midi-fixed-grid-checkbox',
+        midiGlobalActions: 'midi-global-actions'
     };
 
     for (const key in elementMap) {

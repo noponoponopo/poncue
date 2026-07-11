@@ -277,7 +277,9 @@
       background-color: var(--primary-hover);
     }
 
-    button#add-sound-btn {
+    button#add-sound-btn,
+    button#midi-enable-btn,
+    button#panic-stop-btn {
       background-color: var(--primary-color);
       color: white;
       border: none;
@@ -292,7 +294,32 @@
       gap: 6px;
     }
 
-    button#add-sound-btn:disabled {
+    button#midi-enable-btn {
+      background-color: var(--secondary-color);
+    }
+
+    button#panic-stop-btn {
+      background-color: var(--danger-color);
+    }
+
+    button#midi-enable-btn.midi-status-connected {
+      background-color: var(--success-color);
+    }
+
+    button#midi-enable-btn.midi-status-waiting,
+    button#midi-enable-btn.midi-status-connecting,
+    button#midi-enable-btn.midi-status-learning {
+      background-color: var(--info-color);
+    }
+
+    button#midi-enable-btn.midi-status-error,
+    button#midi-enable-btn.midi-status-unsupported {
+      background-color: var(--danger-color);
+    }
+
+    button#add-sound-btn:disabled,
+    button#midi-enable-btn:disabled,
+    button#panic-stop-btn:disabled {
       background-color: var(--secondary-color);
       cursor: not-allowed;
       opacity: 0.7;
@@ -302,7 +329,17 @@
       background-color: var(--primary-hover);
     }
 
-    button#add-sound-btn:active:not(:disabled) {
+    button#midi-enable-btn:hover:not(:disabled) {
+      filter: brightness(0.94);
+    }
+
+    button#panic-stop-btn:hover:not(:disabled) {
+      background-color: var(--danger-hover);
+    }
+
+    button#add-sound-btn:active:not(:disabled),
+    button#midi-enable-btn:active:not(:disabled),
+    button#panic-stop-btn:active:not(:disabled) {
       transform: scale(0.98);
     }
 
@@ -461,6 +498,95 @@
       background-color: var(--control-hover-bg);
       color: var(--primary-color);
       border-color: var(--primary-color);
+    }
+
+    .midi-settings-panel {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      background-color: var(--control-bg);
+    }
+
+    .midi-settings-panel h3 {
+      margin: 0 0 8px;
+      font-size: 0.95em;
+      color: var(--primary-color);
+    }
+
+    .midi-status-text,
+    .midi-help-text {
+      margin: 4px 0 10px;
+      font-size: 0.82em;
+      line-height: 1.5;
+      color: var(--secondary-color);
+    }
+
+    .midi-setting-grid {
+      display: grid;
+      grid-template-columns: minmax(120px, auto) minmax(160px, 1fr);
+      gap: 8px 10px;
+      align-items: center;
+    }
+
+    .midi-setting-grid select,
+    .midi-setting-grid input[type="number"] {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      background-color: var(--card-bg);
+      color: var(--text-color);
+    }
+
+    .midi-checkbox-row {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.88em;
+    }
+
+    .midi-global-actions {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .midi-global-action-row,
+    .midi-learn-row {
+      display: grid;
+      grid-template-columns: minmax(90px, 1fr) minmax(110px, 1fr) auto auto;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .midi-global-action-row code,
+    .midi-learn-row code {
+      padding: 3px 6px;
+      border-radius: 5px;
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      font-size: 0.78em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .midi-global-action-row button,
+    .midi-learn-row button {
+      padding: 5px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      background-color: var(--card-bg);
+      color: var(--text-color);
+      cursor: pointer;
+    }
+
+    .midi-global-action-row button:hover:not(:disabled),
+    .midi-learn-row button:hover:not(:disabled) {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
     }
 
     /* Scene Settings Modal */
@@ -711,6 +837,9 @@
       padding-top: 15px;
       margin-top: auto;
       align-items: center;
+      overflow-y: auto;
+      min-height: 0;
+      flex-shrink: 1;
     }
 
     .settings-toggles {
@@ -923,6 +1052,22 @@
 
     .sound-button.loop-on .loop-indicator {
       display: inline-block;
+    }
+
+    .midi-indicator {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 2px 5px;
+      border-radius: 999px;
+      background-color: var(--info-color);
+      color: white;
+      font-size: max(calc(var(--button-min-size) * 0.055), 0.62em);
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      line-height: 1;
+      z-index: 5;
+      pointer-events: none;
     }
 
     .button-content {
@@ -1535,7 +1680,9 @@
         width: 80px;
       }
 
-      button#add-sound-btn {
+      button#add-sound-btn,
+      button#midi-enable-btn,
+      button#panic-stop-btn {
         padding: 8px 15px;
         font-size: 0.9em;
       }
@@ -1601,11 +1748,15 @@
 
 
 
-      button#add-sound-btn {
+      button#add-sound-btn,
+      button#midi-enable-btn,
+      button#panic-stop-btn {
         padding: 10px;
       }
 
-      button#add-sound-btn span {
+      button#add-sound-btn span,
+      button#midi-enable-btn span,
+      button#panic-stop-btn span {
         display: none;
       }
 

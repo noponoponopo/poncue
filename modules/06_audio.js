@@ -146,15 +146,29 @@ function recordStartMetric(soundId, requestedAt, startedAt) {
 // --- Audio Playback ---
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
-    if (!state.audioContext || state.audioContext.state !== 'running') { return; }
-
-    if (state.activeAudios[soundId]) {
-        // If it's already playing, we do nothing. The stop button should handle it.
+    if (!state.audioContext || state.audioContext.state !== 'running') {
+        console.log('[MIDI] playSound early-return: audioContext', state.audioContext ? state.audioContext.state : 'null');
         return;
     }
 
+    const existing = state.activeAudios[soundId];
+    if (existing) {
+        if (existing.isFadingOut) {
+            console.log('[MIDI] playSound: previous entry fading out, force-clean to restart', soundId);
+            cleanupAfterStop(soundId, soundButtonElement);
+        } else {
+            console.log('[MIDI] playSound early-return: already playing', soundId);
+            return;
+        }
+    }
+
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return; }
+    if (!soundData?.audioId) {
+        console.log('[MIDI] playSound early-return: missing soundData/audioId', soundId);
+        if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。");
+        return;
+    }
+    console.log('[MIDI] playSound start', { soundId, perf: state.performanceMode, loop: soundData.loop, dur: soundData.duration });
 
     let sourceNode;
     let audioElement = null;
@@ -219,7 +233,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             audioElement, sourceNode, individualGain, effectRack,
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
-            meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
+            meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl, stopTimeoutId: null,
             startTime: state.audioContext.currentTime - Math.max(0, startOffset),
             soundId: soundId,
             peakL: 0, peakR: 0
@@ -228,7 +242,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
             if (currentAudioInfo && !currentAudioInfo.isFadingOut && !soundData.loop) {
-                stopSound(soundId, soundButtonElement, true);
+                stopSound(soundId, soundButtonElement, false);
             }
         };
 
@@ -272,7 +286,7 @@ ${err.message}`);
 
 export function stopSound(soundId, soundButtonElement = null, useFadeOut = true) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || audioInfo.isFadingOut) return;
+    if (!audioInfo || audioInfo.isFadingOut) return Promise.resolve(false);
 
     if (!soundButtonElement) { soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`); }
 
@@ -290,36 +304,39 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
         ? Math.max(soundData?.fadeDuration ?? 0, MIN_STOP_FADE_SECONDS)
         : MIN_STOP_FADE_SECONDS;
 
-    const stopPlayback = () => {
-        try {
-            if (audioElement && !audioElement.paused) {
-                audioElement.pause();
+    return new Promise(resolve => {
+        const stopPlayback = () => {
+            try {
+                if (audioElement && !audioElement.paused) {
+                    audioElement.pause();
+                }
+                if (sourceNode && typeof sourceNode.stop === 'function') {
+                    sourceNode.stop();
+                }
+            } catch (e) { /* ignore */ }
+            finally {
+                cleanupAfterStop(soundId, soundButtonElement);
+                resolve(true);
             }
-            if (sourceNode && typeof sourceNode.stop === 'function') {
-                sourceNode.stop();
-            }
-        } catch (e) { /* ignore */ }
-        finally {
-            cleanupAfterStop(soundId, soundButtonElement);
-        }
-    };
+        };
 
-    if (state.audioContext && individualGain && individualGain.gain.value > 0.0001) {
-        individualGain.gain.cancelScheduledValues(state.audioContext.currentTime);
-        individualGain.gain.setValueAtTime(individualGain.gain.value, state.audioContext.currentTime);
-        individualGain.gain.exponentialRampToValueAtTime(0.0001, state.audioContext.currentTime + fadeDurationSeconds);
-        setTimeout(stopPlayback, fadeDurationSeconds * 1000);
-    } else {
-        if (individualGain && state.audioContext) {
+        if (state.audioContext && individualGain && individualGain.gain.value > 0.0001) {
             individualGain.gain.cancelScheduledValues(state.audioContext.currentTime);
-            individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
+            individualGain.gain.setValueAtTime(individualGain.gain.value, state.audioContext.currentTime);
+            individualGain.gain.exponentialRampToValueAtTime(0.0001, state.audioContext.currentTime + fadeDurationSeconds);
+            audioInfo.stopTimeoutId = setTimeout(stopPlayback, fadeDurationSeconds * 1000);
+        } else {
+            if (individualGain && state.audioContext) {
+                individualGain.gain.cancelScheduledValues(state.audioContext.currentTime);
+                individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
+            }
+            stopPlayback();
         }
-        stopPlayback();
-    }
+    });
 }
 
 export function stopAllSounds(fadeOut = true) {
-    Object.keys(state.activeAudios).forEach(id => stopSound(id, null, fadeOut));
+    return Promise.all(Object.keys(state.activeAudios).map(id => stopSound(id, null, fadeOut)));
 }
 
 export function seekSound(soundId, seekTime) {
@@ -350,7 +367,11 @@ function fadeInSound(soundId, targetVolume) {
     if (!audioInfo || !state.audioContext || !audioInfo.individualGain) return;
     const { individualGain } = audioInfo;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    const fadeDurationSeconds = Math.max(soundData?.fadeDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
+    let fadeDurationSeconds = Math.max(soundData?.fadeDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
+    const clipDuration = audioInfo.audioBuffer?.duration;
+    if (clipDuration && clipDuration > 0) {
+        fadeDurationSeconds = Math.min(fadeDurationSeconds, Math.max(MIN_GAIN_RAMP_SECONDS, clipDuration * 0.5));
+    }
     const finalTargetVolume = Math.max(0.0001, targetVolume);
     const startTime = state.audioContext.currentTime;
 
@@ -370,6 +391,7 @@ function cleanupAfterStop(soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
+        if (audioInfo.stopTimeoutId) { clearTimeout(audioInfo.stopTimeoutId); audioInfo.stopTimeoutId = null; }
         if (audioInfo.sourceNode) {
             audioInfo.sourceNode.onended = null;
             try { audioInfo.sourceNode.disconnect(); } catch (e) { /* ignore */ }

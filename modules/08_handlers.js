@@ -12,7 +12,8 @@ import {
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
-import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { LONG_PRESS_DURATION, PERFORMANCE_MODE, MIDI_GLOBAL_ACTIONS, MIDI_PLAYBACK_MODE } from './01_config.js';
+import { enableMidiInput, disableMidiInput, updateMidiButtonState, getMidiInputOptions, formatMidiBinding, normalizeMidiSettings, beginMidiLearn, cancelMidiLearn, MIDI_GLOBAL_ACTION_LABELS } from './11_midi.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -56,6 +57,7 @@ export function setupEventListeners() {
     });
     startMasterMeter();
     relocateMasterVolume();
+    renderMidiGlobalActions();
 
     // Custom Modal
     dom.customModalOkBtn?.addEventListener('click', handleModalOk);
@@ -68,6 +70,9 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
+    dom.midiEnableBtn?.addEventListener('click', handleMidiEnableClick);
+    dom.panicStopBtn?.addEventListener('click', () => dispatchControlAction({ type: MIDI_GLOBAL_ACTIONS.PANIC }));
+    updateMidiButtonState();
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
     dom.masterVolumeSlider?.addEventListener('input', handleMasterVolumeChange);
     dom.masterVolumeSlider?.addEventListener('change', () => saveSetting('masterVolume', state.masterVolume));
@@ -91,6 +96,11 @@ export function setupEventListeners() {
     dom.waveformToggleCheckbox?.addEventListener('change', handleWaveformToggleChange);
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
+    dom.midiDeviceSelect?.addEventListener('change', handleMidiSettingsChange);
+    dom.midiChannelSelect?.addEventListener('change', handleMidiSettingsChange);
+    dom.midiFixedGridCheckbox?.addEventListener('change', handleMidiSettingsChange);
+    dom.midiBaseNoteInput?.addEventListener('change', handleMidiSettingsChange);
+    dom.midiGlobalActions?.addEventListener('click', handleMidiGlobalActionClick);
 
     // Soundboard Drag & Drop
     dom.soundboard.addEventListener('dragstart', handleDragStart);
@@ -113,6 +123,22 @@ export function setupEventListeners() {
 
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
+
+    // Auto-resume AudioContext when tab becomes visible again
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && state.audioContext?.state === 'suspended') {
+            resumeAudioContext().then(() => {
+                updateMidiAudioStatus(state.audioContext?.state);
+            });
+        }
+    });
+
+    // Monitor AudioContext state changes
+    if (state.audioContext) {
+        state.audioContext.addEventListener('statechange', () => {
+            updateMidiAudioStatus(state.audioContext?.state);
+        });
+    }
 }
 
 
@@ -138,6 +164,270 @@ function handleMasterVolumeChange() {
     if (state.masterGainNode) {
         state.masterGainNode.gain.setTargetAtTime(state.masterVolume, state.audioContext.currentTime, 0.01);
     }
+}
+
+async function handleMidiEnableClick() {
+    try {
+        // Toggle: if already enabled, disconnect cleanly
+        if (state.midiEnabled) {
+            disableMidiInput();
+            await saveSetting('midiSettings', state.midiSettings);
+            populateMidiSettingsUI();
+            return;
+        }
+
+        if (!state.audioContext && !initAudioContext()) {
+            showAlert('オーディオ機能の初期化に失敗しました。', 'MIDI');
+            return;
+        }
+
+        await resumeAudioContext();
+        const midiAccess = await enableMidiInput(handleMidiControlEvent);
+        await saveSetting('midiSettings', state.midiSettings);
+        populateMidiSettingsUI();
+
+        if (midiAccess.inputs.size === 0) {
+            showAlert('MIDI入力を有効化しましたが、入力デバイスが見つかりません。DAWから送る場合はOSの仮想MIDIポートを有効にしてください。', 'MIDI');
+        }
+    } catch (err) {
+        console.error('Failed to enable MIDI input:', err);
+        updateMidiButtonState(err.message?.includes('not supported') ? 'unsupported' : 'error');
+        showAlert('MIDI入力を有効化できませんでした。Web MIDI対応ブラウザ、権限、MIDIデバイスを確認してください。', 'MIDI');
+    }
+}
+
+function handleMidiControlEvent({ midiEvent, actions }) {
+    actions.forEach(action => dispatchControlAction(action, midiEvent));
+}
+
+function updateMidiAudioStatus(ctxState) {
+    if (!dom.midiStatusText) return;
+    if (ctxState && ctxState !== 'running') {
+        dom.midiStatusText.textContent = 'Audio一時停止中: ブラウザ画面を一度クリックしてください。';
+        dom.midiStatusText.style.color = 'var(--danger-color)';
+    } else if (state.midiEnabled) {
+        const inputCount = getMidiInputOptions().filter(input => input.state !== 'disconnected').length;
+        if (inputCount === 0) {
+            dom.midiStatusText.textContent = 'MIDIは有効ですが入力がありません。DAWの出力先にIAC/loopMIDIなどの仮想ポートを選んでください。';
+        } else {
+            dom.midiStatusText.textContent = `MIDI入力 ${inputCount} 件。Learnまたは固定グリッドで操作できます。`;
+        }
+        dom.midiStatusText.style.color = '';
+    }
+}
+
+async function dispatchControlAction(action, midiEvent = null) {
+    if (action.type === 'sound.control') {
+        await dispatchSoundAction(action.soundId, action.mode, midiEvent);
+        return;
+    }
+
+    if (midiEvent?.phase === 'release') return;
+
+    console.log('[MIDI] global action', action.type);
+    if (action.type === MIDI_GLOBAL_ACTIONS.STOP_ALL) {
+        await stopAllSounds(false);
+    } else if (action.type === MIDI_GLOBAL_ACTIONS.FADE_ALL) {
+        await stopAllSounds(true);
+    } else if (action.type === MIDI_GLOBAL_ACTIONS.PANIC) {
+        updateState({ midiHeldKeys: {}, midiLearnTarget: null });
+        await stopAllSounds(false);
+        updateMidiButtonState();
+    } else if (action.type === MIDI_GLOBAL_ACTIONS.SCENE_PREV) {
+        await selectAdjacentScene(-1);
+    } else if (action.type === MIDI_GLOBAL_ACTIONS.SCENE_NEXT) {
+        await selectAdjacentScene(1);
+    }
+}
+
+async function dispatchSoundAction(soundId, mode = MIDI_PLAYBACK_MODE.TOGGLE, midiEvent = null) {
+    const phase = midiEvent?.phase || 'press';
+    const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
+    if (!soundButtonElement) return;
+
+    if (!state.audioContext) {
+        if (!initAudioContext()) {
+            console.warn('[MIDI] AudioContext init failed');
+            return;
+        }
+    }
+    await resumeAudioContext();
+    if (state.audioContext.state !== 'running') {
+        updateMidiAudioStatus('suspended');
+        return;
+    }
+
+    const audioInfo = state.activeAudios[soundId];
+    const isPlaying = Boolean(audioInfo) && !audioInfo.isFadingOut;
+
+    if (mode === MIDI_PLAYBACK_MODE.GATE) {
+        if (phase === 'press' && !isPlaying) {
+            console.log('[MIDI] GATE play', soundId);
+            await playSound(soundId, soundButtonElement, performance.now());
+        } else if (phase === 'release' && Boolean(audioInfo)) {
+            await stopSound(soundId, soundButtonElement, true);
+        }
+        return;
+    }
+
+    if (phase === 'release') return;
+
+    if (mode === MIDI_PLAYBACK_MODE.ONESHOT) {
+        if (!isPlaying) {
+            console.log('[MIDI] ONESHOT play', soundId);
+            await playSound(soundId, soundButtonElement, performance.now());
+        }
+    } else if (mode === MIDI_PLAYBACK_MODE.RETRIGGER) {
+        if (Boolean(audioInfo)) await stopSound(soundId, soundButtonElement, false);
+        console.log('[MIDI] RETRIGGER play', soundId);
+        await playSound(soundId, soundButtonElement, performance.now());
+    } else { // TOGGLE
+        if (isPlaying) {
+            console.log('[MIDI] TOGGLE stop', soundId);
+            await stopSound(soundId, soundButtonElement, true);
+        } else {
+            console.log('[MIDI] TOGGLE play', soundId);
+            await playSound(soundId, soundButtonElement, performance.now());
+        }
+    }
+}
+
+async function selectAdjacentScene(direction) {
+    const sceneIds = Object.values(state.scenes)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ja'))
+        .map(scene => scene.id);
+    if (sceneIds.length === 0) return;
+
+    const currentIndex = Math.max(0, sceneIds.indexOf(state.currentSceneId));
+    const nextIndex = (currentIndex + direction + sceneIds.length) % sceneIds.length;
+    await selectScene(sceneIds[nextIndex]);
+}
+
+function populateMidiSettingsUI() {
+    if (!dom.midiSettingsPanel) return;
+
+    const settings = normalizeMidiSettings(state.midiSettings);
+    updateState({ midiSettings: settings });
+
+    if (dom.midiStatusText) {
+        const inputCount = getMidiInputOptions().filter(input => input.state !== 'disconnected').length;
+        if (!state.midiEnabled) {
+            dom.midiStatusText.textContent = '未有効化。ヘッダーのMIDIボタンで権限取得とAudio有効化を行ってください。';
+        } else if (inputCount === 0) {
+            dom.midiStatusText.textContent = 'MIDIは有効ですが入力がありません。DAWの出力先にIAC/loopMIDIなどの仮想ポートを選んでください。';
+        } else {
+            dom.midiStatusText.textContent = `MIDI入力 ${inputCount} 件。Learnまたは固定グリッドで操作できます。`;
+        }
+    }
+
+    if (dom.midiDeviceSelect) {
+        const inputs = getMidiInputOptions();
+        dom.midiDeviceSelect.innerHTML = '<option value="all">すべての入力</option>';
+        inputs.forEach(input => {
+            const option = document.createElement('option');
+            option.value = input.id;
+            option.textContent = `${input.name}${input.manufacturer ? ` (${input.manufacturer})` : ''}${input.state === 'disconnected' ? ' - 切断' : ''}`;
+            option.dataset.name = input.name;
+            dom.midiDeviceSelect.appendChild(option);
+        });
+        dom.midiDeviceSelect.value = inputs.some(input => input.id === settings.deviceId) ? settings.deviceId : 'all';
+    }
+
+    if (dom.midiChannelSelect) {
+        dom.midiChannelSelect.innerHTML = '<option value="all">すべて</option>';
+        for (let i = 0; i < 16; i++) {
+            const option = document.createElement('option');
+            option.value = String(i);
+            option.textContent = `Ch ${i + 1}`;
+            dom.midiChannelSelect.appendChild(option);
+        }
+        dom.midiChannelSelect.value = String(settings.channel);
+    }
+
+    if (dom.midiFixedGridCheckbox) dom.midiFixedGridCheckbox.checked = settings.fixedGridEnabled;
+    if (dom.midiBaseNoteInput) dom.midiBaseNoteInput.value = settings.baseNote;
+
+    updateMidiGlobalActionLabels();
+}
+
+async function handleMidiSettingsChange() {
+    const selectedDeviceOption = dom.midiDeviceSelect?.selectedOptions?.[0];
+    const nextSettings = normalizeMidiSettings({
+        ...state.midiSettings,
+        deviceId: dom.midiDeviceSelect?.value || 'all',
+        deviceName: selectedDeviceOption?.dataset?.name || '',
+        channel: dom.midiChannelSelect?.value === 'all' ? 'all' : Number(dom.midiChannelSelect.value),
+        fixedGridEnabled: Boolean(dom.midiFixedGridCheckbox?.checked),
+        baseNote: Math.max(0, Math.min(127, Number(dom.midiBaseNoteInput?.value ?? 36)))
+    });
+    updateState({ midiSettings: nextSettings });
+    await saveSetting('midiSettings', nextSettings);
+    updateMidiButtonState();
+    populateMidiSettingsUI();
+}
+
+async function handleMidiGlobalActionClick(event) {
+    const button = event.target.closest('button[data-midi-action]');
+    if (!button) return;
+
+    const actionType = button.dataset.midiAction;
+    const operation = button.dataset.operation;
+
+    if (operation === 'clear') {
+        const nextSettings = normalizeMidiSettings(state.midiSettings);
+        nextSettings.globalMappings[actionType] = null;
+        updateState({ midiSettings: nextSettings });
+        await saveSetting('midiSettings', nextSettings);
+        updateMidiGlobalActionLabels();
+        return;
+    }
+
+    try {
+        if (!state.midiEnabled) await handleMidiEnableClick();
+        dom.midiStatusText.textContent = `${MIDI_GLOBAL_ACTION_LABELS[actionType] || actionType} に割り当てるMIDI入力を送ってください。`;
+        const learned = await beginMidiLearn({ type: 'global', actionType });
+        if (!learned?.binding) {
+            populateMidiSettingsUI();
+            return;
+        }
+        const nextSettings = normalizeMidiSettings(state.midiSettings);
+        nextSettings.globalMappings[actionType] = learned.binding;
+        updateState({ midiSettings: nextSettings });
+        await saveSetting('midiSettings', nextSettings);
+        populateMidiSettingsUI();
+    } catch (err) {
+        showAlert(err.message || 'MIDI Learnを開始できませんでした。', 'MIDI');
+        populateMidiSettingsUI();
+    }
+}
+
+function updateMidiGlobalActionLabels() {
+    if (!dom.midiGlobalActions) return;
+    const settings = normalizeMidiSettings(state.midiSettings);
+    dom.midiGlobalActions.querySelectorAll('[data-midi-binding-label]').forEach(label => {
+        const actionType = label.dataset.midiBindingLabel;
+        label.textContent = formatMidiBinding(settings.globalMappings[actionType]);
+    });
+}
+
+function renderMidiGlobalActions() {
+    if (!dom.midiGlobalActions) return;
+    const actions = [
+        MIDI_GLOBAL_ACTIONS.STOP_ALL,
+        MIDI_GLOBAL_ACTIONS.FADE_ALL,
+        MIDI_GLOBAL_ACTIONS.PANIC,
+        MIDI_GLOBAL_ACTIONS.SCENE_PREV,
+        MIDI_GLOBAL_ACTIONS.SCENE_NEXT
+    ];
+    dom.midiGlobalActions.innerHTML = actions.map(actionType => `
+        <div class="midi-global-action-row">
+            <span>${MIDI_GLOBAL_ACTION_LABELS[actionType] || actionType}</span>
+            <code data-midi-binding-label="${actionType}">${formatMidiBinding(state.midiSettings.globalMappings?.[actionType])}</code>
+            <button type="button" data-operation="learn" data-midi-action="${actionType}">Learn</button>
+            <button type="button" data-operation="clear" data-midi-action="${actionType}">Clear</button>
+        </div>
+    `).join('');
+    updateMidiGlobalActionLabels();
 }
 
 // --- App Settings Handlers ---
@@ -180,9 +470,12 @@ function handlePerformanceModeChange(event) {
 function openSceneSettingsModal() {
     if (!state.db) { showAlert("データベースに接続されていません。"); return; }
     populateSceneModalList();
+    renderMidiGlobalActions();
+    populateMidiSettingsUI();
     dom.sceneSettingsModal.classList.add('active');
 }
 function closeSceneSettingsModal() {
+    cancelMidiLearn();
     dom.sceneSettingsModal.classList.remove('active');
 }
 async function handleModalAddScene() {
@@ -271,7 +564,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newFadeDuration, newEffects, newMidi } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -293,6 +586,7 @@ async function handleSoundSettings(soundId) {
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
         sound.effects = newEffects;
+        sound.midi = newMidi ?? sound.midi ?? { binding: null, mode: MIDI_PLAYBACK_MODE.TOGGLE };
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
 
@@ -615,9 +909,11 @@ function createSoundButton(sound) {
     };
 
     const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
+    const midiLabel = sound.midi?.binding ? `<span class="midi-indicator" title="MIDI: ${formatMidiBinding(sound.midi.binding)} / ${sound.midi.mode || MIDI_PLAYBACK_MODE.TOGGLE}">MIDI</span>` : '';
 
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
+        ${midiLabel}
         <div class="button-content">
             <i class="fas fa-play sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>

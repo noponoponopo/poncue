@@ -1,6 +1,6 @@
 // modules/03_state.js
 
-import { DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { DEFAULT_MIDI_SETTINGS, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
 
 // --- Application State ---
 export const state = {
@@ -29,6 +29,14 @@ export const state = {
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     audioStartMetrics: [],
+
+    // MIDI input state
+    midiAccess: null,
+    midiEnabled: false,
+    midiStatus: 'idle',
+    midiSettings: structuredClone(DEFAULT_MIDI_SETTINGS),
+    midiLearnTarget: null,
+    midiHeldKeys: {},
     
     // UI and Settings State
     masterVolume: 1.0,

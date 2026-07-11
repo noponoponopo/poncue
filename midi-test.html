@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MIDI Raw Monitor — IAC診断</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --line: #2a313a;
+    --txt: #e6edf3;
+    --dim: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --zero: #f85149;
+    --dup: #d29922;
+    --echo: #a371f7;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--txt); }
+  body { font-family: var(--mono); font-size: 13px; line-height: 1.45; padding: 14px; }
+  h1 { font-size: 16px; margin: 0 0 4px; letter-spacing: .3px; }
+  .sub { color: var(--dim); margin: 0 0 14px; font-size: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .panel h2 { font-size: 12px; margin: 0 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: .8px; font-weight: 600; }
+  button { font-family: var(--mono); font-size: 13px; background: var(--panel-2); color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #2ea043; }
+  button.danger { background: #6d2222; border-color: #8a3838; color: #ffd6d6; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); vertical-align: middle; }
+  .badge.zero { color: var(--zero); border-color: var(--zero); }
+  .badge.dup  { color: var(--dup);  border-color: var(--dup); }
+  .badge.echo { color: var(--echo); border-color: var(--echo); }
+  .badge.ok   { color: var(--ok);   border-color: var(--ok); }
+  .grid { display: grid; gap: 10px; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .stat .k { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+  .stat .v { font-size: 18px; font-weight: 600; }
+  .stat .v.small { font-size: 13px; }
+  .stat .v.bad { color: var(--bad); }
+  .stat .v.warn { color: var(--warn); }
+  #rateCanvas { width: 100%; height: 46px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; display: block; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { position: sticky; top: 0; background: #11161d; color: var(--dim); font-weight: 600; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; padding: 6px 8px; border-bottom: 1px solid var(--line); z-index: 1; }
+  tbody td { padding: 4px 8px; border-bottom: 1px solid #1b2128; white-space: nowrap; }
+  tbody tr.duprow { background: rgba(210,153,34,.06); }
+  tbody tr.zerorow { background: rgba(248,81,73,.06); }
+  .scroll { max-height: 56vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #0b0f14; }
+  .hex { color: #79c0ff; }
+  .gap-tight { color: var(--echo); font-weight: 600; }
+  .legend { color: var(--dim); font-size: 11px; }
+  .legend span { margin-right: 12px; }
+  .inputs { display: grid; gap: 6px; }
+  .in-item { display: flex; gap: 10px; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  .in-item .name { flex: 1 1 auto; }
+  .in-item .meta { color: var(--dim); font-size: 11px; }
+  .pill { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); }
+  .pill.on { color: var(--ok); border-color: var(--ok); }
+  input[type=checkbox] { accent-color: var(--accent); transform: translateY(1px); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .status-dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .status-dot.err { background: var(--bad); }
+  .muted { color: var(--dim); }
+  .note { background: #0b1220; border: 1px solid #1f3a5f; border-radius: 6px; padding: 10px; color: #9bc1f0; font-size: 12px; }
+  .note b { color: #cfe3ff; }
+  kbd { background: #0b0f14; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; }
+  .right { margin-left: auto; }
+</style>
+</head>
+<body>
+
+<h1>MIDI Raw Monitor <span class="muted">— IAC Driver / timeStamp 診断</span></h1>
+<p class="sub">このページはアプリのフィルタを一切通さず、到着したMIDIメッセージをそのまま全件表示します。最初の1音だけ鳴って以降鳴らない現象の原因を、DAW・IAC・Chromeのどの層で起きているか切り分けるために使います。</p>
+
+<div class="panel">
+  <div class="row">
+    <button id="btnConnect" class="primary">MIDIに接続</button>
+    <button id="btnDisconnect" class="danger" disabled>切断</button>
+    <button id="btnPause" disabled>一時停止</button>
+    <button id="btnClear" disabled>クリア</button>
+    <span class="right"><span id="accessDot" class="status-dot"></span><span id="accessText" class="muted">未接続</span></span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>入力デバイス <span class="muted" style="text-transform:none;font-weight:400">（到着を監視するポートを選択。既定: すべてON）</span></h2>
+  <div id="inputsList" class="inputs"><span class="muted">接続後にここへ一覧表示されます。</span></div>
+</div>
+
+<div class="panel">
+  <h2>統計</h2>
+  <div class="grid stats" id="statsGrid">
+    <div class="stat"><div class="k">総メッセージ</div><div class="v" id="sTotal">0</div></div>
+    <div class="stat"><div class="k">msgs / sec</div><div class="v" id="sRate">0.0</div></div>
+    <div class="stat"><div class="k">timeStamp = 0</div><div class="v bad" id="sZero">0</div></div>
+    <div class="stat"><div class="k">重複（5ms以内・同HEX）</div><div class="v warn" id="sDup">0</div></div>
+    <div class="stat"><div class="k">Note On</div><div class="v small" id="sNoteOn">0</div></div>
+    <div class="stat"><div class="k">Note Off</div><div class="v small" id="sNoteOff">0</div></div>
+    <div class="stat"><div class="k">CC</div><div class="v small" id="sCC">0</div></div>
+    <div class="stat"><div class="k">Clock(0xF8)</div><div class="v small" id="sClock">0</div></div>
+    <div class="stat"><div class="k">ActiveSensing(0xFE)</div><div class="v small" id="sSensing">0</div></div>
+    <div class="stat"><div class="k">その他</div><div class="v small" id="sOther">0</div></div>
+  </div>
+  <div style="margin-top:10px"><canvas id="rateCanvas" width="1200" height="46"></canvas></div>
+  <div class="legend" style="margin-top:6px">
+    <span><span class="badge zero">ts=0</span> event.timeStamp===0（CoreMIDIで「今」を意味する値。本物の入力でも0になり得る）</span>
+    <span><span class="badge dup">dup</span> 直前5ms以内に同じHEX到着（エコー/フィードバックの指紋）</span>
+  </div>
+</div>
+
+<div class="panel" style="padding:0">
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>event.timeStamp</th>
+          <th>Δ (前回からのms)</th>
+          <th>HEX</th>
+          <th>意味</th>
+          <th>入力</th>
+          <th>フラグ</th>
+        </tr>
+      </thead>
+      <tbody id="log"></tbody>
+    </table>
+  </div>
+  <div style="padding:8px 10px"><span id="logNote" class="muted">表示は直近800件まで（カウント/統計は全件）。一時停止で監視を固定して観察できます。</span></div>
+</div>
+
+<div class="note">
+  <b>読みかた（診断の目安）</b><br>
+  • 正常なDAWの2秒ループ（Note 36→38→39）なら、各Note Onは数百ms間隔で <b>timeStamp≠0</b> で到着するはずです。<br>
+  • <span class="badge zero">ts=0</span> ばかりで <span class="badge dup">dup</span> が連発する ＝ <b>フィードバックループ</b>（DAWがIACを入力にも受け、自分自身へエコーしている）。DAW側で IAC を「出力のみ」に設定してください。<br>
+  • <span class="badge zero">ts=0</span> でも <span class="badge dup">dup</span> でない正規ノートがある ＝ アプリの timeStamp===0 殺しが <b>本物の入力も消していた</b> 証拠。<br>
+  • Clock が異常に多い ＝ DAWが IAC へ MIDI Sync を送っている。サウンドボード不要なら Sync を切ってください。<br>
+  • Note Off が一切来ない ＝ DAW のノート長設定か IAC 側の経路の問題。
+</div>
+
+<script>
+"use strict";
+
+const el = {
+  btnConnect: document.getElementById("btnConnect"),
+  btnDisconnect: document.getElementById("btnDisconnect"),
+  btnPause: document.getElementById("btnPause"),
+  btnClear: document.getElementById("btnClear"),
+  accessDot: document.getElementById("accessDot"),
+  accessText: document.getElementById("accessText"),
+  inputsList: document.getElementById("inputsList"),
+  log: document.getElementById("log"),
+  logNote: document.getElementById("logNote"),
+  rate: document.getElementById("rateCanvas"),
+  sTotal: document.getElementById("sTotal"),
+  sRate: document.getElementById("sRate"),
+  sZero: document.getElementById("sZero"),
+  sDup: document.getElementById("sDup"),
+  sNoteOn: document.getElementById("sNoteOn"),
+  sNoteOff: document.getElementById("sNoteOff"),
+  sCC: document.getElementById("sCC"),
+  sClock: document.getElementById("sClock"),
+  sSensing: document.getElementById("sSensing"),
+  sOther: document.getElementById("sOther"),
+};
+
+let midiAccess = null;
+let listening = new Map();
+let paused = false;
+let total = 0;
+let zeroCount = 0;
+let dupCount = 0;
+const typeCounts = { noteon: 0, noteoff: 0, cc: 0, clock: 0, sensing: 0, other: 0 };
+const MAX_ROWS = 800;
+const MAX_RATE_POINTS = 240;
+const DUP_WINDOW_MS = 5;
+const recentHex = [];
+const RECENT_HEX_MAX = 64;
+const pendingRows = [];
+let renderQueued = false;
+const rateTimes = [];
+const RATE_TIMES_MAX = 6000;
+const rateHistory = new Array(MAX_RATE_POINTS).fill(0);
+let lastRecvPerf = null;
+
+function setAccessState(text, cls) {
+  el.accessText.textContent = text;
+  el.accessDot.className = "status-dot" + (cls ? " " + cls : "");
+}
+
+function noteName(n) {
+  const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const oct = Math.floor(n / 12) - 1;
+  return names[n % 12] + oct;
+}
+
+function parseMidi(data) {
+  if (!data || data.length === 0) return { meaning: "(empty)", cat: "other" };
+  const s = data[0];
+  const cmd = s & 0xf0;
+  const ch = (s & 0x0f) + 1;
+  if (s === 0xf8) return { meaning: "Timing Clock", cat: "clock" };
+  if (s === 0xfa) return { meaning: "Start", cat: "other" };
+  if (s === 0xfb) return { meaning: "Continue", cat: "other" };
+  if (s === 0xfc) return { meaning: "Stop", cat: "other" };
+  if (s === 0xfe) return { meaning: "Active Sensing", cat: "sensing" };
+  if (s === 0xff) return { meaning: "System Reset", cat: "other" };
+  if (s === 0xf0) return { meaning: "SysEx (" + data.length + "B)", cat: "other" };
+  if (s === 0xf1 && data.length >= 2) return { meaning: "MTC QF " + data[1], cat: "other" };
+  if (s === 0xf2 && data.length >= 3) return { meaning: "SongPos " + (data[1] | (data[2] << 7)), cat: "other" };
+  if (s === 0xf6) return { meaning: "Tune Request", cat: "other" };
+  if (data.length < 2) return { meaning: "0x" + s.toString(16), cat: "other" };
+  if (cmd === 0x80 && data.length >= 3) return { meaning: "Note Off ch" + ch + " " + noteName(data[1]) + "(" + data[1] + ") vel" + data[2], cat: "noteoff" };
+  if (cmd === 0x90 && data.length >= 3) {
+    if (data[2] > 0) return { meaning: "Note On  ch" + ch + " " + noteName(data[1]) + "(" + data[1] + ") vel" + data[2], cat: "noteon" };
+    return { meaning: "Note Off ch" + ch + " " + noteName(data[1]) + "(" + data[1] + ") vel0", cat: "noteoff" };
+  }
+  if (cmd === 0xa0 && data.length >= 3) return { meaning: "PolyAT ch" + ch + " " + data[1] + "=" + data[2], cat: "other" };
+  if (cmd === 0xb0 && data.length >= 3) return { meaning: "CC ch" + ch + " #" + data[1] + "=" + data[2], cat: "cc" };
+  if (cmd === 0xc0) return { meaning: "Program ch" + ch + " #" + data[1], cat: "other" };
+  if (cmd === 0xd0) return { meaning: "ChPressure ch" + ch + " " + data[1], cat: "other" };
+  if (cmd === 0xe0 && data.length >= 3) return { meaning: "PitchBend ch" + ch + " " + (data[1] | (data[2] << 7)), cat: "other" };
+  return { meaning: "0x" + Array.from(data, b => b.toString(16).padStart(2, "0")).join(" "), cat: "other" };
+}
+
+function toHex(data) {
+  return Array.from(data, b => "0x" + b.toString(16).padStart(2, "0")).join(" ");
+}
+
+function hexKey(data) {
+  let k = "";
+  for (let i = 0; i < data.length; i++) k += data[i].toString(16).padStart(2, "0");
+  return k;
+}
+
+function handleMidiMessage(event) {
+  const now = performance.now();
+  const data = event.data;
+  const ts = event.timeStamp;
+  const key = hexKey(data);
+
+  let isDup = false;
+  for (let i = recentHex.length - 1; i >= 0; i--) {
+    if (recentHex[i].key === key && (now - recentHex[i].t) <= DUP_WINDOW_MS) { isDup = true; break; }
+    if ((now - recentHex[i].t) > DUP_WINDOW_MS) break;
+  }
+  recentHex.push({ key, t: now });
+  if (recentHex.length > RECENT_HEX_MAX) recentHex.shift();
+
+  const gap = lastRecvPerf === null ? null : now - lastRecvPerf;
+  lastRecvPerf = now;
+
+  rateTimes.push(now);
+  if (rateTimes.length > RATE_TIMES_MAX) rateTimes.shift();
+
+  total++;
+  if (ts === 0) zeroCount++;
+  if (isDup) dupCount++;
+  const parsed = parseMidi(data);
+  typeCounts[parsed.cat]++;
+
+  if (!paused) {
+    const isZero = ts === 0;
+    pendingRows.push({
+      idx: total,
+      ts,
+      gap,
+      hex: toHex(data),
+      meaning: parsed.meaning,
+      input: (event.currentTarget && event.currentTarget.name) || "?",
+      isZero,
+      isDup,
+      gapTight: gap !== null && gap <= 2.0,
+    });
+  }
+  queueRender();
+}
+
+function queueRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(flush);
+}
+
+function flush() {
+  renderQueued = false;
+  const frag = document.createDocumentFragment();
+  for (const r of pendingRows) {
+    const tr = document.createElement("tr");
+    if (r.isZero) tr.className = "zerorow";
+    else if (r.isDup) tr.className = "duprow";
+    const flags = [];
+    if (r.isZero) flags.push('<span class="badge zero">ts=0</span>');
+    if (r.isDup) flags.push('<span class="badge dup">dup</span>');
+    if (r.gapTight) flags.push('<span class="badge echo">&lt;2ms</span>');
+    if (flags.length === 0) flags.push('<span class="badge ok">ok</span>');
+    tr.innerHTML =
+      "<td>" + r.idx + "</td>" +
+      "<td>" + (r.ts === 0 ? "0.000" : r.ts.toFixed(3)) + "</td>" +
+      "<td class='" + (r.gapTight ? "gap-tight" : "") + "'>" + (r.gap === null ? "—" : r.gap.toFixed(2)) + "</td>" +
+      "<td class='hex'>" + r.hex + "</td>" +
+      "<td>" + escapeHtml(r.meaning) + "</td>" +
+      "<td class='muted'>" + escapeHtml(r.input) + "</td>" +
+      "<td>" + flags.join(" ") + "</td>";
+    frag.appendChild(tr);
+  }
+  pendingRows.length = 0;
+  el.log.insertBefore(frag, el.log.firstChild);
+  while (el.log.rows.length > MAX_ROWS) el.log.deleteRow(el.log.rows.length - 1);
+
+  const cutoff = performance.now() - 1000;
+  while (rateTimes.length && rateTimes[0] < cutoff) rateTimes.shift();
+  const rate = rateTimes.length;
+
+  el.sTotal.textContent = total.toLocaleString();
+  el.sRate.textContent = rate.toFixed(1);
+  el.sZero.textContent = zeroCount.toLocaleString();
+  el.sDup.textContent = dupCount.toLocaleString();
+  el.sNoteOn.textContent = typeCounts.noteon;
+  el.sNoteOff.textContent = typeCounts.noteoff;
+  el.sCC.textContent = typeCounts.cc;
+  el.sClock.textContent = typeCounts.clock;
+  el.sSensing.textContent = typeCounts.sensing;
+  el.sOther.textContent = typeCounts.other;
+
+  rateHistory.push(rate);
+  rateHistory.shift();
+  drawRate();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function drawRate() {
+  const ctx = el.rate.getContext("2d");
+  const w = el.rate.width, h = el.rate.height;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(8, ...rateHistory);
+  const step = w / (rateHistory.length - 1);
+  ctx.strokeStyle = "#1f2730";
+  ctx.lineWidth = 1;
+  for (let g = 1; g < 4; g++) {
+    const y = (h / 4) * g;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.strokeStyle = "#58a6ff";
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < rateHistory.length; i++) {
+    const x = i * step;
+    const y = h - (rateHistory[i] / max) * (h - 4) - 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText("max " + Math.round(max) + "/s", 6, 12);
+}
+
+function attachInput(input, listen) {
+  if (listen) {
+    input.onmidimessage = handleMidiMessage;
+    listening.set(input.id, true);
+  } else {
+    input.onmidimessage = null;
+    listening.set(input.id, false);
+  }
+}
+
+function renderInputs() {
+  el.inputsList.innerHTML = "";
+  let count = 0;
+  for (const input of midiAccess.inputs.values()) {
+    count++;
+    const item = document.createElement("div");
+    item.className = "in-item";
+    const listen = listening.has(input.id) ? listening.get(input.id) : true;
+    const conn = input.connection || "closed";
+    item.innerHTML =
+      "<input type='checkbox' id='in_" + input.id + "' " + (listen ? "checked" : "") + ">" +
+      "<span class='name'>" + escapeHtml(input.name || "(no name)") + " <span class='meta'>id:" + escapeHtml(input.id) + (input.manufacturer ? " · " + escapeHtml(input.manufacturer) : "") + "</span></span>" +
+      "<span class='pill " + (input.state === "connected" ? "on" : "") + "'>" + escapeHtml(input.state) + "</span>" +
+      "<span class='pill'>conn:" + escapeHtml(conn) + "</span>";
+    const cb = item.querySelector("input");
+    cb.addEventListener("change", () => attachInput(input, cb.checked));
+    el.inputsList.appendChild(item);
+    if (input.state !== "disconnected") attachInput(input, listen);
+  }
+  if (count === 0) {
+    el.inputsList.innerHTML = "<span class='muted'>入力デバイスが見つかりません。DAWの出力先に「IAC Driver Bus 1」などを選んでください。</span>";
+  }
+  setAccessState(count > 0 ? ("接続済み・入力 " + count + " 件") : "接続済み・入力なし", "on");
+}
+
+async function connect() {
+  if (!("requestMIDIAccess" in navigator)) {
+    setAccessState("未対応（Chrome/Edgeなどでお試しください）", "err");
+    el.btnConnect.disabled = true;
+    return;
+  }
+  el.btnConnect.disabled = true;
+  setAccessState("要求中…", "");
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess.onstatechange = () => renderInputs();
+    renderInputs();
+    el.btnDisconnect.disabled = false;
+    el.btnPause.disabled = false;
+    el.btnClear.disabled = false;
+    resetCounters();
+  } catch (err) {
+    setAccessState("拒否/エラー: " + (err && err.name ? err.name : err), "err");
+    el.btnConnect.disabled = false;
+  }
+}
+
+function disconnect() {
+  if (midiAccess) {
+    for (const input of midiAccess.inputs.values()) input.onmidimessage = null;
+    midiAccess.onstatechange = null;
+    Promise.resolve(midiAccess.close && midiAccess.close()).catch(() => {});
+    midiAccess = null;
+  }
+  listening.clear();
+  el.inputsList.innerHTML = "<span class='muted'>切断しました。</span>";
+  setAccessState("未接続", "");
+  el.btnConnect.disabled = false;
+  el.btnDisconnect.disabled = true;
+}
+
+function resetCounters() {
+  total = 0; zeroCount = 0; dupCount = 0; lastRecvPerf = null;
+  for (const k in typeCounts) typeCounts[k] = 0;
+  rateTimes.length = 0;
+  for (let i = 0; i < rateHistory.length; i++) rateHistory[i] = 0;
+  el.log.innerHTML = "";
+  pendingRows.length = 0;
+  flush();
+}
+
+el.btnConnect.addEventListener("click", connect);
+el.btnDisconnect.addEventListener("click", disconnect);
+el.btnPause.addEventListener("click", () => {
+  paused = !paused;
+  el.btnPause.textContent = paused ? "再開" : "一時停止";
+  el.btnPause.classList.toggle("primary", paused);
+});
+el.btnClear.addEventListener("click", resetCounters);
+
+setAccessState("未接続", "");
+setInterval(() => { if (midiAccess) flush(); }, 250);
+drawRate();
+</script>
+</body>
+</html>

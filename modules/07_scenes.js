@@ -5,7 +5,7 @@ import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, DEFAULT_MIDI_SETTINGS } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -223,12 +223,21 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'midiSettings'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
             return acc;
         }, {});
+
+        const midiSettings = {
+            ...structuredClone(DEFAULT_MIDI_SETTINGS),
+            ...(settings.midiSettings ?? {}),
+            globalMappings: {
+                ...structuredClone(DEFAULT_MIDI_SETTINGS).globalMappings,
+                ...(settings.midiSettings?.globalMappings ?? {})
+            }
+        };
 
         updateState({
             currentSceneId: settings.currentSceneId ?? null,
@@ -240,7 +249,8 @@ export async function loadSettings() {
             padSize: settings.padSize ?? 160,
             masterEq: settings.masterEq ?? { low: 0, mid: 0, high: 0 },
             masterComp: settings.masterComp ?? { threshold: 0, ratio: 1 },
-            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 }
+            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 },
+            midiSettings
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
@@ -404,6 +414,7 @@ export async function handleAudioFileSelect(event) {
                 volume: 1.0,
                 audioId: audioId,
                 fadeDuration: 0.0,
+                midi: { binding: null, mode: 'toggle' },
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };

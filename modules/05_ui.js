@@ -4,6 +4,8 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
+import { MIDI_PLAYBACK_MODE } from './01_config.js';
+import { beginMidiLearn, cancelMidiLearn, formatMidiBinding } from './11_midi.js';
 
 export function escapeHtml(str) {
     return String(str ?? '')
@@ -117,6 +119,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const midiSettings = {
+            binding: sound.midi?.binding ?? null,
+            mode: sound.midi?.mode ?? MIDI_PLAYBACK_MODE.TOGGLE
+        };
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -129,6 +135,22 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
                     <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
                 </div>
+                <div class="effect-param-row">
+                    <label for="midi-mode-input" class="effect-param-label">MIDI動作</label>
+                    <select id="midi-mode-input" class="modal-input effect-text-input">
+                        <option value="toggle" ${midiSettings.mode === MIDI_PLAYBACK_MODE.TOGGLE ? 'selected' : ''}>Toggle: 押すたび再生/停止</option>
+                        <option value="oneshot" ${midiSettings.mode === MIDI_PLAYBACK_MODE.ONESHOT ? 'selected' : ''}>One-shot: 再生中は無視</option>
+                        <option value="retrigger" ${midiSettings.mode === MIDI_PLAYBACK_MODE.RETRIGGER ? 'selected' : ''}>Retrigger: 先頭から再発火</option>
+                        <option value="gate" ${midiSettings.mode === MIDI_PLAYBACK_MODE.GATE ? 'selected' : ''}>Gate: Note Onで再生、Note Offで停止</option>
+                    </select>
+                </div>
+                <div class="effect-param-row midi-learn-row">
+                    <span class="effect-param-label">MIDI割り当て</span>
+                    <code id="midi-binding-label">${formatMidiBinding(midiSettings.binding)}</code>
+                    <button type="button" id="midi-learn-btn">Learn</button>
+                    <button type="button" id="midi-clear-btn">Clear</button>
+                </div>
+                <p id="midi-learn-help" class="midi-help-text">Learnを押してから、割り当てたいMIDIキー/ボタン/Transportを送ってください。</p>
             </div>
             <div class="effect-divider"></div>
             <div class="effect-section">
@@ -195,6 +217,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const midiModeInput = dom.customModalMessage.querySelector('#midi-mode-input');
+        const midiBindingLabel = dom.customModalMessage.querySelector('#midi-binding-label');
+        const midiLearnBtn = dom.customModalMessage.querySelector('#midi-learn-btn');
+        const midiClearBtn = dom.customModalMessage.querySelector('#midi-clear-btn');
+        const midiLearnHelp = dom.customModalMessage.querySelector('#midi-learn-help');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -212,6 +239,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         let newShortcut = currentShortcut;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
         let newEffects = effectSettings;
+        let newMidi = midiSettings;
 
         const handleKeydown = (e) => {
             e.preventDefault(); // Prevent default browser actions for shortcuts
@@ -241,6 +269,35 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const handleFadeDurationInput = (e) => {
             newFadeDuration = parseFloat(e.target.value);
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
+        };
+
+        const handleMidiModeInput = (e) => {
+            newMidi = { ...newMidi, mode: e.target.value };
+        };
+
+        const handleMidiLearnClick = async () => {
+            midiLearnBtn.disabled = true;
+            midiLearnHelp.textContent = 'MIDI Learn中です。割り当てたいMIDI入力を送ってください。';
+            try {
+                const learned = await beginMidiLearn({ type: 'sound', soundId });
+                if (learned?.binding) {
+                    newMidi = { ...newMidi, binding: learned.binding };
+                    midiBindingLabel.textContent = formatMidiBinding(newMidi.binding);
+                    midiLearnHelp.textContent = '割り当てを受信しました。保存を押すと反映されます。';
+                } else {
+                    midiLearnHelp.textContent = 'MIDI Learnをキャンセルしました。';
+                }
+            } catch (err) {
+                midiLearnHelp.textContent = err.message || 'MIDI Learnを開始できませんでした。';
+            } finally {
+                midiLearnBtn.disabled = false;
+            }
+        };
+
+        const handleMidiClearClick = () => {
+            newMidi = { ...newMidi, binding: null };
+            midiBindingLabel.textContent = formatMidiBinding(null);
+            midiLearnHelp.textContent = 'MIDI割り当てをクリアしました。保存を押すと反映されます。';
         };
 
         const readEffects = () => normalizeEffectSettings({
@@ -280,27 +337,35 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
+        midiModeInput.addEventListener('change', handleMidiModeInput);
+        midiLearnBtn.addEventListener('click', handleMidiLearnClick);
+        midiClearBtn.addEventListener('click', handleMidiClearClick);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
+
+        const cleanupSoundSettingsListeners = () => {
+            cancelMidiLearn();
+            shortcutInput.removeEventListener('keydown', handleKeydown);
+            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            midiModeInput.removeEventListener('change', handleMidiModeInput);
+            midiLearnBtn.removeEventListener('click', handleMidiLearnClick);
+            midiClearBtn.removeEventListener('click', handleMidiClearClick);
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+                .forEach(input => input.removeEventListener('input', handleEffectInput));
+        };
 
         dom.customModalOkBtn.textContent = '保存';
         dom.customModalCancelBtn.textContent = 'キャンセル';
         dom.customModalCancelBtn.style.display = 'inline-block';
 
         dom.customModalOkBtn.onclick = () => {
-            shortcutInput.removeEventListener('keydown', handleKeydown);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
-                .forEach(input => input.removeEventListener('input', handleEffectInput));
+            cleanupSoundSettingsListeners();
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newFadeDuration, newEffects: readEffects(), newMidi });
         };
 
         dom.customModalCancelBtn.onclick = () => {
-            shortcutInput.removeEventListener('keydown', handleKeydown);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
-                .forEach(input => input.removeEventListener('input', handleEffectInput));
+            cleanupSoundSettingsListeners();
             dom.customModalOverlay.classList.remove('active');
             resolve(null); // User cancelled
         };

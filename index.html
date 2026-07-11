@@ -41,6 +41,17 @@
         <button id="add-sound-btn" aria-label="現在のシーンに音声を追加">
           <i class="fas fa-plus"></i> <span>追加</span>
         </button>
+        <button
+          id="midi-enable-btn"
+          class="midi-status-idle"
+          title="MIDI入力を有効化（Note 36からパッド順に再生/停止）"
+          aria-label="MIDI入力を有効化"
+        >
+          <i class="fas fa-plug"></i> <span>MIDI</span>
+        </button>
+        <button id="panic-stop-btn" title="Panic: すべて即時停止" aria-label="すべて即時停止">
+          <i class="fas fa-stop"></i> <span>停止</span>
+        </button>
         <div class="master-volume-control" id="master-volume-control">
           <i class="fas fa-volume-down"></i>
           <input
@@ -216,9 +227,35 @@
                 <label
                   for="perf-low"
                   title="低メモリモード: メモリ使用量を最小限に抑える"
-                  >低</label
+                >低</label
                 >
               </div>
+            </div>
+            <div class="midi-settings-panel" id="midi-settings-panel">
+              <h3>MIDI制御</h3>
+              <p id="midi-status-text" class="midi-status-text">
+                未有効化。ヘッダーのMIDIボタンで権限取得とAudio有効化を行ってください。
+              </p>
+              <p class="midi-help-text">
+                DAWから使う場合は、macOSではIAC Driver、WindowsではloopMIDIなどの仮想MIDIポートを作り、DAWのMIDI出力先に選んでください。
+              </p>
+              <div class="midi-setting-grid">
+                <label for="midi-device-select">入力</label>
+                <select id="midi-device-select">
+                  <option value="all">すべての入力</option>
+                </select>
+                <label for="midi-channel-select">チャンネル</label>
+                <select id="midi-channel-select">
+                  <option value="all">すべて</option>
+                </select>
+                <label for="midi-base-note-input">固定グリッド開始Note</label>
+                <input id="midi-base-note-input" type="number" min="0" max="127" value="36" />
+                <label class="midi-checkbox-row">
+                  <input type="checkbox" id="midi-fixed-grid-checkbox" checked />
+                  未割り当てNoteを開始Noteからパッド順に使う
+                </label>
+              </div>
+              <div class="midi-global-actions" id="midi-global-actions"></div>
             </div>
           </div>
           <div class="io-controls">
