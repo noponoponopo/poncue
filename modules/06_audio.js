@@ -430,7 +430,9 @@ function cleanupAfterStop(soundId, soundButtonElement) {
         delete state.activeAudios[soundId];
     }
 
-    if (!soundButtonElement) { soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`); }
+    if (!soundButtonElement?.isConnected) {
+        soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+    }
     if (soundButtonElement) {
         updateButtonUI(soundId, soundButtonElement, false);
         resetProgressBar(soundButtonElement);
@@ -462,21 +464,25 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
     if (!audioInfo || !soundButtonElement) return;
 
     const { audioElement, audioBuffer, startTime } = audioInfo;
-    const progressBarValue = soundButtonElement.querySelector('.progress-bar-value');
-    const timeDisplay = soundButtonElement.querySelector('.time-display');
-    if (!progressBarValue || !timeDisplay) return;
 
     if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
 
     const formatTime = (s) => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    const duration = soundData?.duration || 0;
+    const duration = audioBuffer?.duration || audioElement?.duration || soundData?.duration || 0;
 
     const update = () => {
         if (!state.activeAudios[soundId] || !duration) {
             clearInterval(audioInfo.progressBarInterval);
             return;
         }
+        if (!soundButtonElement?.isConnected) {
+            soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+        }
+        const progressBarValue = soundButtonElement?.querySelector('.progress-bar-value');
+        const timeDisplay = soundButtonElement?.querySelector('.time-display');
+        if (!progressBarValue || !timeDisplay) return;
+
         let currentTime;
         if (audioElement) { // LOW_MEMORY mode
             currentTime = audioElement.currentTime;
@@ -488,9 +494,6 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
         timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
     };
 
-    if (isFinite(duration)) {
-        timeDisplay.textContent = `0:00 / ${formatTime(duration)}`;
-    }
     update();
     audioInfo.progressBarInterval = setInterval(update, 250);
 }
