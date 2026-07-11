@@ -3,9 +3,7 @@
 // Tone.js based effect rack with serial chain.
 //
 // Serial chain contract:
-//   input → compensation → EQ3 → Compressor → Distortion → Reverb → [dry tap] → dryGain → output
-//                                                                ↘ feedbackDelay → delayReturn → output
-//                                                                  ↘ wetGain → output
+//   input → compensation → EQ3 → Compressor → Distortion → Reverb → [dry + delay mix] → limiter/bypass → output
 //
 // Every effect feeds the next. Disabling an effect makes it transparent
 // (flat EQ, unity compressor, wet=0 for distortion/reverb) rather
@@ -50,6 +48,7 @@ export function normalizeEffectSettings(settings = {}) {
     const compressor = settings.compressor ?? {};
     const distortion = settings.distortion ?? {};
     const reverb = settings.reverb ?? {};
+    const limiter = settings.limiter ?? {};
 
     return {
         enabled: Boolean(settings.enabled ?? base.enabled),
@@ -82,6 +81,10 @@ export function normalizeEffectSettings(settings = {}) {
             decay: clamp(reverb.decay ?? base.reverb.decay, 0.1, 10),
             preDelay: clamp(reverb.preDelay ?? base.reverb.preDelay, 0, 0.1),
             wet: clamp(reverb.wet ?? base.reverb.wet, 0, 1)
+        },
+        limiter: {
+            enabled: Boolean(limiter.enabled ?? base.limiter.enabled),
+            threshold: clamp(limiter.threshold ?? base.limiter.threshold, -12, 0)
         }
     };
 }
@@ -98,6 +101,11 @@ export function createEffectRack(settings = {}) {
     const feedbackDelay = new Tone.FeedbackDelay({ delayTime: 0.18, feedback: 0, maxDelay: 2 });
     const delayReturn = new Tone.Gain(0);
     const output = new Tone.Gain(1);
+    const limiter = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0.001, release: 0.08 });
+    const limiterSafety = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0, release: 0.03 });
+    const limiterDry = new Tone.Gain(1);
+    const limiterWet = new Tone.Gain(0);
+    const finalOutput = new Tone.Gain(1);
 
     // Serial chain: input → compensation → EQ3 → Compressor → Distortion → Reverb
     input.connect(compensation);
@@ -119,14 +127,21 @@ export function createEffectRack(settings = {}) {
     feedbackDelay.connect(delayReturn);
     delayReturn.connect(output);
 
+    output.connect(limiterDry);
+    output.connect(limiter);
+    limiterDry.connect(finalOutput);
+    limiter.connect(limiterSafety);
+    limiterSafety.connect(limiterWet);
+    limiterWet.connect(finalOutput);
+
     const rack = {
         input, output, compensation,
         eq3, compressor,
         distortionNode, reverbNode,
         dryGain, wetGain,
-        feedbackDelay, delayReturn,
+        feedbackDelay, delayReturn, limiter, limiterSafety, limiterDry, limiterWet, finalOutput,
         entry: input.input,
-        exit: output.input
+        exit: finalOutput.output
     };
 
     applyEffectSettings(rack, settings, null, true);
@@ -174,6 +189,11 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
     rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
 
+    rampParam(rack.limiter.threshold, normalized.limiter.threshold, ramp);
+    rampParam(rack.limiterSafety.threshold, normalized.limiter.threshold, ramp);
+    rampParam(rack.limiterDry.gain, normalized.limiter.enabled ? 0 : 1, ramp);
+    rampParam(rack.limiterWet.gain, normalized.limiter.enabled ? 1 : 0, ramp);
+
     // Dry / wet balance
     // dryGain is always active — it carries the post-chain signal at a
     // level that depends on whether serial effects (EQ/Comp/Distortion)
@@ -201,7 +221,8 @@ export function disposeEffectRack(rack) {
         rack.eq3, rack.compressor,
         rack.distortionNode, rack.reverbNode,
         rack.dryGain, rack.wetGain,
-        rack.feedbackDelay, rack.delayReturn
+        rack.feedbackDelay, rack.delayReturn,
+        rack.limiter, rack.limiterSafety, rack.limiterDry, rack.limiterWet, rack.finalOutput
     ];
     for (const node of nodes) {
         try { node?.dispose(); } catch (e) { /* ignore */ }

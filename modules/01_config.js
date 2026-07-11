@@ -60,5 +60,9 @@ export const DEFAULT_EFFECT_SETTINGS = {
         decay: 2.0,
         preDelay: 0.01,
         wet: 0.35
+    },
+    limiter: {
+        enabled: false,
+        threshold: -1
     }
 };

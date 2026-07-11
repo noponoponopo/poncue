@@ -13,6 +13,7 @@ export const state = {
     masterInputNode: null,
     masterGainNode: null,
     outputLimiterNode: null,
+    outputSafetyLimiterNode: null,
     masterAnalyserL: null,
     masterAnalyserR: null,
     masterMeterDataL: null,
@@ -33,6 +34,7 @@ export const state = {
     masterDistortion: { amount: 0 },
     masterReverbNode: null,
     masterReverb: { decay: 2.0, wet: 0 },
+    masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ

@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING } from './01_config.js';
 
@@ -269,7 +269,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -289,7 +289,8 @@ export async function loadSettings() {
             masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 },
             masterPan: settings.masterPan ?? { value: 0 },
             masterDistortion: settings.masterDistortion ?? { amount: 0 },
-            masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 }
+            masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 },
+            masterLimiter: settings.masterLimiter ?? { threshold: -1 }
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
@@ -297,6 +298,7 @@ export async function loadSettings() {
         if (dom.masterVolumeSlider) dom.masterVolumeSlider.value = state.masterVolume;
         if (dom.masterVolumeValue) dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
         if (state.masterGainNode) state.masterGainNode.gain.setValueAtTime(state.masterVolume, state.audioContext.currentTime);
+        setMasterLimiterThreshold(state.masterLimiter.threshold);
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
         if (dom.interactionDragRadio) dom.interactionDragRadio.checked = state.isSortableEnabled;
         if (dom.perfHighRadio) dom.perfHighRadio.checked = (state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE);

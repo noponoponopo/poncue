@@ -17,6 +17,7 @@ export function initDom() {
         importFileInput: 'import-file-input',
         masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正
         masterVolumeValue: 'master-volume-value',
+        masterLimiterControl: 'master-limiter-control',
         sceneSettingsBtn: 'scene-settings-btn',
         sceneSettingsModal: 'scene-settings-modal',
         modalCloseBtn: 'modal-close-btn',
