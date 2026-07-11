@@ -5,10 +5,13 @@ import { state, setDb } from './03_state.js';
 import { showAlert } from './05_ui.js';
 
 // --- DB Management ---
+let pendingOpen = null;
+
 export function openDB() {
     if (state.db) return Promise.resolve(state.db);
+    if (pendingOpen) return pendingOpen;
 
-    return new Promise((resolve, reject) => {
+    pendingOpen = new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onupgradeneeded = (e) => {
@@ -33,6 +36,7 @@ export function openDB() {
             dbInstance.onversionchange = () => {
                 try { dbInstance.close(); } catch (_) { /* already closed */ }
                 setDb(null);
+                pendingOpen = null;
             };
             setDb(dbInstance);
             dbInstance.onerror = (event) => {
@@ -51,6 +55,11 @@ export function openDB() {
             reject(new Error("DB open blocked"));
         };
     });
+
+    pendingOpen.catch(() => {
+        pendingOpen = null;
+    });
+    return pendingOpen;
 }
 
 export async function dbRequest(storeName, mode, operation, data = null) {
