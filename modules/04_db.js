@@ -6,12 +6,9 @@ import { showAlert } from './05_ui.js';
 
 // --- DB Management ---
 export function openDB() {
-    return new Promise((resolve, reject) => {
-        if (state.db) {
-            try { state.db.close(); } catch (e) { /* Ignore */ }
-            setDb(null);
-        }
+    if (state.db) return Promise.resolve(state.db);
 
+    return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onupgradeneeded = (e) => {
