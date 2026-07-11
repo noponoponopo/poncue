@@ -377,8 +377,10 @@ async function handleKeyDown(event) {
 
 // --- Sound Button and Board Handlers ---
 
-const _soundClickTimestamps = new Map();
-const SOUND_CLICK_DEBOUNCE_MS = 80;
+// Tracks sounds already toggled by pointerdown/touchend so the trailing
+// click event doesn't fire a second toggle. Module-level to survive
+// button re-renders; entries are consumed (deleted) by the click handler.
+const _toggleHandled = new Set();
 
 async function handleSoundButtonClick(soundId, soundButtonElement) {
     const clickTime = performance.now(); // Capture timestamp at click
@@ -391,10 +393,6 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
         showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
         return;
     }
-
-    const lastClick = _soundClickTimestamps.get(soundId) ?? 0;
-    if (clickTime - lastClick < SOUND_CLICK_DEBOUNCE_MS) return;
-    _soundClickTimestamps.set(soundId, clickTime);
 
     if (state.activeAudios[soundId]) {
         stopSound(soundId, soundButtonElement);
@@ -680,9 +678,7 @@ function createSoundButton(sound) {
     `;
     
     let touchFlag = false;
-    let pointerFlag = false;
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
-    const setPointerFlag = () => { pointerFlag = true; setTimeout(() => pointerFlag = false, 150); };
 
     const isControlTarget = target => target instanceof Element && target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
 
@@ -690,18 +686,25 @@ function createSoundButton(sound) {
         if (isControlTarget(e.target)) return;
         if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
             e.preventDefault();
+            _toggleHandled.add(sound.id);
             handleSoundButtonClick(sound.id, buttonWrapper);
-            setPointerFlag();
+        } else {
+            _toggleHandled.delete(sound.id);
         }
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
-        if (!isDraggingViaTouch) { e.preventDefault(); handleSoundButtonClick(sound.id, buttonWrapper); setTouchFlag(); }
+        if (!isDraggingViaTouch) {
+            e.preventDefault();
+            _toggleHandled.add(sound.id);
+            handleSoundButtonClick(sound.id, buttonWrapper);
+        }
         clearTimeout(longPressTimeoutId);
     }, { passive: false });
     buttonWrapper.addEventListener('click', e => {
         if (isControlTarget(e.target)) return;
-        if (!touchFlag && !pointerFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper);
+        if (_toggleHandled.delete(sound.id)) return;
+        if (!touchFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper);
     });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
