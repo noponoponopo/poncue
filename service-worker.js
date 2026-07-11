@@ -1,8 +1,6 @@
-// A more descriptive and easily updatable version
-const VERSION = '3.11.0'; // Incremented version
+const VERSION = '3.11.0';
 const CACHE_NAME = `ponndashi-cache-v${VERSION}`;
 
-// Add all the local module files to the cache list to ensure they are available offline.
 const urlsToCache = [
   './',
   './index.html',
@@ -24,82 +22,70 @@ const urlsToCache = [
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap'
 ];
 
-// Install: Called when the service worker is first installed.
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
-        console.log(`[Service Worker] Caching files for version ${VERSION}`);
-        const requests = urlsToCache.map(url => new Request(url, { cache: 'reload' })); // Force reload from network
+        const requests = urlsToCache.map(url => new Request(url, { cache: 'reload' }));
         return cache.addAll(requests);
       })
-      .then(() => {
-        // Force the waiting service worker to become the active service worker.
-        return self.skipWaiting();
-      })
+      .then(() => self.skipWaiting())
   );
 });
 
-// Activate: Called when the service worker is activated.
-// This is a good time to clean up old caches.
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          // If the cache name is not the current one, delete it.
-          if (cacheName !== CACHE_NAME) {
-            console.log(`[Service Worker] Deleting old cache: ${cacheName}`);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    }).then(() => {
-      // Tell the active service worker to take control of the page immediately.
-      return self.clients.claim();
-    })
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))))
+      .then(() => self.clients.claim())
   );
 });
 
-// Fetch: Intercept network requests.
-// Using a Network First, then Cache strategy.
 self.addEventListener('fetch', event => {
-  // Ignore non-GET requests
-  if (event.request.method !== 'GET') {
-    return;
-  }
+  const request = event.request;
+  if (request.method !== 'GET') return;
 
-  // For IndexedDB operations, do not intercept.
-  if (event.request.url.includes('idb-keyval')) {
-      return;
-  }
-
-  event.respondWith(
-    // 1. Try to fetch from the network
-    fetch(event.request)
-      .then(networkResponse => {
-        // If the fetch is successful, clone the response
-        const responseToCache = networkResponse.clone();
-        
-        // Open the cache and store the new response
-        caches.open(CACHE_NAME)
-          .then(cache => {
-            cache.put(event.request, responseToCache);
-          });
-          
-        // Return the network response
-        return networkResponse;
-      })
-      .catch(() => {
-        // 2. If the network fetch fails (e.g., offline), try to get it from the cache
-        return caches.match(event.request)
-          .then(cachedResponse => {
-            if (cachedResponse) {
-              // Return the cached response if found
-              return cachedResponse;
-            }
-            // If not in cache either, it's a real failure.
-          });
-      })
+  const url = new URL(request.url);
+  const isNavigation = request.mode === 'navigate';
+  const isCriticalAsset = url.origin === self.location.origin && (
+    ['script', 'style', 'worker'].includes(request.destination) ||
+    url.pathname.startsWith('/modules/')
   );
+
+  if (isNavigation || isCriticalAsset) {
+    event.respondWith(networkFirst(request, isNavigation));
+  } else {
+    event.respondWith(cacheFirst(request));
+  }
 });
+
+async function networkFirst(request, isNavigation) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    if (response.ok && response.type === 'basic') {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request, { ignoreSearch: isNavigation });
+    if (cached) return cached;
+    if (isNavigation) return cache.match('./index.html');
+    throw error;
+  }
+}
+
+async function cacheFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok && (response.type === 'basic' || response.type === 'cors')) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    return cached || Response.error();
+  }
+}
