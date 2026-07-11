@@ -60,7 +60,7 @@ export function initAudioContext() {
         masterPanNode.pan.setValueAtTime(Number.isFinite(state.masterPan.value) ? state.masterPan.value : 0, audioContext.currentTime);
         masterMixOut.output.connect(masterGainNode);
         masterGainNode.connect(masterPanNode);
-        masterPanNode.connect(outputLimiterNode);
+        masterPanNode.connect(outputLimiterNode.input);
         outputLimiterNode.connect(outputSafetyLimiterNode);
         outputSafetyLimiterNode.output.connect(audioContext.destination);
         updateState({ masterEqNode, masterCompNode, masterDistortionNode, masterReverbNode, masterDelayNode, masterDelayReturn, masterPanNode, outputSafetyLimiterNode });
@@ -91,6 +91,7 @@ export function initAudioContext() {
         }
         return true;
     } catch (e) {
+        console.error('AudioContext initialization failed:', e);
         renderFallbackUI("Web Audio API の初期化に失敗しました。");
         disableAppControls();
         setAudioContext(null, null, null, null);
