@@ -20,6 +20,7 @@ export function initAudioContext() {
     }
     try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const masterInputNode = audioContext.createGain();
         const masterGainNode = audioContext.createGain();
         const outputLimiterNode = audioContext.createDynamicsCompressor();
         outputLimiterNode.threshold.setValueAtTime(-1, audioContext.currentTime);
@@ -29,34 +30,45 @@ export function initAudioContext() {
         outputLimiterNode.release.setValueAtTime(0.05, audioContext.currentTime);
         masterGainNode.gain.setValueAtTime(state.masterVolume, audioContext.currentTime);
 
-        // Master chain: EQ3 → Compressor → [dry + delay] → limiter
+        // Put distortion first so a neutral master EQ/compressor cannot alter
+        // the waveform before this nonlinear stage.
+        // Master chain: Distortion → EQ3 → Compressor → Reverb → [dry + delay] → volume → limiter
         attachToneContext(audioContext);
         const eqBridgeIn = new Tone.Gain(1);
         const masterEqNode = new Tone.EQ3({ low: state.masterEq.low, mid: state.masterEq.mid, high: state.masterEq.high, lowFrequency: 400, highFrequency: 2500 });
-        eqBridgeIn.connect(masterEqNode);
-        masterGainNode.connect(eqBridgeIn.input);
+        masterInputNode.connect(eqBridgeIn.input);
+
+        const masterDistortionNode = new Tone.Distortion({ distortion: state.masterDistortion.amount, wet: state.masterDistortion.amount > 0 ? 1 : 0 });
+        eqBridgeIn.connect(masterDistortionNode);
+        masterDistortionNode.connect(masterEqNode);
 
         const masterCompNode = new Tone.Compressor({ threshold: state.masterComp.threshold, ratio: state.masterComp.ratio, attack: 0.003, release: 0.12 });
         masterEqNode.connect(masterCompNode);
+
+        // Reverb is transparent at its default wet value of zero.
+        const masterReverbNode = new Tone.Reverb({ decay: state.masterReverb.decay, preDelay: 0.01, wet: state.masterReverb.wet });
+        masterCompNode.connect(masterReverbNode);
 
         const masterDryGain = new Tone.Gain(1);
         const masterDelayNode = new Tone.FeedbackDelay({ delayTime: state.masterDelay.time, feedback: state.masterDelay.feedback, maxDelay: 2 });
         const masterDelayReturn = new Tone.Gain(state.masterDelay.level);
         const masterMixOut = new Tone.Gain(1);
-        masterCompNode.connect(masterDryGain);
-        masterCompNode.connect(masterDelayNode);
+        // Delay taps from reverb output — echoes are always shaped by the full chain
+        masterReverbNode.connect(masterDryGain);
+        masterReverbNode.connect(masterDelayNode);
         masterDelayNode.connect(masterDelayReturn);
         masterDryGain.connect(masterMixOut);
         masterDelayReturn.connect(masterMixOut);
 
         const masterPanNode = audioContext.createStereoPanner();
         masterPanNode.pan.setValueAtTime(Number.isFinite(state.masterPan.value) ? state.masterPan.value : 0, audioContext.currentTime);
-        masterMixOut.output.connect(masterPanNode);
+        masterMixOut.output.connect(masterGainNode);
+        masterGainNode.connect(masterPanNode);
         masterPanNode.connect(outputLimiterNode);
         outputLimiterNode.connect(audioContext.destination);
-        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn, masterPanNode });
+        updateState({ masterEqNode, masterCompNode, masterDistortionNode, masterReverbNode, masterDelayNode, masterDelayReturn, masterPanNode });
 
-        setAudioContext(audioContext, masterGainNode, outputLimiterNode);
+        setAudioContext(audioContext, masterGainNode, outputLimiterNode, masterInputNode);
 
         // Master meter: tap from masterGainNode (read-only analysers)
         const masterSplitter = audioContext.createChannelSplitter(2);
@@ -84,7 +96,7 @@ export function initAudioContext() {
     } catch (e) {
         renderFallbackUI("Web Audio API の初期化に失敗しました。");
         disableAppControls();
-        setAudioContext(null, null);
+        setAudioContext(null, null, null, null);
         return false;
     }
 }
@@ -115,6 +127,17 @@ export function setMasterParam(dottedKey, value) {
                 }
             } else if (group === 'pan') {
                 node.pan.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
+            } else if (group === 'distortion') {
+                if (param === 'amount') {
+                    try { node.distortion = value; } catch (e) { /* amount set directly */ }
+                    node.wet.setTargetAtTime(value > 0 ? 1 : 0, state.audioContext.currentTime, 0.01);
+                }
+            } else if (group === 'reverb') {
+                if (param === 'decay') {
+                    try { node.decay = value; } catch (e) { /* decay triggers async regen */ }
+                } else if (param === 'wet') {
+                    node.wet.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
+                }
             }
         } catch (e) { /* param not rampable */ }
     }
@@ -219,7 +242,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         effectRack.exit.connect(splitter);
         splitter.connect(analyserL, 0);
         splitter.connect(analyserR, 1);
-        effectRack.exit.connect(state.masterGainNode);
+        effectRack.exit.connect(state.masterInputNode);
 
         individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
 

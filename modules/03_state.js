@@ -10,6 +10,7 @@ export const state = {
     
     // Audio related state
     audioContext: null,
+    masterInputNode: null,
     masterGainNode: null,
     outputLimiterNode: null,
     masterAnalyserL: null,
@@ -28,6 +29,10 @@ export const state = {
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
     masterPanNode: null,
     masterPan: { value: 0 },
+    masterDistortionNode: null,
+    masterDistortion: { amount: 0 },
+    masterReverbNode: null,
+    masterReverb: { decay: 2.0, wet: 0 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     audioStartMetrics: [],
@@ -73,8 +78,9 @@ export const state = {
 // It's good practice to use functions to modify state
 // to easily track changes in the future.
 
-export function setAudioContext(context, gainNode, limiterNode = null) {
+export function setAudioContext(context, gainNode, limiterNode = null, inputNode = null) {
     state.audioContext = context;
+    state.masterInputNode = inputNode;
     state.masterGainNode = gainNode;
     state.outputLimiterNode = limiterNode;
 }

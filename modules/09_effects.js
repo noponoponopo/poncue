@@ -3,16 +3,22 @@
 // Tone.js based effect rack with serial chain.
 //
 // Serial chain contract:
-//   input → compensation → EQ3 → Compressor → [dry tap] → dryGain → output
-//                                              ↘ feedbackDelay → delayReturn → output
+//   input → compensation → EQ3 → Compressor → Distortion → Reverb → [dry tap] → dryGain → output
+//                                                                ↘ feedbackDelay → delayReturn → output
+//                                                                  ↘ wetGain → output
 //
 // Every effect feeds the next. Disabling an effect makes it transparent
-// (flat EQ, unity compressor) rather than removing it from the chain.
-// The delay taps from the compressor output, so echoes are always shaped by
-// EQ and compressor.
+// (flat EQ, unity compressor, wet=0 for distortion/reverb) rather
+// than removing it from the chain. The delay taps from the reverb output,
+// so echoes are always shaped by EQ, compressor, distortion and reverb.
 //
 // Uniform latency: every signal passes through the compensation delay,
 // so dry and wet stay time-aligned regardless of effect settings.
+//
+// Latency note: PitchShift is intentionally excluded — real-time pitch
+// shifting requires a processing window (typically 50ms+) that violates
+// the sub-20ms latency budget. Distortion (WaveShaper) and Reverb
+// (ConvolverNode) are sample-accurate and add no inherent delay.
 
 import * as Tone from 'tone';
 import { AUDIO_PARAM_RAMP_SECONDS, DEFAULT_EFFECT_SETTINGS } from './01_config.js';
@@ -42,6 +48,8 @@ export function normalizeEffectSettings(settings = {}) {
     const eq = settings.eq ?? {};
     const delay = settings.delay ?? {};
     const compressor = settings.compressor ?? {};
+    const distortion = settings.distortion ?? {};
+    const reverb = settings.reverb ?? {};
 
     return {
         enabled: Boolean(settings.enabled ?? base.enabled),
@@ -64,6 +72,16 @@ export function normalizeEffectSettings(settings = {}) {
             enabled: Boolean(compressor.enabled ?? base.compressor.enabled),
             threshold: clamp(compressor.threshold ?? base.compressor.threshold, -60, 0),
             ratio: clamp(compressor.ratio ?? base.compressor.ratio, 1, 20)
+        },
+        distortion: {
+            enabled: Boolean(distortion.enabled ?? base.distortion.enabled),
+            amount: clamp(distortion.amount ?? base.distortion.amount, 0, 1)
+        },
+        reverb: {
+            enabled: Boolean(reverb.enabled ?? base.reverb.enabled),
+            decay: clamp(reverb.decay ?? base.reverb.decay, 0.1, 10),
+            preDelay: clamp(reverb.preDelay ?? base.reverb.preDelay, 0, 0.1),
+            wet: clamp(reverb.wet ?? base.reverb.wet, 0, 1)
         }
     };
 }
@@ -73,33 +91,38 @@ export function createEffectRack(settings = {}) {
     const compensation = new Tone.Delay(UNIFORM_COMPENSATION_SECONDS, UNIFORM_COMPENSATION_SECONDS * 2);
     const eq3 = new Tone.EQ3({ low: 0, mid: 0, high: 0, lowFrequency: 400, highFrequency: 2500 });
     const compressor = new Tone.Compressor({ threshold: 0, ratio: 1, attack: 0.003, release: 0.12 });
+    const distortionNode = new Tone.Distortion({ distortion: 0.4, wet: 0 });
+    const reverbNode = new Tone.Reverb({ decay: 2.0, preDelay: 0.01, wet: 0 });
     const dryGain = new Tone.Gain(1);
     const wetGain = new Tone.Gain(0);
     const feedbackDelay = new Tone.FeedbackDelay({ delayTime: 0.18, feedback: 0, maxDelay: 2 });
     const delayReturn = new Tone.Gain(0);
     const output = new Tone.Gain(1);
 
-    // Serial chain: input → compensation → EQ3 → Compressor
+    // Serial chain: input → compensation → EQ3 → Compressor → Distortion → Reverb
     input.connect(compensation);
     compensation.connect(eq3);
     eq3.connect(compressor);
+    compressor.connect(distortionNode);
+    distortionNode.connect(reverbNode);
 
-    // Dry tap: from compressor output (post-EQ, post-Comp, pre-delay)
-    compressor.connect(dryGain);
+    // Dry tap: from reverb output (post-EQ/Comp/Distortion/Reverb)
+    reverbNode.connect(dryGain);
     dryGain.connect(output);
 
-    // Wet (EQ+Comp) level control
-    compressor.connect(wetGain);
+    // Wet (EQ+Comp+Distortion+Reverb) level control
+    reverbNode.connect(wetGain);
     wetGain.connect(output);
 
-    // Delay taps from compressor output — echoes are always shaped by EQ + Comp
-    compressor.connect(feedbackDelay);
+    // Delay taps from reverb output — echoes are always shaped by the full chain
+    reverbNode.connect(feedbackDelay);
     feedbackDelay.connect(delayReturn);
     delayReturn.connect(output);
 
     const rack = {
         input, output, compensation,
         eq3, compressor,
+        distortionNode, reverbNode,
         dryGain, wetGain,
         feedbackDelay, delayReturn,
         entry: input.input,
@@ -130,24 +153,41 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     rampParam(rack.compressor.threshold, compActive ? normalized.compressor.threshold : 0, ramp);
     rampParam(rack.compressor.ratio, compActive ? normalized.compressor.ratio : 1, ramp);
 
-    // Delay: taps from compressor output, disabled = zero return
+    // Distortion: disabled = wet 0 (bypass)
+    const distortionActive = normalized.distortion.enabled;
+    rampParam(rack.distortionNode.wet, distortionActive ? 1 : 0, ramp);
+    if (distortionActive) {
+        try { rack.distortionNode.distortion = normalized.distortion.amount; } catch (e) { /* amount set directly */ }
+    }
+
+    // Reverb: disabled = wet 0 (bypass). decay/preDelay set directly (async generate, immediate .value is fine)
+    const reverbActive = normalized.reverb.enabled;
+    try {
+        rack.reverbNode.decay = normalized.reverb.decay;
+        rack.reverbNode.preDelay = normalized.reverb.preDelay;
+    } catch (e) { /* decay/preDelay set directly */ }
+    rampParam(rack.reverbNode.wet, reverbActive ? normalized.reverb.wet : 0, ramp);
+
+    // Delay: taps from reverb output, disabled = zero return
     const delayActive = normalized.delay.enabled;
     rampParam(rack.feedbackDelay.delayTime, normalized.delay.time, ramp);
     rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
     rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
 
     // Dry / wet balance
-    // dryGain is always active — it carries the post-EQ+Comp signal at a
-    // level that depends on whether EQ/Comp effects are engaged.
-    // wetGain boosts the same signal further when effects are active.
-    const hasEqOrComp = normalized.eq.enabled || normalized.compressor.enabled;
-    const anyEffect = normalized.enabled && (hasEqOrComp || delayActive);
+    // dryGain is always active — it carries the post-chain signal at a
+    // level that depends on whether serial effects (EQ/Comp/Distortion)
+    // are engaged. wetGain boosts the same signal further when those are active.
+    // Reverb mixes internally via its own wet param, so it is not part of wetGain.
+    const hasSerialEffect = normalized.eq.enabled || normalized.compressor.enabled ||
+        normalized.distortion.enabled;
+    const anyEffect = normalized.enabled && (hasSerialEffect || delayActive || reverbActive);
 
     if (anyEffect) {
         const wetLevel = normalized.wet;
         // dryGain carries (1 - wet) of the signal so total doesn't double
         rampParam(rack.dryGain.gain, 1 - Math.min(wetLevel, 0.95), ramp);
-        rampParam(rack.wetGain.gain, hasEqOrComp ? wetLevel : 0, ramp);
+        rampParam(rack.wetGain.gain, hasSerialEffect ? wetLevel : 0, ramp);
     } else {
         rampParam(rack.dryGain.gain, 1, ramp);
         rampParam(rack.wetGain.gain, 0, ramp);
@@ -159,6 +199,7 @@ export function disposeEffectRack(rack) {
     const nodes = [
         rack.input, rack.output, rack.compensation,
         rack.eq3, rack.compressor,
+        rack.distortionNode, rack.reverbNode,
         rack.dryGain, rack.wetGain,
         rack.feedbackDelay, rack.delayReturn
     ];
