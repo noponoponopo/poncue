@@ -3,7 +3,7 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml } from './05_ui.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml, setupCanvasResize } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
@@ -26,6 +26,7 @@ function debounce(func, delay) {
 
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
+let resizeFrameId = null;
 
 // Move master volume between header and master-effect-bar based on available width
 function relocateMasterVolume() {
@@ -104,11 +105,13 @@ export function setupEventListeners() {
     dom.soundboard.addEventListener('touchcancel', handleTouchCancel);
     
     window.addEventListener('resize', () => {
-        import('./05_ui.js').then(ui => {
-            ui.setupCanvasResize();
+        if (resizeFrameId !== null) return;
+        resizeFrameId = requestAnimationFrame(() => {
+            resizeFrameId = null;
+            setupCanvasResize();
             triggerWaveformUpdate();
+            relocateMasterVolume();
         });
-        relocateMasterVolume();
     });
 
     // Keyboard Shortcuts
