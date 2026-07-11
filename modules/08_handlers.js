@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, startMasterMeter, setMasterParam } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -49,7 +49,7 @@ function relocateMasterVolume() {
 // --- Event Listener Setup ---
 export function setupEventListeners() {
     createMasterMeterElement();
-    createMasterEffectKnobs({ eq: state.masterEq, comp: state.masterComp, delay: state.masterDelay }, (key, value) => {
+    createMasterEffectKnobs({ eq: state.masterEq, comp: state.masterComp, delay: state.masterDelay, pan: state.masterPan }, (key, value) => {
         setMasterParam(key, value);
         const [group] = key.split('.');
         const stateKey = `master${group[0].toUpperCase()}${group.slice(1)}`;
@@ -274,7 +274,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newEffects } = newSettings;
+        const { newShortcut, newFadeDuration, newPan, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -296,6 +296,10 @@ async function handleSoundSettings(soundId) {
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
         sound.effects = newEffects;
+        if (Number.isFinite(newPan)) {
+            sound.pan = newPan;
+            updateActiveSoundPan(soundId);
+        }
         updateActiveSoundEffects(soundId);
         debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
 

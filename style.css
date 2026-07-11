@@ -619,6 +619,23 @@
       width: 100%;
     }
 
+    .pan-slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pan-slider-wrap .effect-slider {
+      flex: 1;
+    }
+
+    .pan-marker {
+      font-size: 0.7em;
+      font-weight: 700;
+      color: var(--secondary-color);
+      flex-shrink: 0;
+    }
+
     .effect-text-input {
       width: 100%;
       padding: 4px 8px;
@@ -1219,6 +1236,12 @@
       display: flex;
       align-items: center;
       padding: 0 4px;
+    }
+
+    .knob-cluster {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
     }
 
     .knob-group-name {

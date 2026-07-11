@@ -49,9 +49,12 @@ export function initAudioContext() {
         masterDryGain.connect(masterMixOut);
         masterDelayReturn.connect(masterMixOut);
 
-        masterMixOut.output.connect(outputLimiterNode);
+        const masterPanNode = audioContext.createStereoPanner();
+        masterPanNode.pan.setValueAtTime(Number.isFinite(state.masterPan.value) ? state.masterPan.value : 0, audioContext.currentTime);
+        masterMixOut.output.connect(masterPanNode);
+        masterPanNode.connect(outputLimiterNode);
         outputLimiterNode.connect(audioContext.destination);
-        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn });
+        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn, masterPanNode });
 
         setAudioContext(audioContext, masterGainNode, outputLimiterNode);
 
@@ -110,6 +113,8 @@ export function setMasterParam(dottedKey, value) {
                 } else {
                     node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
                 }
+            } else if (group === 'pan') {
+                node.pan.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
             }
         } catch (e) { /* param not rampable */ }
     }
@@ -196,6 +201,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             sourceNode.loop = soundData.loop;
         }
 
+        const pannerNode = state.audioContext.createStereoPanner();
+        pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
         const individualGain = state.audioContext.createGain();
         const effectRack = createEffectRack(soundData.effects);
         const splitter = state.audioContext.createChannelSplitter(2);
@@ -206,7 +213,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         Object.assign(analyserL, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
         Object.assign(analyserR, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
 
-        sourceNode.connect(individualGain);
+        sourceNode.connect(pannerNode);
+        pannerNode.connect(individualGain);
         individualGain.connect(effectRack.entry);
         effectRack.exit.connect(splitter);
         splitter.connect(analyserL, 0);
@@ -216,7 +224,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
 
         state.activeAudios[soundId] = {
-            audioElement, sourceNode, individualGain, effectRack,
+            audioElement, sourceNode, pannerNode, individualGain, effectRack,
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
@@ -366,6 +374,14 @@ export function updateActiveSoundEffects(soundId) {
     applyEffectSettings(audioInfo.effectRack, soundData.effects, state.audioContext, false);
 }
 
+export function updateActiveSoundPan(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!audioInfo?.pannerNode || !soundData || !state.audioContext) return;
+    const pan = Number.isFinite(soundData.pan) ? soundData.pan : 0;
+    audioInfo.pannerNode.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), state.audioContext.currentTime, 0.01);
+}
+
 function cleanupAfterStop(soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
 
@@ -384,6 +400,7 @@ function cleanupAfterStop(soundId, soundButtonElement) {
             }
         }
         try { audioInfo.individualGain?.disconnect(); } catch (e) { /* ignore */ }
+        try { audioInfo.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
         disposeEffectRack(audioInfo.effectRack);
         try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
 
