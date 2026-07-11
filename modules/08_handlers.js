@@ -3,7 +3,7 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs } from './05_ui.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
@@ -205,7 +205,7 @@ async function handleModalRenameScene(sceneId) {
         scene.name = newName.trim();
         if (sceneId === state.currentSceneId) {
             const h1 = document.querySelector('header h1');
-            if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${scene.name}`;
+            if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${escapeHtml(scene.name)}`;
         }
         populateSceneModalList();
         debouncedSaveCurrentSceneSounds("modalRename");
@@ -620,7 +620,7 @@ function createSoundButton(sound) {
         <span class="loop-indicator">LOOP</span>
         <div class="button-content">
             <i class="fas fa-play sound-icon"></i>
-            <span class="sound-name">${sound.name}</span>
+            <span class="sound-name">${escapeHtml(sound.name)}</span>
             <div class="time-display">${durationText}</div>
         </div>
         <div class="button-controls">
