@@ -461,6 +461,8 @@ export async function handleAudioFileSelect(event) {
                 fadeInEasing: DEFAULT_FADE_EASING,
                 fadeOutEasing: DEFAULT_FADE_EASING,
                 reverse: false,
+                playbackRate: 1.0,
+                preservePitch: false,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };

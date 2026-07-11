@@ -139,6 +139,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const fadeOutEasing = FADE_EASING_TYPES.includes(sound.fadeOutEasing) ? sound.fadeOutEasing : 'linear';
         const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
         const reverse = !!sound.reverse;
+        const initialSpeed = Number.isFinite(sound.playbackRate) ? sound.playbackRate : 1;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -184,6 +185,15 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                 <div class="effect-param-row">
                     <label for="reverse-input" class="effect-param-label">逆再生</label>
                     <input type="checkbox" id="reverse-input" ${reverse ? 'checked' : ''}>
+                </div>
+                <div class="effect-param-row">
+                    <label for="playback-speed-input" class="effect-param-label">速度</label>
+                    <span class="effect-param-value"><span id="playback-speed-value">${initialSpeed.toFixed(2)}</span>x</span>
+                    <input type="range" id="playback-speed-input" min="0.5" max="2" step="0.05" value="${initialSpeed}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row effect-checkbox-row">
+                    <span class="effect-param-label">ピッチ</span>
+                    <label><input type="checkbox" id="preserve-pitch-input" ${sound.preservePitch ? 'checked' : ''}> 速度変更時も保持</label>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -287,6 +297,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const panInput = dom.customModalMessage.querySelector('#pan-input');
         const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
         const reverseInput = dom.customModalMessage.querySelector('#reverse-input');
+        const playbackSpeedInput = dom.customModalMessage.querySelector('#playback-speed-input');
+        const playbackSpeedValueSpan = dom.customModalMessage.querySelector('#playback-speed-value');
+        const preservePitchInput = dom.customModalMessage.querySelector('#preserve-pitch-input');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -315,6 +328,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         let newFadeOutEasing = fadeOutEasing;
         let newPan = initialPan;
         let newReverse = reverse;
+        let newPlaybackSpeed = initialSpeed;
         let newEffects = effectSettings;
 
         const handleKeydown = (e) => {
@@ -346,6 +360,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const handlePadColorClear = () => {
             newColor = null;
             padColorInput.value = '#808080';
+        };
+
+        const handlePlaybackSpeedInput = (e) => {
+            newPlaybackSpeed = parseFloat(e.target.value);
+            playbackSpeedValueSpan.textContent = newPlaybackSpeed.toFixed(2);
         };
 
         const handleFadeInDurationInput = (e) => {
@@ -431,6 +450,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         panInput.addEventListener('input', handlePanInput);
         panInput.addEventListener('dblclick', handlePanDoubleClick);
         reverseInput.addEventListener('change', handleReverseInput);
+        playbackSpeedInput.addEventListener('input', handlePlaybackSpeedInput);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
@@ -449,10 +469,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
             reverseInput.removeEventListener('change', handleReverseInput);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newEffects: readEffects() });
+            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
@@ -466,6 +487,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
             reverseInput.removeEventListener('change', handleReverseInput);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');

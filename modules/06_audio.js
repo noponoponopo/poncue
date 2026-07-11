@@ -265,6 +265,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             objectUrl = URL.createObjectURL(blob);
             audioElement = new Audio(objectUrl);
             audioElement.loop = soundData.loop;
+            audioElement.preservesPitch = Boolean(soundData.preservePitch);
+            audioElement.playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
             audioElement.preload = 'auto';
             audioElement.currentTime = Math.max(0, startOffset);
             sourceNode = state.audioContext.createMediaElementSource(audioElement);
@@ -304,9 +306,13 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データがキャッシュされていません。`);
                 return;
             }
-            sourceNode = state.audioContext.createBufferSource();
-            sourceNode.buffer = audioBuffer;
-            sourceNode.loop = soundData.loop;
+            const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+            sourceNode = new Tone.GrainPlayer({
+                url: audioBuffer,
+                loop: soundData.loop,
+                playbackRate,
+                detune: soundData.preservePitch ? 0 : 1200 * Math.log2(playbackRate)
+            });
         }
 
         const pannerNode = state.audioContext.createStereoPanner();
@@ -369,7 +375,8 @@ ${err.message}`);
                 cleanupAfterStop(soundId, soundButtonElement);
             });
         } else { // HIGH_PERFORMANCE
-            sourceNode.onended = onEnd;
+            if ('onended' in sourceNode) sourceNode.onended = onEnd;
+            else sourceNode.onstop = onEnd;
             const startedAt = performance.now();
             sourceNode.start(0, Math.max(0, startOffset));
             recordStartMetric(soundId, clickTime, startedAt);
@@ -494,13 +501,35 @@ export function updateActiveSoundPan(soundId) {
     audioInfo.pannerNode.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), state.audioContext.currentTime, 0.01);
 }
 
+export function updateActiveSoundSpeed(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!audioInfo || !soundData || !state.audioContext) return;
+    const rate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+    if (audioInfo.audioElement) {
+        audioInfo.audioElement.preservesPitch = Boolean(soundData.preservePitch);
+        audioInfo.audioElement.playbackRate = rate;
+    } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
+        audioInfo.sourceNode.playbackRate = rate;
+        audioInfo.sourceNode.detune = soundData.preservePitch ? 0 : 1200 * Math.log2(rate);
+    } else if (audioInfo.sourceNode?.playbackRate) {
+        try {
+            audioInfo.sourceNode.playbackRate.setTargetAtTime(rate, state.audioContext.currentTime, 0.05);
+        } catch (e) {
+            try { audioInfo.sourceNode.playbackRate.value = rate; } catch (_) { /* ignore */ }
+        }
+    }
+}
+
 function cleanupAfterStop(soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
         if (audioInfo.sourceNode) {
             audioInfo.sourceNode.onended = null;
+            if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = () => {};
             try { audioInfo.sourceNode.disconnect(); } catch (e) { /* ignore */ }
+            if (audioInfo.sourceNode instanceof Tone.GrainPlayer) audioInfo.sourceNode.dispose();
         }
         if (audioInfo.audioElement) {
             audioInfo.audioElement.onended = null;

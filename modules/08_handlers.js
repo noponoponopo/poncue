@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, startMasterMeter, setMasterParam } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, startMasterMeter, setMasterParam } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -336,7 +336,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newColor, newHoldToPlay, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newEffects } = newSettings;
+        const { newShortcut, newColor, newHoldToPlay, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -374,6 +374,11 @@ async function handleSoundSettings(soundId) {
             sound.reverse = newReverse;
             if (state.reversedAudioBuffers) delete state.reversedAudioBuffers[soundId];
         }
+        if (Number.isFinite(newPlaybackSpeed)) {
+            sound.playbackRate = Math.max(0.25, Math.min(4, newPlaybackSpeed));
+        }
+        sound.preservePitch = preservePitch;
+        updateActiveSoundSpeed(soundId);
         sound.effects = newEffects;
         if (Number.isFinite(newPan)) {
             sound.pan = newPan;
