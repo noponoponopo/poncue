@@ -33,6 +33,10 @@ export function openDB() {
 
         request.onsuccess = e => {
             const dbInstance = e.target.result;
+            dbInstance.onversionchange = () => {
+                try { dbInstance.close(); } catch (_) { /* already closed */ }
+                setDb(null);
+            };
             setDb(dbInstance);
             dbInstance.onerror = (event) => {
                 showAlert(`データベースエラーが発生しました: ${event.target.error.message}`);
