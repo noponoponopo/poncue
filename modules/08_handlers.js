@@ -305,7 +305,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newFadeDuration, newPan, newEffects } = newSettings;
+        const { newShortcut, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -324,8 +324,12 @@ async function handleSoundSettings(soundId) {
         }
         await saveSetting('shortcuts', state.shortcuts);
 
-        // Update fade duration
-        sound.fadeDuration = newFadeDuration;
+        // Update fade (in/out split + easing)
+        sound.fadeInDuration = newFadeInDuration;
+        sound.fadeOutDuration = newFadeOutDuration;
+        sound.fadeInEasing = newFadeInEasing;
+        sound.fadeOutEasing = newFadeOutEasing;
+        if ('fadeDuration' in sound) delete sound.fadeDuration;
         sound.effects = newEffects;
         if (Number.isFinite(newPan)) {
             sound.pan = newPan;

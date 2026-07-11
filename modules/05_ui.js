@@ -4,6 +4,15 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
+import { FADE_EASING_TYPES } from './01_config.js';
+
+// フェードイージングの表示ラベル（type リストは 01_config.js の FADE_EASING_TYPES と同期）
+const EASING_LABELS = { linear: '直線', easeIn: 'イーズイン', easeOut: 'イーズアウト', sCurve: 'イーズインアウト' };
+function easingOptions(selected) {
+    return FADE_EASING_TYPES
+        .map(t => `<option value="${t}"${t === selected ? ' selected' : ''}>${EASING_LABELS[t] ?? t}</option>`)
+        .join('');
+}
 
 export function escapeHtml(str) {
     return String(str ?? '')
@@ -124,6 +133,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
         const initialPan = Number.isFinite(sound.pan) ? sound.pan : 0;
+        const fadeInDuration = Number.isFinite(sound.fadeInDuration) ? sound.fadeInDuration : 0;
+        const fadeOutDuration = Number.isFinite(sound.fadeOutDuration) ? sound.fadeOutDuration : 0;
+        const fadeInEasing = FADE_EASING_TYPES.includes(sound.fadeInEasing) ? sound.fadeInEasing : 'linear';
+        const fadeOutEasing = FADE_EASING_TYPES.includes(sound.fadeOutEasing) ? sound.fadeOutEasing : 'linear';
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -132,9 +145,22 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
                 </div>
                 <div class="effect-param-row">
-                    <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
-                    <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
-                    <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
+                    <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
+                    <span class="effect-param-value"><span id="fade-in-duration-value">${fadeInDuration.toFixed(2)}</span>s</span>
+                    <input type="range" id="fade-in-duration-input" min="0" max="5" step="0.01" value="${fadeInDuration}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-in-easing-input" class="effect-param-label">イン カーブ</label>
+                    <select id="fade-in-easing-input" class="modal-input effect-select">${easingOptions(fadeInEasing)}</select>
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-out-duration-input" class="effect-param-label">フェードアウト</label>
+                    <span class="effect-param-value"><span id="fade-out-duration-value">${fadeOutDuration.toFixed(2)}</span>s</span>
+                    <input type="range" id="fade-out-duration-input" min="0" max="5" step="0.01" value="${fadeOutDuration}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-out-easing-input" class="effect-param-label">アウト カーブ</label>
+                    <select id="fade-out-easing-input" class="modal-input effect-select">${easingOptions(fadeOutEasing)}</select>
                 </div>
                 <div class="effect-param-row">
                     <label for="pan-input" class="effect-param-label">Pan</label>
@@ -235,8 +261,12 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
-        const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
-        const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
+        const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
+        const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
+        const fadeOutDurationInput = dom.customModalMessage.querySelector('#fade-out-duration-input');
+        const fadeOutDurationValueSpan = dom.customModalMessage.querySelector('#fade-out-duration-value');
+        const fadeOutEasingInput = dom.customModalMessage.querySelector('#fade-out-easing-input');
         const panInput = dom.customModalMessage.querySelector('#pan-input');
         const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
@@ -260,7 +290,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const reverbWetInput = dom.customModalMessage.querySelector('#reverb-wet-input');
 
         let newShortcut = currentShortcut;
-        let newFadeDuration = sound.fadeDuration ?? 0.0;
+        let newFadeInDuration = fadeInDuration;
+        let newFadeOutDuration = fadeOutDuration;
+        let newFadeInEasing = fadeInEasing;
+        let newFadeOutEasing = fadeOutEasing;
         let newPan = initialPan;
         let newEffects = effectSettings;
 
@@ -289,10 +322,16 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             shortcutInput.value = newShortcut;
         };
 
-        const handleFadeDurationInput = (e) => {
-            newFadeDuration = parseFloat(e.target.value);
-            fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
+        const handleFadeInDurationInput = (e) => {
+            newFadeInDuration = parseFloat(e.target.value);
+            fadeInDurationValueSpan.textContent = newFadeInDuration.toFixed(2);
         };
+        const handleFadeOutDurationInput = (e) => {
+            newFadeOutDuration = parseFloat(e.target.value);
+            fadeOutDurationValueSpan.textContent = newFadeOutDuration.toFixed(2);
+        };
+        const handleFadeInEasingInput = (e) => { newFadeInEasing = e.target.value; };
+        const handleFadeOutEasingInput = (e) => { newFadeOutEasing = e.target.value; };
 
         const handlePanInput = (e) => {
             newPan = parseFloat(e.target.value);
@@ -355,7 +394,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
-        fadeDurationInput.addEventListener('input', handleFadeDurationInput);
+        fadeInDurationInput.addEventListener('input', handleFadeInDurationInput);
+        fadeOutDurationInput.addEventListener('input', handleFadeOutDurationInput);
+        fadeInEasingInput.addEventListener('change', handleFadeInEasingInput);
+        fadeOutEasingInput.addEventListener('change', handleFadeOutEasingInput);
         panInput.addEventListener('input', handlePanInput);
         panInput.addEventListener('dblclick', handlePanDoubleClick);
         [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
@@ -367,18 +409,24 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
+            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
+            fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
+            fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newFadeDuration, newPan, newEffects: readEffects() });
+            resolve({ newShortcut, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
+            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
+            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
+            fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
+            fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
             panInput.removeEventListener('input', handlePanInput);
             panInput.removeEventListener('dblclick', handlePanDoubleClick);
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput]
