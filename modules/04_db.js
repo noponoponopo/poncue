@@ -62,6 +62,8 @@ export async function dbRequest(storeName, mode, operation, data = null) {
         }
     }
 
+    const isWrite = mode === 'readwrite';
+
     return new Promise((resolve, reject) => {
         try {
             const transaction = state.db.transaction(storeName, mode);
@@ -76,10 +78,19 @@ export async function dbRequest(storeName, mode, operation, data = null) {
                 default:
                     return reject(new Error(`Invalid DB operation: ${operation}`));
             }
-            request.onsuccess = event => resolve(event.target.result);
-            request.onerror = event => {
-                reject(event.target.error);
-            };
+
+            if (isWrite) {
+                let writeResult;
+                request.onsuccess = event => { writeResult = event.target.result; };
+                transaction.oncomplete = () => resolve(writeResult);
+                transaction.onerror = () => reject(transaction.error ?? request.error ?? new Error('DB transaction failed'));
+                transaction.onabort = () => reject(transaction.error ?? new Error('DB transaction aborted'));
+            } else {
+                request.onsuccess = event => resolve(event.target.result);
+                request.onerror = event => {
+                    reject(event.target.error);
+                };
+            }
         } catch (err) {
             reject(err);
         }
