@@ -150,6 +150,7 @@ export function setupEventListeners() {
 
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
 }
 
 
@@ -305,7 +306,7 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects } = newSettings;
+        const { newShortcut, newColor, newHoldToPlay, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -330,6 +331,7 @@ async function handleSoundSettings(soundId) {
         } else if (typeof newColor === 'string') {
             sound.color = newColor;
         }
+        sound.holdToPlay = newHoldToPlay;
 
         // Update fade (in/out split + easing)
         sound.fadeInDuration = newFadeInDuration;
@@ -381,9 +383,23 @@ async function handleKeyDown(event) {
         event.preventDefault();
         const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
         if (soundButtonElement) {
-            handleSoundButtonClick(soundId, soundButtonElement);
+            const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+            if (sound?.holdToPlay) {
+                if (!event.repeat) startHoldPlayback(soundId, soundButtonElement, `key:${normalizedKey}`);
+            } else if (!event.repeat) {
+                handleSoundButtonClick(soundId, soundButtonElement);
+            }
         }
     }
+}
+
+function handleKeyUp(event) {
+    const normalizedKey = normalizeKey(event);
+    const soundId = state.shortcuts[normalizedKey];
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+    if (!sound?.holdToPlay) return;
+    event.preventDefault();
+    endHoldPlayback(soundId, `key:${normalizedKey}`);
 }
 
 // --- Sound Button and Board Handlers ---
@@ -392,6 +408,34 @@ async function handleKeyDown(event) {
 // click event doesn't fire a second toggle. Module-level to survive
 // button re-renders; entries are consumed (deleted) by the click handler.
 const _toggleHandled = new Set();
+const _holdInputs = new Map();
+const _longPressHandled = new Set();
+
+async function startHoldPlayback(soundId, soundButtonElement, inputId) {
+    let inputs = _holdInputs.get(soundId);
+    if (!inputs) {
+        inputs = new Set();
+        _holdInputs.set(soundId, inputs);
+    }
+    if (inputs.has(inputId)) return;
+    inputs.add(inputId);
+
+    if (!state.activeAudios[soundId]) {
+        await handleSoundButtonClick(soundId, soundButtonElement);
+    }
+    if (!_holdInputs.get(soundId)?.size && state.activeAudios[soundId]) {
+        stopSound(soundId, soundButtonElement);
+    }
+}
+
+function endHoldPlayback(soundId, inputId, soundButtonElement = null) {
+    const inputs = _holdInputs.get(soundId);
+    if (!inputs) return;
+    inputs.delete(inputId);
+    if (inputs.size) return;
+    _holdInputs.delete(soundId);
+    if (state.activeAudios[soundId]) stopSound(soundId, soundButtonElement);
+}
 
 async function handleSoundButtonClick(soundId, soundButtonElement) {
     const clickTime = performance.now(); // Capture timestamp at click
@@ -531,6 +575,8 @@ function handleTouchStart(event) {
     if (!state.isSortableEnabled) return;
     const targetButton = event.target.closest('.sound-button');
     if (!targetButton || isDraggingViaTouch || event.target.closest('.volume-control')) return;
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === targetButton.dataset.id);
+    if (sound?.holdToPlay) return;
     
     touchMoveOccurred = false;
     const touch = event.touches[0];
@@ -543,6 +589,7 @@ function handleTouchStart(event) {
     longPressTimeoutId = setTimeout(() => {
         if (touchMoveOccurred) return;
         isDraggingViaTouch = true;
+        _longPressHandled.add(draggedSoundIdTouch);
         createGhostElement(targetButton, touch);
         targetButton.classList.add('dragging');
         if (navigator.vibrate) navigator.vibrate(50);
@@ -600,6 +647,7 @@ async function handleTouchEnd(event) {
 
 function handleTouchCancel() {
     clearTimeout(longPressTimeoutId);
+    if (draggedSoundIdTouch) _longPressHandled.delete(draggedSoundIdTouch);
     resetTouchDragState();
 }
 
@@ -699,6 +747,17 @@ function createSoundButton(sound) {
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
+        if (sound.holdToPlay && e.button === 0) {
+            e.preventDefault();
+            const inputId = `pointer:${e.pointerId}`;
+            _toggleHandled.add(sound.id);
+            buttonWrapper.setPointerCapture?.(e.pointerId);
+            startHoldPlayback(sound.id, buttonWrapper, inputId);
+            const release = () => endHoldPlayback(sound.id, inputId, buttonWrapper);
+            buttonWrapper.addEventListener('pointerup', release, { once: true });
+            buttonWrapper.addEventListener('pointercancel', release, { once: true });
+            return;
+        }
         if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
@@ -709,6 +768,11 @@ function createSoundButton(sound) {
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
+        if (sound.holdToPlay || _longPressHandled.delete(sound.id)) {
+            e.preventDefault();
+            _toggleHandled.add(sound.id);
+            return;
+        }
         if (!isDraggingViaTouch) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
