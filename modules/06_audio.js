@@ -6,7 +6,7 @@ import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, rese
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
 import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS } from './01_config.js';
 import { dbRequest } from './04_db.js';
-import { applyEffectSettings, createEffectRack, disposeEffectRack } from './09_effects.js';
+import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
 import * as Tone from 'tone';
 
@@ -21,12 +21,6 @@ export function initAudioContext() {
     try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const masterGainNode = audioContext.createGain();
-        const outputLimiterNode = audioContext.createDynamicsCompressor();
-        outputLimiterNode.threshold.setValueAtTime(-1, audioContext.currentTime);
-        outputLimiterNode.knee.setValueAtTime(0, audioContext.currentTime);
-        outputLimiterNode.ratio.setValueAtTime(20, audioContext.currentTime);
-        outputLimiterNode.attack.setValueAtTime(0.001, audioContext.currentTime);
-        outputLimiterNode.release.setValueAtTime(0.05, audioContext.currentTime);
         masterGainNode.gain.setValueAtTime(state.masterVolume, audioContext.currentTime);
 
         // Master chain: EQ3 → Compressor → [dry + delay] → limiter
@@ -43,15 +37,18 @@ export function initAudioContext() {
         const masterDelayNode = new Tone.FeedbackDelay({ delayTime: state.masterDelay.time, feedback: state.masterDelay.feedback, maxDelay: 2 });
         const masterDelayReturn = new Tone.Gain(state.masterDelay.level);
         const masterMixOut = new Tone.Gain(1);
+        const outputLimiterNode = new Tone.Compressor({ threshold: state.masterLimiter.threshold, ratio: 20, knee: 0, attack: 0.001, release: 0.08 });
+        const outputSafetyLimiterNode = new Tone.Compressor({ threshold: state.masterLimiter.threshold, ratio: 20, knee: 0, attack: 0, release: 0.03 });
         masterCompNode.connect(masterDryGain);
         masterCompNode.connect(masterDelayNode);
         masterDelayNode.connect(masterDelayReturn);
         masterDryGain.connect(masterMixOut);
         masterDelayReturn.connect(masterMixOut);
 
-        masterMixOut.output.connect(outputLimiterNode);
-        outputLimiterNode.connect(audioContext.destination);
-        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn });
+        masterMixOut.connect(outputLimiterNode);
+        outputLimiterNode.connect(outputSafetyLimiterNode);
+        outputSafetyLimiterNode.output.connect(audioContext.destination);
+        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn, outputSafetyLimiterNode });
 
         setAudioContext(audioContext, masterGainNode, outputLimiterNode);
 
@@ -112,6 +109,17 @@ export function setMasterParam(dottedKey, value) {
                 }
             }
         } catch (e) { /* param not rampable */ }
+    }
+}
+
+export function setMasterLimiterThreshold(value) {
+    const threshold = Math.min(0, Math.max(-12, Number(value)));
+    state.masterLimiter.threshold = threshold;
+    if (state.outputLimiterNode?.threshold) {
+        state.outputLimiterNode.threshold.rampTo(threshold, 0.01);
+    }
+    if (state.outputSafetyLimiterNode?.threshold) {
+        state.outputSafetyLimiterNode.threshold.rampTo(threshold, 0.01);
     }
 }
 
@@ -416,13 +424,13 @@ export async function getAudioBufferFromDataUrl(soundId, dataUrl) {
 }
 
 /**
- * 指定サウンドのピークを検出し、targetPeak に揃うよう音量を自動調整する。
+ * ITU-R BS.1770方式のK-weightingとゲーティングで統合ラウドネスを測定する。
  * HIGH_PERFORMANCE はキャッシュの AudioBuffer を使用、LOW_MEMORY は都度デコード。
- * 戻り値は { peak, recommendedVolume }、失敗時は null。
+ * 戻り値は { measuredLufs, targetLufs, recommendedVolume }、失敗時は null。
  */
-export async function normalizeSoundVolume(soundId, targetPeak = 0.99) {
+export async function normalizeSoundVolume(soundId, targetLufs = -18) {
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!soundData?.audioId || !state.audioContext) return null;
+    if (!soundData?.audioId || !state.audioContext || !Number.isFinite(targetLufs) || targetLufs < -70 || targetLufs > 0) return null;
 
     let audioBuffer = state.decodedAudioBuffers[soundId];
     if (!audioBuffer) {
@@ -438,17 +446,25 @@ export async function normalizeSoundVolume(soundId, targetPeak = 0.99) {
     }
     if (!audioBuffer) return null;
 
-    let peak = 0;
-    for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
-        const data = audioBuffer.getChannelData(ch);
-        for (let i = 0; i < data.length; i++) {
-            const abs = Math.abs(data[i]);
-            if (abs > peak) peak = abs;
+    const measuredLufs = await measureIntegratedLufs(audioBuffer);
+    if (!Number.isFinite(measuredLufs)) return null;
+
+    const loudnessGain = 10 ** ((targetLufs - measuredLufs) / 20);
+    const limiterSettings = normalizeEffectSettings(soundData.effects).limiter;
+    let recommendedVolume = loudnessGain;
+    let limitedByPeak = false;
+    if (limiterSettings.enabled) {
+        let samplePeak = 0;
+        for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+            const data = audioBuffer.getChannelData(ch);
+            for (let i = 0; i < data.length; i++) samplePeak = Math.max(samplePeak, Math.abs(data[i]));
+        }
+        if (samplePeak > 0) {
+            const peakSafeGain = 10 ** (limiterSettings.threshold / 20) / samplePeak;
+            recommendedVolume = Math.min(loudnessGain, peakSafeGain);
+            limitedByPeak = recommendedVolume < loudnessGain;
         }
     }
-    if (peak <= 0) return null;
-
-    const recommendedVolume = Math.min(1.0, targetPeak / peak);
     soundData.volume = recommendedVolume;
 
     const activeAudio = state.activeAudios[soundId];
@@ -456,7 +472,61 @@ export async function normalizeSoundVolume(soundId, targetPeak = 0.99) {
         activeAudio.individualGain.gain.setTargetAtTime(recommendedVolume, state.audioContext.currentTime, 0.01);
     }
 
-    return { peak, recommendedVolume };
+    return {
+        measuredLufs,
+        targetLufs,
+        achievedLufs: measuredLufs + 20 * Math.log10(recommendedVolume),
+        recommendedVolume,
+        limitedByPeak
+    };
+}
+
+async function measureIntegratedLufs(audioBuffer) {
+    const offline = new OfflineAudioContext(
+        audioBuffer.numberOfChannels,
+        audioBuffer.length,
+        audioBuffer.sampleRate
+    );
+    const source = offline.createBufferSource();
+    const shelf = offline.createBiquadFilter();
+    const highpass = offline.createBiquadFilter();
+    source.buffer = audioBuffer;
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 1681.974;
+    shelf.gain.value = 4;
+    highpass.type = 'highpass';
+    highpass.frequency.value = 38.135;
+    highpass.Q.value = 0.5;
+    source.connect(shelf).connect(highpass).connect(offline.destination);
+    source.start();
+    const weighted = await offline.startRendering();
+
+    const blockSize = Math.max(1, Math.round(weighted.sampleRate * 0.4));
+    const stepSize = Math.max(1, Math.round(weighted.sampleRate * 0.1));
+    const channelWeights = [1, 1, 1, 0, 1.41, 1.41];
+    const energies = [];
+    for (let start = 0; start < weighted.length; start += stepSize) {
+        const end = Math.min(start + blockSize, weighted.length);
+        if (end - start < Math.min(blockSize, weighted.length)) break;
+        let energy = 0;
+        for (let ch = 0; ch < weighted.numberOfChannels; ch++) {
+            const data = weighted.getChannelData(ch);
+            let sum = 0;
+            for (let i = start; i < end; i++) sum += data[i] * data[i];
+            energy += (channelWeights[ch] ?? 1) * sum / (end - start);
+        }
+        if (energy > 0) energies.push(energy);
+    }
+    if (energies.length === 0) return -Infinity;
+
+    const loudness = energy => -0.691 + 10 * Math.log10(energy);
+    const absoluteGated = energies.filter(energy => loudness(energy) >= -70);
+    if (absoluteGated.length === 0) return -Infinity;
+    const absoluteMean = absoluteGated.reduce((sum, energy) => sum + energy, 0) / absoluteGated.length;
+    const relativeGate = loudness(absoluteMean) - 10;
+    const relativeGated = absoluteGated.filter(energy => loudness(energy) >= relativeGate);
+    const integratedEnergy = relativeGated.reduce((sum, energy) => sum + energy, 0) / relativeGated.length;
+    return loudness(integratedEnergy);
 }
 
 // --- UI Update Loops (Progress, Meter, Waveform) ---

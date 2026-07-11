@@ -130,7 +130,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                     <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
                 </div>
                 <div class="effect-param-row effect-action-row">
-                    <button type="button" id="normalize-btn" class="modal-input effect-action-btn">音量をノーマライズ</button>
+                    <label for="normalize-target-input" class="effect-param-label">目標ラウドネス</label>
+                    <span class="effect-param-value"><span id="normalize-target-value">-18</span> LUFS</span>
+                    <input type="range" id="normalize-target-input" min="-24" max="-9" step="1" value="-18" class="modal-input effect-slider">
+                    <button type="button" id="normalize-btn" class="modal-input effect-action-btn">LUFSノーマライズ</button>
+                    <span id="normalize-result" class="effect-param-value" role="status"></span>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -192,13 +196,24 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                         <input type="range" id="compressor-ratio-input" min="1" max="20" step="0.1" value="${effectSettings.compressor.ratio}" class="modal-input effect-slider">
                     </div>
                 </fieldset>
+                <fieldset class="effect-group">
+                    <legend><label><input type="checkbox" id="limiter-enabled-input" ${effectSettings.limiter.enabled ? 'checked' : ''}> リミッター</label></legend>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">Ceiling</span>
+                        <span class="effect-param-value"><span id="limiter-threshold-value">${effectSettings.limiter.threshold}</span>dBFS</span>
+                        <input type="range" id="limiter-threshold-input" min="-12" max="0" step="0.5" value="${effectSettings.limiter.threshold}" class="modal-input effect-slider">
+                    </div>
+                </fieldset>
             </div>
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
         const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const normalizeTargetInput = dom.customModalMessage.querySelector('#normalize-target-input');
+        const normalizeTargetValue = dom.customModalMessage.querySelector('#normalize-target-value');
         const normalizeBtn = dom.customModalMessage.querySelector('#normalize-btn');
+        const normalizeResult = dom.customModalMessage.querySelector('#normalize-result');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -212,6 +227,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         const compressorEnabledInput = dom.customModalMessage.querySelector('#compressor-enabled-input');
         const compressorThresholdInput = dom.customModalMessage.querySelector('#compressor-threshold-input');
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
+        const limiterEnabledInput = dom.customModalMessage.querySelector('#limiter-enabled-input');
+        const limiterThresholdInput = dom.customModalMessage.querySelector('#limiter-threshold-input');
 
         let newShortcut = currentShortcut;
         let newFadeDuration = sound.fadeDuration ?? 0.0;
@@ -247,7 +264,18 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
         };
 
-        const handleNormalize = () => { callbacks.onNormalize?.(); };
+        const handleNormalize = async () => {
+            normalizeBtn.disabled = true;
+            normalizeResult.textContent = '解析中...';
+            try {
+                const result = await callbacks.onNormalize?.(parseFloat(normalizeTargetInput.value));
+                normalizeResult.textContent = result
+                    ? `検出 ${result.measuredLufs.toFixed(1)} LUFS / 適用 ${result.achievedLufs.toFixed(1)} LUFS${result.limitedByPeak ? '（ピーク制約）' : ''} / 音量 ${Math.round(result.recommendedVolume * 100)}%`
+                    : 'ノーマライズできませんでした';
+            } finally {
+                normalizeBtn.disabled = false;
+            }
+        };
 
         const readEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
@@ -268,6 +296,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                 enabled: compressorEnabledInput.checked,
                 threshold: parseFloat(compressorThresholdInput.value),
                 ratio: parseFloat(compressorRatioInput.value)
+            },
+            limiter: {
+                enabled: limiterEnabledInput.checked,
+                threshold: parseFloat(limiterThresholdInput.value)
             }
         });
 
@@ -282,12 +314,18 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             dom.customModalMessage.querySelector('#delay-level-value').textContent = Math.round(newEffects.delay.level * 100);
             dom.customModalMessage.querySelector('#compressor-threshold-value').textContent = newEffects.compressor.threshold;
             dom.customModalMessage.querySelector('#compressor-ratio-value').textContent = newEffects.compressor.ratio.toFixed(1);
+            dom.customModalMessage.querySelector('#limiter-threshold-value').textContent = newEffects.limiter.threshold;
+        };
+
+        const handleNormalizeTargetInput = () => {
+            normalizeTargetValue.textContent = normalizeTargetInput.value;
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         fadeDurationInput.addEventListener('input', handleFadeDurationInput);
         normalizeBtn.addEventListener('click', handleNormalize);
-        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+        normalizeTargetInput.addEventListener('input', handleNormalizeTargetInput);
+        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, limiterEnabledInput, limiterThresholdInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
         dom.customModalOkBtn.textContent = '保存';
@@ -298,7 +336,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             normalizeBtn.removeEventListener('click', handleNormalize);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, limiterEnabledInput, limiterThresholdInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
             resolve({ newShortcut, newFadeDuration, newEffects: readEffects() });
@@ -308,7 +347,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             shortcutInput.removeEventListener('keydown', handleKeydown);
             fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
             normalizeBtn.removeEventListener('click', handleNormalize);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, limiterEnabledInput, limiterThresholdInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
             resolve(null); // User cancelled
@@ -444,6 +484,46 @@ export function createMasterMeterElement() {
     meterPair.appendChild(barsContainer);
     meterPair.appendChild(label);
     dom.levelMeterArea.insertBefore(meterPair, dom.levelMeterArea.firstChild);
+}
+
+export function createMasterLimiterKnob(value, onChange) {
+    if (!dom.masterLimiterControl) return;
+    const min = -12;
+    const max = 0;
+    const step = 0.5;
+    dom.masterLimiterControl.innerHTML = `
+        <div class="knob-group header-limiter-knob" title="マスター出力の上限">
+            <div class="knob"><div class="knob-indicator"></div></div>
+            <span class="knob-value"></span>
+            <span class="knob-name">LIMIT</span>
+        </div>
+    `;
+    const knob = dom.masterLimiterControl.querySelector('.knob');
+    const valueLabel = dom.masterLimiterControl.querySelector('.knob-value');
+    const render = next => {
+        knob.style.setProperty('--knob-rotation', `${((next - min) / (max - min)) * 270 - 135}deg`);
+        valueLabel.textContent = `${next} dB`;
+    };
+    render(value);
+
+    knob.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        const startY = event.clientY;
+        const startValue = state.masterLimiter.threshold;
+        const handleMove = moveEvent => {
+            const raw = startValue + (startY - moveEvent.clientY) / 120 * (max - min);
+            const next = Math.min(max, Math.max(min, Math.round(raw / step) * step));
+            render(next);
+            onChange(next, false);
+        };
+        const handleUp = () => {
+            window.removeEventListener('pointermove', handleMove);
+            window.removeEventListener('pointerup', handleUp);
+            onChange(state.masterLimiter.threshold, true);
+        };
+        window.addEventListener('pointermove', handleMove);
+        window.addEventListener('pointerup', handleUp, { once: true });
+    });
 }
 
 export function removeMeterElement(soundId) {

@@ -46,5 +46,9 @@ export const DEFAULT_EFFECT_SETTINGS = {
         enabled: false,
         threshold: -18,
         ratio: 3
+    },
+    limiter: {
+        enabled: false,
+        threshold: -1
     }
 };

@@ -224,6 +224,27 @@
       accent-color: var(--primary-color);
     }
 
+    .header-limiter-control {
+      display: flex;
+      align-items: center;
+      min-width: 52px;
+    }
+
+    .header-limiter-knob {
+      gap: 1px;
+    }
+
+    .header-limiter-knob .knob {
+      width: 30px;
+      height: 30px;
+    }
+
+    .header-limiter-knob .knob-value,
+    .header-limiter-knob .knob-name {
+      font-size: 0.58rem;
+      line-height: 1;
+    }
+
     /* When volume control is inside master-effect-bar */
     #master-effect-bar .master-volume-control {
       margin-left: auto;

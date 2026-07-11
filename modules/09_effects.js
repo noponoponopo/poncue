@@ -3,16 +3,14 @@
 // Tone.js based effect rack with serial chain.
 //
 // Serial chain contract:
-//   input → compensation → EQ3 → Compressor → [dry tap] → dryGain → output
-//                                              ↘ feedbackDelay → delayReturn → output
+//   input → compensation → EQ3 → Compressor → [dry + delay mix] → limiter/bypass → output
 //
 // Every effect feeds the next. Disabling an effect makes it transparent
 // (flat EQ, unity compressor) rather than removing it from the chain.
 // The delay taps from the compressor output, so echoes are always shaped by
 // EQ and compressor.
 //
-// Uniform latency: every signal passes through the compensation delay,
-// so dry and wet stay time-aligned regardless of effect settings.
+// The compensation delay keeps dry and effect paths aligned before limiting.
 
 import * as Tone from 'tone';
 import { AUDIO_PARAM_RAMP_SECONDS, DEFAULT_EFFECT_SETTINGS } from './01_config.js';
@@ -42,6 +40,7 @@ export function normalizeEffectSettings(settings = {}) {
     const eq = settings.eq ?? {};
     const delay = settings.delay ?? {};
     const compressor = settings.compressor ?? {};
+    const limiter = settings.limiter ?? {};
 
     return {
         enabled: Boolean(settings.enabled ?? base.enabled),
@@ -64,6 +63,10 @@ export function normalizeEffectSettings(settings = {}) {
             enabled: Boolean(compressor.enabled ?? base.compressor.enabled),
             threshold: clamp(compressor.threshold ?? base.compressor.threshold, -60, 0),
             ratio: clamp(compressor.ratio ?? base.compressor.ratio, 1, 20)
+        },
+        limiter: {
+            enabled: Boolean(limiter.enabled ?? base.limiter.enabled),
+            threshold: clamp(limiter.threshold ?? base.limiter.threshold, -12, 0)
         }
     };
 }
@@ -78,6 +81,11 @@ export function createEffectRack(settings = {}) {
     const feedbackDelay = new Tone.FeedbackDelay({ delayTime: 0.18, feedback: 0, maxDelay: 2 });
     const delayReturn = new Tone.Gain(0);
     const output = new Tone.Gain(1);
+    const limiter = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0.001, release: 0.08 });
+    const limiterSafety = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0, release: 0.03 });
+    const limiterDry = new Tone.Gain(1);
+    const limiterWet = new Tone.Gain(0);
+    const finalOutput = new Tone.Gain(1);
 
     // Serial chain: input → compensation → EQ3 → Compressor
     input.connect(compensation);
@@ -97,13 +105,20 @@ export function createEffectRack(settings = {}) {
     feedbackDelay.connect(delayReturn);
     delayReturn.connect(output);
 
+    output.connect(limiterDry);
+    output.connect(limiter);
+    limiterDry.connect(finalOutput);
+    limiter.connect(limiterSafety);
+    limiterSafety.connect(limiterWet);
+    limiterWet.connect(finalOutput);
+
     const rack = {
         input, output, compensation,
         eq3, compressor,
         dryGain, wetGain,
-        feedbackDelay, delayReturn,
+        feedbackDelay, delayReturn, limiter, limiterSafety, limiterDry, limiterWet, finalOutput,
         entry: input.input,
-        exit: output.input
+        exit: finalOutput.output
     };
 
     applyEffectSettings(rack, settings, null, true);
@@ -136,6 +151,11 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
     rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
 
+    rampParam(rack.limiter.threshold, normalized.limiter.threshold, ramp);
+    rampParam(rack.limiterSafety.threshold, normalized.limiter.threshold, ramp);
+    rampParam(rack.limiterDry.gain, normalized.limiter.enabled ? 0 : 1, ramp);
+    rampParam(rack.limiterWet.gain, normalized.limiter.enabled ? 1 : 0, ramp);
+
     // Dry / wet balance
     // dryGain is always active — it carries the post-EQ+Comp signal at a
     // level that depends on whether EQ/Comp effects are engaged.
@@ -160,7 +180,8 @@ export function disposeEffectRack(rack) {
         rack.input, rack.output, rack.compensation,
         rack.eq3, rack.compressor,
         rack.dryGain, rack.wetGain,
-        rack.feedbackDelay, rack.delayReturn
+        rack.feedbackDelay, rack.delayReturn,
+        rack.limiter, rack.limiterSafety, rack.limiterDry, rack.limiterWet, rack.finalOutput
     ];
     for (const node of nodes) {
         try { node?.dispose(); } catch (e) { /* ignore */ }

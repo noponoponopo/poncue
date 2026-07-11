@@ -12,6 +12,7 @@ export const state = {
     audioContext: null,
     masterGainNode: null,
     outputLimiterNode: null,
+    outputSafetyLimiterNode: null,
     masterAnalyserL: null,
     masterAnalyserR: null,
     masterMeterDataL: null,
@@ -26,6 +27,7 @@ export const state = {
     masterDelayNode: null,
     masterDelayReturn: null,
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
+    masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     audioStartMetrics: [],

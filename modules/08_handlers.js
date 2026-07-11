@@ -3,8 +3,8 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, normalizeSoundVolume, startMasterMeter, setMasterParam } from './06_audio.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -49,6 +49,10 @@ function relocateMasterVolume() {
 // --- Event Listener Setup ---
 export function setupEventListeners() {
     createMasterMeterElement();
+    createMasterLimiterKnob(state.masterLimiter.threshold, (value, save) => {
+        setMasterLimiterThreshold(value);
+        if (save) saveSetting('masterLimiter', state.masterLimiter);
+    });
     createMasterEffectKnobs({ eq: state.masterEq, comp: state.masterComp, delay: state.masterDelay }, (key, value) => {
         setMasterParam(key, value);
         const [group] = key.split('.');
@@ -272,15 +276,13 @@ async function handleSoundSettings(soundId) {
     }
 
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut, {
-        onNormalize: async () => {
-            const result = await normalizeSoundVolume(soundId);
+        onNormalize: async (targetLufs) => {
+            const result = await normalizeSoundVolume(soundId, targetLufs);
             if (result) {
-                showAlert(`ピーク ${Math.round(result.peak * 100)}% を検出しました。音量を ${Math.round(result.recommendedVolume * 100)}% に調整しました。`, 'ノーマライズ');
                 debouncedSaveCurrentSceneSounds(`normalize-${soundId}`);
                 renderers.renderSoundboard();
-            } else {
-                showAlert('ノーマライズできませんでした。音声データが破損している可能性があります。', 'エラー');
             }
+            return result;
         }
     });
 
@@ -640,7 +642,7 @@ function createSoundButton(sound) {
         <div class="button-controls">
             <button class="loop-button fas fa-sync-alt ${sound.loop ? 'active' : ''}" title="ループ切り替え"></button>
             <div class="volume-control">
-                <input type="range" min="0" max="1" step="0.01" value="${sound.volume ?? 1.0}" title="音量: ${Math.round((sound.volume ?? 1.0) * 100)}%">
+                <input type="range" min="0" max="${Math.max(2, Math.ceil(sound.volume ?? 1))}" step="0.01" value="${sound.volume ?? 1.0}" title="音量: ${Math.round((sound.volume ?? 1.0) * 100)}%">
             </div>
         </div>
         <div class="progress-bar"><div class="progress-bar-value"></div></div>
