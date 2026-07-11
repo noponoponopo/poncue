@@ -154,7 +154,7 @@ const FADE_EASING_FUNCTIONS = {
 
 /**
  * AudioParam にイージングカーブ付きのフェードをスケジュールする。
- * setValueCurveAtTime でサンプル配列を与えるため、任意の曲線（直線/イーズイン/アウト/S字）を表現可能。
+ * setValueCurveAtTime でサンプル配列を与えるため、任意の曲線（直線/イーズイン/アウト/インアウト）を表現可能。
  * fromVal/toVal は 0 を含むため exponentialRamp ではなく setValueCurve を使用（0 到達可）。
  */
 function applyFadeCurve(param, fromVal, toVal, startTime, duration, easing) {
@@ -176,6 +176,33 @@ function applyFadeCurve(param, fromVal, toVal, startTime, duration, easing) {
         curve[i] = safeFrom + (safeTo - safeFrom) * fn(t);
     }
     param.setValueCurveAtTime(curve, now, safeDuration);
+}
+
+function scheduleNaturalFadeOut(soundId, currentPosition = 0) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!audioInfo || !soundData || soundData.loop || !state.audioContext) return;
+
+    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
+    const fadeDuration = Math.max(0, soundData.fadeOutDuration ?? 0);
+    const remaining = duration - currentPosition;
+    if (!Number.isFinite(remaining) || remaining <= 0 || fadeDuration <= 0) return;
+
+    const now = state.audioContext.currentTime;
+    const fadeInEndTime = now + Math.max(0, soundData.fadeInDuration ?? 0);
+    const desiredStartTime = now + Math.max(0, remaining - fadeDuration);
+    const fadeStartTime = Math.max(desiredStartTime, fadeInEndTime);
+    const effectiveFadeDuration = now + remaining - fadeStartTime;
+    if (effectiveFadeDuration <= 0) return;
+    const startGain = Math.max(0.0001, soundData.volume ?? 1);
+    applyFadeCurve(
+        audioInfo.individualGain.gain,
+        startGain,
+        0.0001,
+        fadeStartTime,
+        effectiveFadeDuration,
+        soundData.fadeOutEasing || 'linear'
+    );
 }
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
@@ -261,7 +288,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
             if (currentAudioInfo && !currentAudioInfo.isFadingOut && !soundData.loop) {
-                stopSound(soundId, soundButtonElement, true);
+                cleanupAfterStop(soundId, soundButtonElement);
             }
         };
 
@@ -277,6 +304,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 createMeterElement(soundId, soundData.name);
                 triggerWaveformUpdate();
                 fadeInSound(soundId, soundData.volume);
+                scheduleNaturalFadeOut(soundId, audioElement.currentTime);
                 startProgressBarUpdate(soundId, soundButtonElement);
                 startMeterUpdate(soundId);
             }).catch(err => {
@@ -293,6 +321,7 @@ ${err.message}`);
             createMeterElement(soundId, soundData.name);
             triggerWaveformUpdate();
             fadeInSound(soundId, soundData.volume);
+            scheduleNaturalFadeOut(soundId, Math.max(0, startOffset));
             startProgressBarUpdate(soundId, soundButtonElement);
             startMeterUpdate(soundId);
         }
@@ -323,6 +352,9 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
         ? Math.max(soundData?.fadeOutDuration ?? 0, MIN_STOP_FADE_SECONDS)
         : MIN_STOP_FADE_SECONDS;
     const fadeOutEasing = useFadeOut ? (soundData?.fadeOutEasing || 'linear') : 'linear';
+    const currentGain = Number.isFinite(soundData?.volume)
+        ? Math.max(0.0001, soundData.volume)
+        : Math.max(0.0001, individualGain?.gain.value ?? 0.0001);
 
     const stopPlayback = () => {
         try {
@@ -338,8 +370,8 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
         }
     };
 
-    if (state.audioContext && individualGain && individualGain.gain.value > 0.0001) {
-        applyFadeCurve(individualGain.gain, individualGain.gain.value, 0.0001, state.audioContext.currentTime, fadeOutDurationSeconds, fadeOutEasing);
+    if (state.audioContext && individualGain && currentGain > 0.0001) {
+        applyFadeCurve(individualGain.gain, currentGain, 0.0001, state.audioContext.currentTime, fadeOutDurationSeconds, fadeOutEasing);
         setTimeout(stopPlayback, fadeOutDurationSeconds * 1000);
     } else {
         if (individualGain && state.audioContext) {
@@ -369,7 +401,8 @@ export function seekSound(soundId, seekTime) {
             fadeInSound(soundId, soundData?.volume ?? 1);
         }, MIN_STOP_FADE_SECONDS * 1000);
     } else if (audioInfo.audioBuffer) { // HIGH_PERFORMANCE
-        stopSound(soundId, null, true);
+        // Seeking must not wait for the user-configured fade-out duration.
+        stopSound(soundId, null, false);
         setTimeout(() => {
             const soundButton = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
             playSound(soundId, soundButton, performance.now(), seekTime);

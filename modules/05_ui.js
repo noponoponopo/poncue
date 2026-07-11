@@ -7,7 +7,7 @@ import { normalizeEffectSettings } from './09_effects.js';
 import { FADE_EASING_TYPES } from './01_config.js';
 
 // フェードイージングの表示ラベル（type リストは 01_config.js の FADE_EASING_TYPES と同期）
-const EASING_LABELS = { linear: '直線', easeIn: 'イーズイン', easeOut: 'イーズアウト', sCurve: 'S字' };
+const EASING_LABELS = { linear: '直線', easeIn: 'イーズイン', easeOut: 'イーズアウト', sCurve: 'イーズインアウト' };
 function easingOptions(selected) {
     return FADE_EASING_TYPES
         .map(t => `<option value="${t}"${t === selected ? ' selected' : ''}>${EASING_LABELS[t] ?? t}</option>`)
