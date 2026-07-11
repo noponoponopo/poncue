@@ -58,10 +58,24 @@ export function setupEventListeners() {
     startMasterMeter();
     relocateMasterVolume();
 
-    // Custom Modal
+    // Custom Modal — only close on genuine click, not drag-end on overlay
+    let modalMouseDownPos = null;
+    dom.customModalOverlay?.addEventListener('mousedown', (e) => {
+        modalMouseDownPos = { x: e.clientX, y: e.clientY };
+    });
     dom.customModalOkBtn?.addEventListener('click', handleModalOk);
     dom.customModalCancelBtn?.addEventListener('click', handleModalCancel);
-    dom.customModalOverlay?.addEventListener('click', handleModalOverlayClick);
+    dom.customModalOverlay?.addEventListener('click', (e) => {
+        const clickTarget = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
+        if (clickTarget !== dom.customModalOverlay) return;
+        if (modalMouseDownPos) {
+            const dx = Math.abs(e.clientX - modalMouseDownPos.x);
+            const dy = Math.abs(e.clientY - modalMouseDownPos.y);
+            if (dx > 3 || dy > 3) return;
+        }
+        if (state.confirmResolve) state.confirmResolve(false);
+        hideModal();
+    });
 
     // Audio resume
     document.body.addEventListener('click', resumeAudioContext, { capture: true, once: true });
@@ -72,11 +86,31 @@ export function setupEventListeners() {
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
     dom.masterVolumeSlider?.addEventListener('input', handleMasterVolumeChange);
     dom.masterVolumeSlider?.addEventListener('change', () => saveSetting('masterVolume', state.masterVolume));
+    dom.masterVolumeSlider?.addEventListener('dblclick', () => {
+        dom.masterVolumeSlider.value = 1;
+        handleMasterVolumeChange();
+        saveSetting('masterVolume', state.masterVolume);
+    });
     
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
     dom.modalCloseBtn?.addEventListener('click', closeSceneSettingsModal);
-    dom.sceneSettingsModal?.addEventListener('click', (e) => { if (e.target === dom.sceneSettingsModal) closeSceneSettingsModal(); });
+    {
+        let sceneMouseDownPos = null;
+        dom.sceneSettingsModal?.addEventListener('mousedown', (e) => {
+            sceneMouseDownPos = { x: e.clientX, y: e.clientY };
+        });
+        dom.sceneSettingsModal?.addEventListener('click', (e) => {
+            const clickTarget = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
+            if (clickTarget !== dom.sceneSettingsModal) return;
+            if (sceneMouseDownPos) {
+                const dx = Math.abs(e.clientX - sceneMouseDownPos.x);
+                const dy = Math.abs(e.clientY - sceneMouseDownPos.y);
+                if (dx > 3 || dy > 3) return;
+            }
+            closeSceneSettingsModal();
+        });
+    }
     dom.modalAddSceneBtn?.addEventListener('click', handleModalAddScene);
     dom.modalImportBtn?.addEventListener('click', () => { dom.importFileInput.click(); });
     dom.importFileInput?.addEventListener('change', handleImportFileSelect);
@@ -128,16 +162,13 @@ function handleModalCancel() {
     if (state.confirmResolve) state.confirmResolve(false);
     hideModal();
 }
-function handleModalOverlayClick(e) {
-    if (e.target === dom.customModalOverlay) {
-        if (state.confirmResolve) state.confirmResolve(false);
-        hideModal();
-    }
-}
 
 // --- Header & Main Control Handlers ---
 function handleMasterVolumeChange() {
     updateState({ masterVolume: parseFloat(dom.masterVolumeSlider.value) });
+    if (dom.masterVolumeValue) {
+        dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
+    }
     if (state.masterGainNode) {
         state.masterGainNode.gain.setTargetAtTime(state.masterVolume, state.audioContext.currentTime, 0.01);
     }

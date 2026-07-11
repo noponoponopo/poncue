@@ -247,6 +247,7 @@ export async function loadSettings() {
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
         
         if (dom.masterVolumeSlider) dom.masterVolumeSlider.value = state.masterVolume;
+        if (dom.masterVolumeValue) dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
         if (state.masterGainNode) state.masterGainNode.gain.setValueAtTime(state.masterVolume, state.audioContext.currentTime);
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
         if (dom.interactionDragRadio) dom.interactionDragRadio.checked = state.isSortableEnabled;
