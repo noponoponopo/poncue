@@ -223,7 +223,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -240,7 +240,8 @@ export async function loadSettings() {
             padSize: settings.padSize ?? 160,
             masterEq: settings.masterEq ?? { low: 0, mid: 0, high: 0 },
             masterComp: settings.masterComp ?? { threshold: 0, ratio: 1 },
-            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 }
+            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 },
+            masterPan: settings.masterPan ?? { value: 0 }
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');

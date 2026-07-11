@@ -26,6 +26,8 @@ export const state = {
     masterDelayNode: null,
     masterDelayReturn: null,
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
+    masterPanNode: null,
+    masterPan: { value: 0 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     audioStartMetrics: [],

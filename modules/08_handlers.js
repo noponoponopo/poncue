@@ -49,7 +49,7 @@ function relocateMasterVolume() {
 // --- Event Listener Setup ---
 export function setupEventListeners() {
     createMasterMeterElement();
-    createMasterEffectKnobs({ eq: state.masterEq, comp: state.masterComp, delay: state.masterDelay }, (key, value) => {
+    createMasterEffectKnobs({ eq: state.masterEq, comp: state.masterComp, delay: state.masterDelay, pan: state.masterPan }, (key, value) => {
         setMasterParam(key, value);
         const [group] = key.split('.');
         const stateKey = `master${group[0].toUpperCase()}${group.slice(1)}`;

@@ -49,9 +49,12 @@ export function initAudioContext() {
         masterDryGain.connect(masterMixOut);
         masterDelayReturn.connect(masterMixOut);
 
-        masterMixOut.output.connect(outputLimiterNode);
+        const masterPanNode = audioContext.createStereoPanner();
+        masterPanNode.pan.setValueAtTime(Number.isFinite(state.masterPan.value) ? state.masterPan.value : 0, audioContext.currentTime);
+        masterMixOut.output.connect(masterPanNode);
+        masterPanNode.connect(outputLimiterNode);
         outputLimiterNode.connect(audioContext.destination);
-        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn });
+        updateState({ masterEqNode, masterCompNode, masterDelayNode, masterDelayReturn, masterPanNode });
 
         setAudioContext(audioContext, masterGainNode, outputLimiterNode);
 
@@ -110,6 +113,8 @@ export function setMasterParam(dottedKey, value) {
                 } else {
                     node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
                 }
+            } else if (group === 'pan') {
+                node.pan.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
             }
         } catch (e) { /* param not rampable */ }
     }
