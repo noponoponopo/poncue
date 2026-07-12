@@ -130,28 +130,34 @@ export async function initializeApp() {
 
     await Promise.all([loadSettings(), loadScenesFromDB()]);
 
-    // --- Audio integrity check: verify each sound's audioId exists in audio_files ---
+    // --- Audio integrity check: verify each referenced audio record is usable ---
+    const missingSounds = [];
     try {
-        const allAudioRecords = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'getAll');
-        const existingAudioIds = new Set((allAudioRecords || []).map(r => r?.id));
-        const missingSounds = [];
+        const referencedAudioIds = new Set();
+        for (const sceneId in state.scenes) {
+            for (const sound of state.scenes[sceneId].sounds) {
+                if (sound.audioId) referencedAudioIds.add(sound.audioId);
+            }
+        }
+
+        const validAudioIds = new Set();
+        for (const audioId of referencedAudioIds) {
+            const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
+            if (audioRecord?.blob instanceof Blob && audioRecord.blob.size > 0) {
+                validAudioIds.add(audioId);
+            }
+        }
+
         for (const sceneId in state.scenes) {
             const scene = state.scenes[sceneId];
             for (const sound of scene.sounds) {
-                if (!sound.audioId || !existingAudioIds.has(sound.audioId)) {
+                if (!sound.audioId || !validAudioIds.has(sound.audioId)) {
                     if (!sound.error) sound.error = 'Audio data missing';
                     missingSounds.push(`${scene.name} / ${sound.name}`);
                 } else if (sound.error === 'Audio data missing') {
                     delete sound.error;
                 }
             }
-        }
-        if (missingSounds.length > 0) {
-            const list = missingSounds.map(s => `・${s}`).join('\n');
-            showAlert(
-                `以下のサウンドの音源が見つかりません。ファイルが削除されたかデータが破損しています。\n\n${list}`,
-                '音源チェック'
-            );
         }
     } catch (e) {
         console.error('Audio integrity check failed:', e);
@@ -233,6 +239,14 @@ export async function initializeApp() {
     }
     
     updateDraggableState();
+
+    if (missingSounds.length > 0) {
+        const list = missingSounds.map(s => `・${s}`).join('\n');
+        await showAlert(
+            `以下のサウンドの音源が見つかりません。ファイルが削除されたかデータが破損しています。\n\n${list}`,
+            '音源チェック'
+        );
+    }
 }
 
 export function renderFallbackUI(message) {
