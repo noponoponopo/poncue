@@ -6,6 +6,7 @@ import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
+import { normalizePlaylist } from './11_playlist.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -346,7 +347,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'playlistVisible'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -367,7 +368,8 @@ export async function loadSettings() {
             masterPan: settings.masterPan ?? { value: 0 },
             masterDistortion: settings.masterDistortion ?? { amount: 0 },
             masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 },
-            masterLimiter: settings.masterLimiter ?? { threshold: -1 }
+            masterLimiter: settings.masterLimiter ?? { threshold: -1 },
+            playlistVisible: settings.playlistVisible ?? false
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
@@ -577,6 +579,7 @@ export async function removeSound(soundId) {
     if (soundIndex === -1) return;
 
     const [removedSound] = scene.sounds.splice(soundIndex, 1);
+    normalizePlaylist(scene);
     
     await saveCurrentSceneSounds(`removeSound-${soundId}`);
     renderers.renderSoundboard();

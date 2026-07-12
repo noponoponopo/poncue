@@ -536,6 +536,72 @@
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 30%, transparent);
     }
 
+    #playlist-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--secondary-color);
+      font-size: 0.9em;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    #playlist-btn:hover,
+    #playlist-btn.active {
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+      background-color: var(--control-hover-bg);
+    }
+
+    .playlist-panel[hidden] { display: none; }
+
+    .playlist-panel {
+      flex-shrink: 0;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-color);
+      background: color-mix(in srgb, var(--card-bg) 94%, var(--primary-color) 6%);
+    }
+
+    .playlist-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      max-width: 980px;
+      margin: auto;
+    }
+
+    .playlist-toolbar label { font-size: 0.82em; color: var(--secondary-color); white-space: nowrap; }
+    .playlist-transport { display: flex; gap: 4px; }
+    .playlist-transport button, .playlist-add-row button, .playlist-item-actions button {
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      background: var(--card-bg);
+      color: var(--text-color);
+      cursor: pointer;
+    }
+    .playlist-transport button { width: 34px; height: 32px; }
+    .playlist-transport button:hover:not(:disabled), .playlist-transport button.is-active { color: var(--primary-color); border-color: var(--primary-color); }
+    .playlist-transport button:disabled, .playlist-item-actions button:disabled { opacity: 0.4; cursor: default; }
+
+    .playlist-add-row { display: flex; gap: 8px; max-width: 980px; margin: 10px auto 0; }
+    .playlist-add-row select { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: var(--border-radius); background: var(--card-bg); color: var(--text-color); }
+    .playlist-add-row button { padding: 7px 12px; }
+
+    .playlist-list { list-style: none; padding: 0; max-width: 980px; margin: 10px auto 0; display: grid; gap: 5px; max-height: 240px; overflow-y: auto; }
+    .playlist-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) 52px auto; align-items: center; gap: 8px; min-height: 38px; padding: 5px 7px; border: 1px solid var(--border-color); border-radius: var(--border-radius); background: var(--card-bg); }
+    .playlist-list li.is-current { border-color: var(--primary-color); box-shadow: inset 3px 0 0 var(--primary-color); }
+    .playlist-number, .playlist-duration { color: var(--secondary-color); font-size: 0.76em; font-variant-numeric: tabular-nums; }
+    .playlist-item-play { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: none; color: var(--text-color); cursor: pointer; font: inherit; }
+    .playlist-item-play:hover { color: var(--primary-color); }
+    .playlist-item-actions { display: flex; gap: 3px; }
+    .playlist-item-actions button { width: 28px; height: 28px; }
+    .playlist-empty { display: block !important; padding: 14px !important; text-align: center; color: var(--secondary-color); font-size: 0.85em; }
+
     /* Scene Settings Modal */
     .modal-overlay {
       position: fixed;
@@ -1913,7 +1979,8 @@
         width: 100%;
         flex-direction: row;
         justify-content: space-between;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        gap: 4px;
       }
 
 
@@ -1922,16 +1989,34 @@
         padding: 10px;
       }
 
-      button#add-sound-btn span {
+      button#add-sound-btn span,
+      button#stop-all-btn span,
+      #show-mode-btn span,
+      #playlist-btn span {
         display: none;
+      }
+
+      button#add-sound-btn,
+      button#stop-all-btn,
+      #show-mode-btn,
+      #playlist-btn,
+      #scene-settings-btn {
+        flex: 0 0 38px;
+        width: 38px;
+        height: 38px;
+        padding: 0;
       }
 
       #scene-settings-btn {
         order: 2;
-        width: 38px;
-        height: 38px;
         font-size: 1.2em;
+        margin-left: 0;
       }
+
+      .playlist-panel { padding: 10px; }
+      .playlist-toolbar { flex-wrap: wrap; gap: 7px 10px; }
+      .playlist-toolbar strong { width: 100%; }
+      .playlist-list li { grid-template-columns: 26px minmax(0, 1fr) 44px auto; gap: 4px; }
 
       .switch {
         order: 3;

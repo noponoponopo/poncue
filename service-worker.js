@@ -1,4 +1,4 @@
-const VERSION = '3.12.2';
+const VERSION = '3.13.0';
 const CACHE_NAME = `ponndashi-cache-v${VERSION}`;
 
 const urlsToCache = [
@@ -17,6 +17,7 @@ const urlsToCache = [
   './modules/08_handlers.js',
   './modules/09_effects.js',
   './modules/10_tone_transport.js',
+  './modules/11_playlist.js',
   // External resources
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap'

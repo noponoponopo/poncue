@@ -49,6 +49,8 @@ export const state = {
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
     showMode: false,
+    playlistVisible: false,
+    playlistPlayback: { sceneId: null, index: -1, soundId: null, isPlaying: false },
     
     // DB instance
     db: null,

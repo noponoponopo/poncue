@@ -395,7 +395,11 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
-            if (currentAudioInfo && !currentAudioInfo.isFadingOut && !soundData.loop) {
+            if (currentAudioInfo && !currentAudioInfo.isFadingOut && !currentAudioInfo.endHandled && !soundData.loop) {
+                currentAudioInfo.endHandled = true;
+                queueMicrotask(() => {
+                    window.dispatchEvent(new CustomEvent('poncue:sound-ended', { detail: { soundId } }));
+                });
                 cleanupAfterStop(soundId, soundButtonElement);
             }
         };
@@ -475,6 +479,7 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
             }
         } catch (e) { /* ignore */ }
         finally {
+            window.dispatchEvent(new CustomEvent('poncue:sound-stopped', { detail: { soundId } }));
             cleanupAfterStop(soundId, soundButtonElement);
         }
     };
@@ -506,6 +511,7 @@ export function forceStopSound(soundId, soundButtonElement = null) {
         if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
         if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
     } catch (e) { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('poncue:sound-stopped', { detail: { soundId } }));
     cleanupAfterStop(soundId, soundButtonElement);
 }
 

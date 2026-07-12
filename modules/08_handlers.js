@@ -13,6 +13,7 @@ import {
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
+import { normalizePlaylist, renderPlaylist } from './11_playlist.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -76,7 +77,19 @@ export function setupEventListeners() {
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
+    dom.playlistBtn?.addEventListener('click', togglePlaylist);
+    dom.playlistAddBtn?.addEventListener('click', handlePlaylistAdd);
+    dom.playlistList?.addEventListener('click', handlePlaylistListClick);
+    dom.playlistPlayBtn?.addEventListener('click', handlePlaylistPlay);
+    dom.playlistPrevBtn?.addEventListener('click', () => advancePlaylist(-1, true));
+    dom.playlistNextBtn?.addEventListener('click', () => advancePlaylist(1, true));
+    dom.playlistStopBtn?.addEventListener('click', stopPlaylistPlayback);
+    dom.playlistAutoAdvance?.addEventListener('change', handlePlaylistOptionsChange);
+    dom.playlistRepeat?.addEventListener('change', handlePlaylistOptionsChange);
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
+    window.addEventListener('poncue:sound-ended', handlePlaylistSoundEnded);
+    window.addEventListener('poncue:sound-stopped', handlePlaylistSoundStopped);
+    updatePlaylistVisibility();
 
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
@@ -141,6 +154,136 @@ export function setupEventListeners() {
     dom.showModeBtn?.addEventListener('click', toggleShowMode);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+}
+
+function updatePlaylistVisibility() {
+    if (!dom.playlistPanel || !dom.playlistBtn) return;
+    dom.playlistPanel.hidden = !state.playlistVisible;
+    dom.playlistBtn.classList.toggle('active', state.playlistVisible);
+    dom.playlistBtn.setAttribute('aria-pressed', String(state.playlistVisible));
+    dom.playlistBtn.setAttribute('aria-label', state.playlistVisible ? 'プレイリストを閉じる' : 'プレイリストを表示');
+    if (state.playlistVisible) renderPlaylist();
+}
+
+function togglePlaylist() {
+    updateState({ playlistVisible: !state.playlistVisible });
+    saveSetting('playlistVisible', state.playlistVisible);
+    updatePlaylistVisibility();
+}
+
+async function handlePlaylistAdd() {
+    const soundId = dom.playlistAddSelect?.value;
+    const scene = state.scenes[state.currentSceneId];
+    if (!soundId || !scene?.sounds.some(sound => sound.id === soundId)) return;
+    const playlist = normalizePlaylist(scene);
+    if (!playlist.soundIds.includes(soundId)) playlist.soundIds.push(soundId);
+    await saveCurrentSceneSounds('playlist-add');
+    renderPlaylist();
+}
+
+async function handlePlaylistListClick(event) {
+    const button = event.target.closest('button[data-action]');
+    const row = event.target.closest('li[data-index]');
+    if (!button || !row) return;
+    const scene = state.scenes[state.currentSceneId];
+    const playlist = normalizePlaylist(scene);
+    const index = Number(row.dataset.index);
+    if (!Number.isInteger(index) || !playlist.soundIds[index]) return;
+    if (button.dataset.action === 'play') {
+        await playPlaylistIndex(index);
+        return;
+    }
+    if (button.dataset.action === 'remove') {
+        const [removedId] = playlist.soundIds.splice(index, 1);
+        if (state.playlistPlayback.soundId === removedId) stopPlaylistPlayback();
+    } else {
+        const target = button.dataset.action === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= playlist.soundIds.length) return;
+        [playlist.soundIds[index], playlist.soundIds[target]] = [playlist.soundIds[target], playlist.soundIds[index]];
+    }
+    await saveCurrentSceneSounds(`playlist-${button.dataset.action}`);
+    renderPlaylist();
+}
+
+async function handlePlaylistOptionsChange() {
+    const scene = state.scenes[state.currentSceneId];
+    const playlist = normalizePlaylist(scene);
+    playlist.autoAdvance = Boolean(dom.playlistAutoAdvance?.checked);
+    playlist.repeat = Boolean(dom.playlistRepeat?.checked);
+    await saveCurrentSceneSounds('playlist-options');
+    renderPlaylist();
+}
+
+async function handlePlaylistPlay() {
+    const playlist = normalizePlaylist(state.scenes[state.currentSceneId]);
+    if (!playlist.soundIds.length) return;
+    const currentIndex = state.playlistPlayback.sceneId === state.currentSceneId
+        ? playlist.soundIds.indexOf(state.playlistPlayback.soundId)
+        : -1;
+    await playPlaylistIndex(currentIndex >= 0 ? currentIndex : 0);
+}
+
+async function playPlaylistIndex(index) {
+    const sceneId = state.currentSceneId;
+    const scene = state.scenes[sceneId];
+    const playlist = normalizePlaylist(scene);
+    const soundId = playlist.soundIds[index];
+    if (!soundId) return;
+
+    const previousId = state.playlistPlayback.soundId;
+    if (previousId && state.activeAudios[previousId]) forceStopSound(previousId);
+    if (state.activeAudios[soundId]) forceStopSound(soundId);
+    const soundButton = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
+    if (!soundButton) return;
+
+    updateState({ playlistPlayback: { sceneId, index, soundId, isPlaying: true } });
+    renderPlaylist();
+    await handleSoundButtonClick(soundId, soundButton);
+    if (!state.activeAudios[soundId]) {
+        updateState({ playlistPlayback: { sceneId, index, soundId, isPlaying: false } });
+        renderPlaylist();
+    }
+}
+
+function stopPlaylistPlayback() {
+    const playback = state.playlistPlayback;
+    if (playback.soundId && state.activeAudios[playback.soundId]) forceStopSound(playback.soundId);
+    updateState({ playlistPlayback: { sceneId: state.currentSceneId, index: -1, soundId: null, isPlaying: false } });
+    renderPlaylist();
+}
+
+async function advancePlaylist(direction, manual = false) {
+    const scene = state.scenes[state.currentSceneId];
+    const playlist = normalizePlaylist(scene);
+    if (!playlist.soundIds.length) return;
+    const currentIndex = playlist.soundIds.indexOf(state.playlistPlayback.soundId);
+    let nextIndex = currentIndex < 0 ? (direction > 0 ? 0 : playlist.soundIds.length - 1) : currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= playlist.soundIds.length) {
+        if (playlist.repeat) nextIndex = (nextIndex + playlist.soundIds.length) % playlist.soundIds.length;
+        else {
+            if (!manual || currentIndex >= 0) stopPlaylistPlayback();
+            return;
+        }
+    }
+    await playPlaylistIndex(nextIndex);
+}
+
+function handlePlaylistSoundEnded(event) {
+    const playback = state.playlistPlayback;
+    if (!playback.isPlaying || playback.sceneId !== state.currentSceneId || playback.soundId !== event.detail?.soundId) return;
+    const playlist = normalizePlaylist(state.scenes[state.currentSceneId]);
+    if (playlist.autoAdvance) advancePlaylist(1);
+    else {
+        updateState({ playlistPlayback: { ...playback, isPlaying: false } });
+        renderPlaylist();
+    }
+}
+
+function handlePlaylistSoundStopped(event) {
+    const playback = state.playlistPlayback;
+    if (!playback.isPlaying || playback.soundId !== event.detail?.soundId) return;
+    updateState({ playlistPlayback: { ...playback, isPlaying: false } });
+    renderPlaylist();
 }
 
 
@@ -770,6 +913,12 @@ function renderSoundboard() {
     }
     checkEmptyState(sounds.length);
     updateDraggableState();
+    if (state.playlistVisible) {
+        if (state.playlistPlayback.sceneId && state.playlistPlayback.sceneId !== state.currentSceneId) {
+            updateState({ playlistPlayback: { sceneId: state.currentSceneId, index: -1, soundId: null, isPlaying: false } });
+        }
+        renderPlaylist();
+    }
 }
 
 // Assign the renderer function to the exported object

@@ -48,6 +48,9 @@
         <button id="show-mode-btn" title="本番モード切替" aria-label="本番モードの切替">
           <i class="fas fa-expand"></i> <span>本番</span>
         </button>
+        <button id="playlist-btn" title="プレイリスト" aria-label="プレイリストを表示" aria-pressed="false">
+          <i class="fas fa-list-ol"></i> <span>リスト</span>
+        </button>
         <div
           id="master-volume-control"
           class="header-volume-control"
@@ -60,6 +63,25 @@
         </button>
       </div>
     </header>
+
+    <section id="playlist-panel" class="playlist-panel" aria-label="プレイリスト" hidden>
+      <div class="playlist-toolbar">
+        <strong>プレイリスト</strong>
+        <div class="playlist-transport" aria-label="プレイリスト操作">
+          <button id="playlist-prev-btn" title="前へ" aria-label="前へ"><i class="fas fa-step-backward"></i></button>
+          <button id="playlist-play-btn" title="再生" aria-label="プレイリストを再生"><i class="fas fa-play"></i></button>
+          <button id="playlist-next-btn" title="次へ" aria-label="次へ"><i class="fas fa-step-forward"></i></button>
+          <button id="playlist-stop-btn" title="停止" aria-label="プレイリストを停止"><i class="fas fa-stop"></i></button>
+        </div>
+        <label><input id="playlist-auto-advance" type="checkbox" checked /> 自動送り</label>
+        <label><input id="playlist-repeat" type="checkbox" /> リピート</label>
+      </div>
+      <div class="playlist-add-row">
+        <select id="playlist-add-select" aria-label="追加するサウンド"></select>
+        <button id="playlist-add-btn"><i class="fas fa-plus"></i> 追加</button>
+      </div>
+      <ol id="playlist-list" class="playlist-list"></ol>
+    </section>
 
     <main id="soundboard">
       <!-- サウンドボタンまたはメッセージがここに挿入されます -->
