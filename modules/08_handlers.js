@@ -565,11 +565,7 @@ function handleProgressBarClick(event, soundId, soundButtonElement) {
 
     const seekTime = duration * seekRatio;
 
-    if (audioInfo.audioElement) {
-        audioInfo.audioElement.currentTime = seekTime;
-        // Update startTime for waveform calculation in low-memory mode
-        audioInfo.startTime = state.audioContext.currentTime - seekTime;
-    } else if (audioInfo.audioBuffer) {
+    if (audioInfo.audioElement || audioInfo.audioBuffer) {
         seekSound(soundId, seekTime);
     }
 }
