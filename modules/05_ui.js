@@ -5,6 +5,7 @@ import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
 import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
+import { formatTimecode } from './11_timecode.js';
 
 const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
 function triggerOptions(selected) {
@@ -70,18 +71,26 @@ export function showModal(title, message, type = 'showAlert', inputPlaceholder =
         dom.customModalOkBtn.onclick = null;
         dom.customModalCancelBtn.onclick = null;
 
-        dom.customModalOkBtn.onclick = () => {
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            updateState({ confirmResolve: null });
             dom.customModalOverlay.classList.remove('active');
+            resolve(value);
+        };
+        updateState({ confirmResolve: value => finish(type === 'showPrompt' ? null : value) });
+
+        dom.customModalOkBtn.onclick = () => {
             if (type === 'showPrompt') {
-                resolve(inputElement ? inputElement.value : null);
+                finish(inputElement ? inputElement.value : null);
             } else {
-                resolve(true);
+                finish(true);
             }
         };
 
         dom.customModalCancelBtn.onclick = () => {
-            dom.customModalOverlay.classList.remove('active');
-            resolve(false);
+            finish(false);
         };
 
         dom.customModalOverlay.classList.add('active');
@@ -1030,6 +1039,10 @@ export function resetProgressBar(soundButtonElement) {
         };
         
         timeDisplayElement.textContent = `0:00 / ${formatTime(duration)}`;
+        const timecodeDisplay = soundButtonElement.querySelector('.timecode-display');
+        if (timecodeDisplay) {
+            timecodeDisplay.textContent = `${formatTimecode(0, state.timecodeFps)} / ${formatTimecode(duration, state.timecodeFps)}`;
+        }
     }
 }
 

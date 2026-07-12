@@ -1010,7 +1010,8 @@
     .popup-setting,
     .sortable-setting,
     .theme-setting,
-    .waveform-setting {
+    .waveform-setting,
+    .timecode-setting {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1021,7 +1022,8 @@
 
     .popup-setting input[type="checkbox"],
     .sortable-setting input[type="checkbox"],
-    .waveform-setting input[type="checkbox"] {
+    .waveform-setting input[type="checkbox"],
+    .timecode-setting input[type="checkbox"] {
       width: 16px;
       height: 16px;
       cursor: pointer;
@@ -1032,12 +1034,21 @@
     .popup-setting label,
     .sortable-setting label,
     .theme-setting label,
-    .waveform-setting label {
+    .waveform-setting label,
+    .timecode-setting label {
       cursor: pointer;
       /* ラベルクリックでも反応するように */
       user-select: none;
       /* テキスト選択を防ぐ */
       -webkit-user-select: none;
+    }
+
+    .timecode-setting select {
+      padding: 5px 8px;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
     }
 
     .modal-footer .io-controls {
@@ -1318,6 +1329,14 @@
       font-family: monospace;
       min-height: 1.2em;
       /* Prevent layout shift */
+    }
+
+    .timecode-display {
+      margin-top: 2px;
+      color: var(--secondary-color);
+      font: 500 max(calc(var(--button-min-size) * 0.055), 0.58rem)/1.2 monospace;
+      white-space: nowrap;
+      letter-spacing: -0.02em;
     }
 
     .progress-bar {
@@ -1805,6 +1824,7 @@
       .sortable-setting,
       .theme-setting,
       .waveform-setting,
+      .timecode-setting,
       .pad-size-setting,
       .performance-mode-setting {
         flex-basis: calc(50% - 10px); /* 2列にするために幅を調整 (gapを考慮) */
@@ -2053,6 +2073,10 @@
 
   .sound-button .time-display {
     font-size: 0.7em !important; /* Adjust as needed */
+  }
+
+  .sound-button .timecode-display {
+    display: none;
   }
 
   .sound-button .button-controls {

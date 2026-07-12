@@ -8,6 +8,7 @@ import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORM
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
+import { formatTimecode } from './11_timecode.js';
 import * as Tone from 'tone';
 
 // --- AudioContext Management ---
@@ -225,6 +226,19 @@ function getCurrentPlaybackRate(audioInfo) {
     return audioInfo.audioElement ? audioInfo.audioElement.playbackRate : audioInfo.playbackRate;
 }
 
+export function getActivePlaybackSnapshot() {
+    return Object.entries(state.activeAudios)
+        .filter(([, audioInfo]) => !audioInfo.isFadingOut)
+        .map(([soundId, audioInfo]) => ({
+            soundId,
+            position: Math.max(0, getCurrentSourcePosition(audioInfo))
+        }));
+}
+
+function notifyPlaybackStateChange() {
+    window.dispatchEvent(new Event('poncue-playback-statechange'));
+}
+
 function cancelNaturalFadeOut(audioInfo, now) {
     const fadeStartTime = audioInfo.naturalFadeStartTime;
     if (!Number.isFinite(fadeStartTime)) return false;
@@ -392,6 +406,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             soundId: soundId,
             peakL: 0, peakR: 0
         };
+        notifyPlaybackStateChange();
 
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
@@ -616,6 +631,7 @@ function cleanupAfterStop(soundId, soundButtonElement) {
         try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
 
         delete state.activeAudios[soundId];
+        notifyPlaybackStateChange();
     }
 
     if (!soundButtonElement?.isConnected) {
@@ -800,6 +816,7 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
         }
         const progressBarValue = soundButtonElement?.querySelector('.progress-bar-value');
         const timeDisplay = soundButtonElement?.querySelector('.time-display');
+        const timecodeDisplay = soundButtonElement?.querySelector('.timecode-display');
         if (!progressBarValue || !timeDisplay) return;
 
         const sourcePosition = getCurrentSourcePosition(audioInfo);
@@ -807,6 +824,9 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
 
         progressBarValue.style.width = `${Math.min(100, (currentTime / duration) * 100)}%`;
         timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+        if (timecodeDisplay) {
+            timecodeDisplay.textContent = `${formatTimecode(currentTime, state.timecodeFps)} / ${formatTimecode(duration, state.timecodeFps)}`;
+        }
     };
 
     update();

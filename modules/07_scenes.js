@@ -6,6 +6,7 @@ import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
+import { normalizeTimecodeFps } from './11_timecode.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -346,7 +347,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'showTimecode', 'timecodeFps', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -360,6 +361,8 @@ export async function loadSettings() {
             shortcuts: settings.shortcuts ?? {},
             performanceMode: settings.performanceMode ?? DEFAULT_PERFORMANCE_MODE,
             showWaveform: settings.showWaveform ?? true,
+            showTimecode: settings.showTimecode ?? true,
+            timecodeFps: normalizeTimecodeFps(settings.timecodeFps),
             padSize: settings.padSize ?? 160,
             masterEq: settings.masterEq ?? { low: 0, mid: 0, high: 0 },
             masterComp: settings.masterComp ?? { threshold: 0, ratio: 1 },
@@ -380,6 +383,8 @@ export async function loadSettings() {
         if (dom.perfHighRadio) dom.perfHighRadio.checked = (state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE);
         if (dom.perfLowRadio) dom.perfLowRadio.checked = (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY);
         if (dom.waveformToggleCheckbox) dom.waveformToggleCheckbox.checked = state.showWaveform;
+        if (dom.timecodeToggleCheckbox) dom.timecodeToggleCheckbox.checked = state.showTimecode;
+        if (dom.timecodeFpsSelect) dom.timecodeFpsSelect.value = String(state.timecodeFps);
         if (dom.padSizeSlider) dom.padSizeSlider.value = state.padSize;
         if (dom.padSizeValue) dom.padSizeValue.textContent = state.padSize;
         updatePadSizeCSS(state.padSize);

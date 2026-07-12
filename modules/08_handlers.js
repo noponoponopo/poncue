@@ -13,6 +13,8 @@ import {
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
+import { formatTimecode, normalizeTimecodeFps } from './11_timecode.js';
+import { offerPlaybackRecovery, startPlaybackCheckpointing } from './12_recovery.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -55,8 +57,6 @@ export function setupEventListeners() {
     dom.customModalOverlay?.addEventListener('mousedown', (e) => {
         modalMouseDownPos = { x: e.clientX, y: e.clientY };
     });
-    dom.customModalOkBtn?.addEventListener('click', handleModalOk);
-    dom.customModalCancelBtn?.addEventListener('click', handleModalCancel);
     dom.customModalOverlay?.addEventListener('click', (e) => {
         const clickTarget = e.target instanceof Element ? e.target : document.elementFromPoint(e.clientX, e.clientY);
         if (clickTarget !== dom.customModalOverlay) return;
@@ -110,6 +110,8 @@ export function setupEventListeners() {
     dom.interactionClickRadio?.addEventListener('change', handleInteractionModeChange);
     dom.interactionDragRadio?.addEventListener('change', handleInteractionModeChange);
     dom.waveformToggleCheckbox?.addEventListener('change', handleWaveformToggleChange);
+    dom.timecodeToggleCheckbox?.addEventListener('change', handleTimecodeToggleChange);
+    dom.timecodeFpsSelect?.addEventListener('change', handleTimecodeFpsChange);
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
 
@@ -141,6 +143,9 @@ export function setupEventListeners() {
     dom.showModeBtn?.addEventListener('click', toggleShowMode);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    offerPlaybackRecovery()
+        .catch(error => showAlert(`再生セッションを復旧できませんでした: ${error.message}`, 'エラー'))
+        .finally(startPlaybackCheckpointing);
 }
 
 
@@ -172,16 +177,6 @@ function handleFullscreenChange() {
 }
 
 
-// --- Custom Modal Handlers ---
-function handleModalOk() {
-    if (state.confirmResolve) state.confirmResolve(true);
-    hideModal();
-}
-function handleModalCancel() {
-    if (state.confirmResolve) state.confirmResolve(false);
-    hideModal();
-}
-
 // --- App Settings Handlers ---
 function handleInteractionModeChange(event) {
     const isDragMode = event.target.value === 'drag';
@@ -194,6 +189,19 @@ function handleWaveformToggleChange(event) {
     updateState({ showWaveform: event.target.checked });
     saveSetting('showWaveform', state.showWaveform);
     triggerWaveformUpdate(); // Update waveform display immediately
+}
+
+function handleTimecodeToggleChange(event) {
+    updateState({ showTimecode: event.target.checked });
+    saveSetting('showTimecode', state.showTimecode);
+    renderers.renderSoundboard();
+}
+
+function handleTimecodeFpsChange(event) {
+    const timecodeFps = normalizeTimecodeFps(event.target.value);
+    updateState({ timecodeFps });
+    saveSetting('timecodeFps', timecodeFps);
+    renderers.renderSoundboard();
 }
 
 function handlePadSizeChange(event) {
@@ -807,6 +815,9 @@ function createSoundButton(sound) {
     };
 
     const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
+    const timecodeText = sound.duration
+        ? `${formatTimecode(0, state.timecodeFps)} / ${formatTimecode(sound.duration, state.timecodeFps)}`
+        : `${formatTimecode(0, state.timecodeFps)} / --:--:--:--`;
 
     const triggerIndicatorText = triggerMode === 'momentary' ? 'HOLD' : (triggerMode === 'retrigger' ? 'RETRIG' : '');
 
@@ -817,6 +828,7 @@ function createSoundButton(sound) {
             <i class="fas fa-play sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>
             <div class="time-display">${durationText}</div>
+            ${state.showTimecode ? `<div class="timecode-display">${timecodeText}</div>` : ''}
         </div>
         <div class="button-controls">
             <button class="loop-button fas fa-sync-alt ${sound.loop ? 'active' : ''}" title="ループ切り替え"></button>

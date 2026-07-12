@@ -29,6 +29,8 @@ export function initDom() {
         interactionClickRadio: 'interaction-click',
         interactionDragRadio: 'interaction-drag',
         waveformToggleCheckbox: 'waveform-toggle-checkbox',
+        timecodeToggleCheckbox: 'timecode-toggle-checkbox',
+        timecodeFpsSelect: 'timecode-fps-select',
         padSizeSlider: 'pad-size-slider',
         padSizeValue: 'pad-size-value',
         masterEffectBar: 'master-effect-bar',

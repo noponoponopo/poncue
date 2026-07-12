@@ -46,6 +46,8 @@ export const state = {
     showErrorPopups: true,
     isSortableEnabled: false,
     showWaveform: true,
+    showTimecode: true,
+    timecodeFps: 30,
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
     showMode: false,
