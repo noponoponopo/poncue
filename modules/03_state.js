@@ -36,6 +36,7 @@ export const state = {
     masterReverb: { decay: 2.0, wet: 0 },
     masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
+    pausedSounds: {}, // { [soundId]: { position, pausedAt } }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
     audioStartMetrics: [],

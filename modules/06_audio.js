@@ -221,6 +221,47 @@ function getCurrentSourcePosition(audioInfo) {
         + (state.audioContext.currentTime - audioInfo.playbackPositionContextTime) * audioInfo.playbackRate;
 }
 
+function formatPlaybackTime(seconds) {
+    const safeSeconds = Number.isFinite(seconds) && seconds >= 0 ? seconds : 0;
+    const minutes = Math.floor(safeSeconds / 60);
+    const remainingSeconds = Math.floor(safeSeconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function updatePausedProgress(soundId, soundButtonElement, position) {
+    const button = soundButtonElement?.isConnected
+        ? soundButtonElement
+        : dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+    const duration = sound?.duration;
+    if (!button || !Number.isFinite(duration) || duration <= 0) return;
+
+    const currentTime = sound.loop ? position % duration : Math.min(duration, position);
+    const progress = button.querySelector('.progress-bar-value');
+    const timeDisplay = button.querySelector('.time-display');
+    if (progress) progress.style.width = `${Math.min(100, currentTime / duration * 100)}%`;
+    if (timeDisplay) timeDisplay.textContent = `${formatPlaybackTime(currentTime)} / ${formatPlaybackTime(duration)}`;
+}
+
+export function updatePauseAllButton() {
+    const pauseAllButton = dom.pauseAllBtn;
+    if (!pauseAllButton) return;
+
+    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut);
+    const hasPausedSounds = Object.keys(state.pausedSounds).length > 0;
+    const resumeAll = !hasActiveSounds && hasPausedSounds;
+    const icon = pauseAllButton.querySelector('i');
+    const label = pauseAllButton.querySelector('span');
+    pauseAllButton.disabled = !hasActiveSounds && !hasPausedSounds;
+    pauseAllButton.title = resumeAll ? '一時停止中のサウンドを再開' : '再生中のサウンドを一時停止';
+    pauseAllButton.setAttribute('aria-label', resumeAll ? '全てのサウンドを再開' : '全てのサウンドを一時停止');
+    if (icon) {
+        icon.classList.toggle('fa-pause', !resumeAll);
+        icon.classList.toggle('fa-play', resumeAll);
+    }
+    if (label) label.textContent = resumeAll ? '再開' : '一時停止';
+}
+
 function getCurrentPlaybackRate(audioInfo) {
     return audioInfo.audioElement ? audioInfo.audioElement.playbackRate : audioInfo.playbackRate;
 }
@@ -278,6 +319,9 @@ function scheduleNaturalFadeOut(soundId) {
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
+
+    // Starting from a pad always supersedes a previously paused position.
+    delete state.pausedSounds[soundId];
 
     if (state.activeAudios[soundId]) {
         // If it's already playing, we do nothing. The stop button should handle it.
@@ -409,6 +453,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             };
             audioElement.play().then(() => {
                 updateButtonUI(soundId, soundButtonElement, true);
+                updatePauseAllButton();
                 createMeterElement(soundId, soundData.name);
                 triggerWaveformUpdate();
                 fadeInSound(soundId, soundData.volume);
@@ -427,6 +472,7 @@ ${err.message}`);
             sourceNode.start(0, Math.max(0, startOffset));
             recordStartMetric(soundId, clickTime, startedAt);
             updateButtonUI(soundId, soundButtonElement, true);
+            updatePauseAllButton();
             createMeterElement(soundId, soundData.name);
             triggerWaveformUpdate();
             fadeInSound(soundId, soundData.volume);
@@ -443,7 +489,16 @@ ${err.message}`);
 
 export function stopSound(soundId, soundButtonElement = null, useFadeOut = true) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || audioInfo.isFadingOut) return;
+    if (!audioInfo) {
+        if (!state.pausedSounds[soundId]) return;
+        delete state.pausedSounds[soundId];
+        if (!soundButtonElement) soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+        updateButtonUI(soundId, soundButtonElement, false);
+        resetProgressBar(soundButtonElement);
+        updatePauseAllButton();
+        return;
+    }
+    if (audioInfo.isFadingOut) return;
 
     if (!soundButtonElement) { soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`); }
 
@@ -493,6 +548,7 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
 
 export function stopAllSounds(fadeOut = true) {
     Object.keys(state.activeAudios).forEach(id => stopSound(id, null, fadeOut));
+    Object.keys(state.pausedSounds).forEach(id => stopSound(id, null, false));
 }
 
 // 即時停止（フェードなし）。retrigger の頭出し再再生で使用。
@@ -507,6 +563,60 @@ export function forceStopSound(soundId, soundButtonElement = null) {
         if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
     } catch (e) { /* ignore */ }
     cleanupAfterStop(soundId, soundButtonElement);
+}
+
+export function isSoundPaused(soundId) {
+    return Boolean(state.pausedSounds[soundId]);
+}
+
+export function pauseSound(soundId, soundButtonElement = null) {
+    const audioInfo = state.activeAudios[soundId];
+    if (!audioInfo || audioInfo.isFadingOut || !state.audioContext) return false;
+
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration || sound?.duration;
+    let position = getCurrentSourcePosition(audioInfo);
+    if (Number.isFinite(duration) && duration > 0) {
+        position = sound?.loop ? position % duration : Math.min(duration, position);
+    }
+    if (!Number.isFinite(position) || position < 0) return false;
+
+    state.pausedSounds[soundId] = { position, pausedAt: Date.now() };
+    if (!soundButtonElement) soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+
+    if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
+    if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
+    audioInfo.sourceNode.onended = null;
+    if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = null;
+    try {
+        if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
+        if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
+    } catch (_) { /* the audio source may already have ended */ }
+    cleanupAfterStop(soundId, soundButtonElement, false);
+    updateButtonUI(soundId, soundButtonElement, false, true);
+    updatePausedProgress(soundId, soundButtonElement, position);
+    updatePauseAllButton();
+    return true;
+}
+
+export async function resumeSound(soundId, soundButtonElement = null) {
+    const paused = state.pausedSounds[soundId];
+    if (!paused) return false;
+    delete state.pausedSounds[soundId];
+    await playSound(soundId, soundButtonElement, performance.now(), paused.position);
+    updatePauseAllButton();
+    return true;
+}
+
+export async function togglePauseAllSounds() {
+    const activeIds = Object.entries(state.activeAudios)
+        .filter(([, audio]) => !audio.isFadingOut)
+        .map(([soundId]) => soundId);
+    if (activeIds.length > 0) {
+        activeIds.forEach(soundId => pauseSound(soundId));
+        return;
+    }
+    await Promise.all(Object.keys(state.pausedSounds).map(soundId => resumeSound(soundId)));
 }
 
 export function seekSound(soundId, seekTime) {
@@ -591,7 +701,7 @@ export function updateActiveSoundSpeed(soundId) {
     scheduleNaturalFadeOut(soundId);
 }
 
-function cleanupAfterStop(soundId, soundButtonElement) {
+function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
@@ -623,10 +733,11 @@ function cleanupAfterStop(soundId, soundButtonElement) {
     }
     if (soundButtonElement) {
         updateButtonUI(soundId, soundButtonElement, false);
-        resetProgressBar(soundButtonElement);
+        if (resetProgress) resetProgressBar(soundButtonElement);
     }
     removeMeterElement(soundId);
     triggerWaveformUpdate();
+    updatePauseAllButton();
 }
 
 /**

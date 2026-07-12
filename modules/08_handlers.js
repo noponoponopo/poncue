@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -49,6 +49,7 @@ export function setupEventListeners() {
         saveSetting(stateKey, state[stateKey]);
     });
     startMasterMeter();
+    updatePauseAllButton();
 
     // Custom Modal — only close on genuine click, not drag-end on overlay
     let modalMouseDownPos = null;
@@ -75,6 +76,10 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
+    dom.pauseAllBtn?.addEventListener('click', async () => {
+        await resumeAudioContext();
+        await togglePauseAllSounds();
+    });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
 
@@ -525,6 +530,8 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
 
     if (state.activeAudios[soundId]) {
         stopSound(soundId, soundButtonElement);
+    } else if (isSoundPaused(soundId)) {
+        resumeSound(soundId, soundButtonElement);
     } else {
         playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
     }
@@ -765,6 +772,8 @@ function renderSoundboard() {
             dom.soundboard.appendChild(buttonElement);
             if (state.activeAudios[sound.id]) {
                 updateButtonUI(sound.id, buttonElement, true);
+            } else if (isSoundPaused(sound.id)) {
+                updateButtonUI(sound.id, buttonElement, false, true);
             }
         });
     }
@@ -819,6 +828,7 @@ function createSoundButton(sound) {
             <div class="time-display">${durationText}</div>
         </div>
         <div class="button-controls">
+            <button class="pause-button fas fa-pause" title="一時停止" aria-label="一時停止" disabled></button>
             <button class="loop-button fas fa-sync-alt ${sound.loop ? 'active' : ''}" title="ループ切り替え"></button>
             <div class="volume-control">
                 <input type="range" min="0" max="${Math.max(2, Math.ceil(sound.volume ?? 1))}" step="0.01" value="${sound.volume ?? 1.0}" title="音量: ${Math.round((sound.volume ?? 1.0) * 100)}%">
@@ -832,7 +842,7 @@ function createSoundButton(sound) {
     let touchFlag = false;
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
 
-    const isControlTarget = target => target instanceof Element && target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
+    const isControlTarget = target => target instanceof Element && target.closest('.pause-button, .loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
@@ -879,6 +889,18 @@ function createSoundButton(sound) {
             else if (triggerMode !== 'momentary') handleSoundButtonClick(sound.id, buttonWrapper);
         }
     });
+
+    const pauseButton = buttonWrapper.querySelector('.pause-button');
+    const togglePause = async () => {
+        if (state.activeAudios[sound.id]) {
+            pauseSound(sound.id, buttonWrapper);
+        } else if (isSoundPaused(sound.id)) {
+            await resumeAudioContext();
+            resumeSound(sound.id, buttonWrapper);
+        }
+    };
+    pauseButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); togglePause(); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
+    pauseButton.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) togglePause(); });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
     loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });

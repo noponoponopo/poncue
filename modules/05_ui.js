@@ -1001,13 +1001,34 @@ export function createKnob(spec) {
 }
 
 // --- General UI Updates ---
-export function updateButtonUI(soundId, soundButtonElement, isPlaying) {
+export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused = false) {
     if (!soundButtonElement) return;
     const iconElement = soundButtonElement.querySelector('.sound-icon');
+    const pauseButton = soundButtonElement.querySelector('.pause-button');
     soundButtonElement.classList.toggle('playing', isPlaying);
+    soundButtonElement.classList.toggle('paused', isPaused);
     if (iconElement) {
         iconElement.classList.toggle('fa-play', !isPlaying);
         iconElement.classList.toggle('fa-stop', isPlaying);
+    }
+    if (pauseButton) {
+        pauseButton.disabled = !isPlaying && !isPaused;
+        pauseButton.setAttribute('aria-label', isPaused ? '再開' : '一時停止');
+        pauseButton.title = isPaused ? '再開' : '一時停止';
+        pauseButton.classList.toggle('fa-pause', isPlaying);
+        pauseButton.classList.toggle('fa-play', isPaused);
+    }
+    if (isPaused) {
+        const position = state.pausedSounds[soundId]?.position;
+        const duration = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId)?.duration;
+        if (Number.isFinite(position) && Number.isFinite(duration) && duration > 0) {
+            const currentTime = Math.min(duration, position);
+            const formatTime = seconds => `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+            const progress = soundButtonElement.querySelector('.progress-bar-value');
+            const timeDisplay = soundButtonElement.querySelector('.time-display');
+            if (progress) progress.style.width = `${currentTime / duration * 100}%`;
+            if (timeDisplay) timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+        }
     }
 }
 
