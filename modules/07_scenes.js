@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, setAudioOutputDevice } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
 
@@ -346,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'audioOutputDeviceId', 'audioOutputDeviceLabel', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -356,6 +356,8 @@ export async function loadSettings() {
         updateState({
             currentSceneId: settings.currentSceneId ?? null,
             masterVolume: settings.masterVolume ?? 1.0,
+            audioOutputDeviceId: settings.audioOutputDeviceId ?? 'default',
+            audioOutputDeviceLabel: settings.audioOutputDeviceLabel ?? 'システム既定',
             isSortableEnabled: settings.isSortableEnabled ?? false,
             shortcuts: settings.shortcuts ?? {},
             performanceMode: settings.performanceMode ?? DEFAULT_PERFORMANCE_MODE,
@@ -383,6 +385,12 @@ export async function loadSettings() {
         if (dom.padSizeSlider) dom.padSizeSlider.value = state.padSize;
         if (dom.padSizeValue) dom.padSizeValue.textContent = state.padSize;
         updatePadSizeCSS(state.padSize);
+        try {
+            await setAudioOutputDevice(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
+        } catch (error) {
+            console.warn('Saved audio output is unavailable; using system default.', error);
+            await setAudioOutputDevice('default', 'システム既定');
+        }
     } catch (err) {
         if (state.showErrorPopups) showAlert("設定の読み込みに失敗しました。");
     }

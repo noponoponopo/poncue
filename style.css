@@ -1007,6 +1007,53 @@
       color: var(--secondary-color);
     }
 
+    .audio-output-setting {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--secondary-color);
+      font-size: 0.9em;
+    }
+
+    .audio-output-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .audio-output-controls select {
+      flex: 1 1 240px;
+      min-width: 0;
+      padding: 8px 10px;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    .audio-output-controls button {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      color: var(--text-color);
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .audio-output-controls button:disabled,
+    .audio-output-controls select:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .setting-status {
+      min-height: 1.3em;
+      font-size: 0.78em;
+      line-height: 1.35;
+    }
+
     .popup-setting,
     .sortable-setting,
     .theme-setting,
@@ -1810,6 +1857,10 @@
         flex-basis: calc(50% - 10px); /* 2列にするために幅を調整 (gapを考慮) */
       }
 
+      .audio-output-setting {
+        flex-basis: 100%;
+      }
+
       .pad-size-setting {
         flex-direction: row;
         align-items: center;
@@ -1914,6 +1965,10 @@
         flex-direction: row;
         justify-content: space-between;
         flex-wrap: nowrap;
+      }
+
+      .audio-output-controls select {
+        flex-basis: 100%;
       }
 
 

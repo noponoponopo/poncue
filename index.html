@@ -221,6 +221,19 @@
                 >
               </div>
             </div>
+            <div class="audio-output-setting">
+              <label for="audio-output-select">音声出力:</label>
+              <div class="audio-output-controls">
+                <select id="audio-output-select" aria-label="音声出力デバイス">
+                  <option value="default">システム既定</option>
+                </select>
+                <button type="button" id="audio-output-refresh-btn" title="出力デバイス一覧を更新" aria-label="出力デバイス一覧を更新">
+                  <i class="fas fa-rotate"></i>
+                </button>
+                <button type="button" id="audio-output-picker-btn" title="OSの出力選択を開く">システム選択</button>
+              </div>
+              <span id="audio-output-status" class="setting-status" role="status"></span>
+            </div>
           </div>
           <div class="io-controls">
             <button id="modal-import-btn" title="インポート">

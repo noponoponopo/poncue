@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -112,6 +112,10 @@ export function setupEventListeners() {
     dom.waveformToggleCheckbox?.addEventListener('change', handleWaveformToggleChange);
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
+    dom.audioOutputSelect?.addEventListener('change', handleAudioOutputChange);
+    dom.audioOutputRefreshBtn?.addEventListener('click', () => refreshAudioOutputControls('出力一覧を更新しました。'));
+    dom.audioOutputPickerBtn?.addEventListener('click', handleAudioOutputPicker);
+    navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange);
 
     // Soundboard Drag & Drop
     dom.soundboard.addEventListener('dragstart', handleDragStart);
@@ -218,10 +222,93 @@ function handlePerformanceModeChange(event) {
     // 例: オーディオバッファの再読み込み、波形表示の精度変更など
 }
 
+async function refreshAudioOutputControls(message = '') {
+    if (!dom.audioOutputSelect) return;
+    const supported = supportsAudioOutputSelection();
+    dom.audioOutputSelect.disabled = !supported;
+    dom.audioOutputRefreshBtn.disabled = !navigator.mediaDevices?.enumerateDevices;
+    dom.audioOutputPickerBtn.hidden = typeof navigator.mediaDevices?.selectAudioOutput !== 'function';
+
+    const devices = await listAudioOutputDevices().catch(() => []);
+    dom.audioOutputSelect.replaceChildren();
+    const defaultOption = document.createElement('option');
+    defaultOption.value = 'default';
+    defaultOption.textContent = 'システム既定';
+    dom.audioOutputSelect.appendChild(defaultOption);
+
+    devices.filter(device => device.deviceId && device.deviceId !== 'default').forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || `音声出力 ${index + 1}`;
+        dom.audioOutputSelect.appendChild(option);
+    });
+
+    if (state.audioOutputDeviceId !== 'default' && !devices.some(device => device.deviceId === state.audioOutputDeviceId)) {
+        const unavailableOption = document.createElement('option');
+        unavailableOption.value = state.audioOutputDeviceId;
+        unavailableOption.textContent = `${state.audioOutputDeviceLabel || '選択した出力'}（未接続）`;
+        dom.audioOutputSelect.appendChild(unavailableOption);
+    }
+    dom.audioOutputSelect.value = state.audioOutputDeviceId;
+    if (dom.audioOutputStatus) {
+        dom.audioOutputStatus.textContent = supported
+            ? (message || `現在: ${state.audioOutputDeviceLabel}`)
+            : '出力変更には対応する Chromium 系ブラウザが必要です。既定出力を使用します。';
+    }
+}
+
+async function applyAudioOutputSelection(deviceId, label) {
+    dom.audioOutputSelect.disabled = true;
+    if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = '出力を切り替えています...';
+    try {
+        await setAudioOutputDevice(deviceId, label);
+        await Promise.all([
+            saveSetting('audioOutputDeviceId', state.audioOutputDeviceId),
+            saveSetting('audioOutputDeviceLabel', state.audioOutputDeviceLabel)
+        ]);
+        await refreshAudioOutputControls(`現在: ${state.audioOutputDeviceLabel}`);
+        return true;
+    } catch (error) {
+        if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = `切替失敗: ${error.message}`;
+        dom.audioOutputSelect.value = state.audioOutputDeviceId;
+        dom.audioOutputSelect.disabled = !supportsAudioOutputSelection();
+        return false;
+    }
+}
+
+async function handleAudioOutputChange(event) {
+    const option = event.target.selectedOptions[0];
+    await applyAudioOutputSelection(event.target.value, option?.textContent || '選択した出力');
+}
+
+async function handleAudioOutputPicker() {
+    try {
+        const device = await chooseAudioOutputDevice();
+        await applyAudioOutputSelection(device.deviceId, device.label || '選択した出力');
+    } catch (error) {
+        if (error.name !== 'NotAllowedError' && dom.audioOutputStatus) {
+            dom.audioOutputStatus.textContent = error.message;
+        }
+    }
+}
+
+async function handleAudioDeviceChange() {
+    const devices = await listAudioOutputDevices().catch(() => []);
+    const selectedStillAvailable = state.audioOutputDeviceId === 'default'
+        || devices.some(device => device.deviceId === state.audioOutputDeviceId);
+    if (!selectedStillAvailable) {
+        await applyAudioOutputSelection('default', 'システム既定');
+        await refreshAudioOutputControls('選択していた出力が切断されたため、システム既定へ戻しました。');
+        return;
+    }
+    await refreshAudioOutputControls();
+}
+
 // --- Scene Modal Handlers ---
 function openSceneSettingsModal() {
     if (!state.db) { showAlert("データベースに接続されていません。"); return; }
     populateSceneModalList();
+    refreshAudioOutputControls();
     dom.sceneSettingsModal.classList.add('active');
 }
 function closeSceneSettingsModal() {

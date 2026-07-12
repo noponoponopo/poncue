@@ -42,6 +42,8 @@ export const state = {
     
     // UI and Settings State
     masterVolume: 1.0,
+    audioOutputDeviceId: 'default',
+    audioOutputDeviceLabel: 'システム既定',
     modalSelectedSceneId: null,
     showErrorPopups: true,
     isSortableEnabled: false,

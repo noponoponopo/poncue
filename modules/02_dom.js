@@ -44,7 +44,11 @@ export function initDom() {
         customModalOkBtn: 'custom-modal-ok-btn',
         customModalCancelBtn: 'custom-modal-cancel-btn',
         perfHighRadio: 'perf-high',
-        perfLowRadio: 'perf-low'
+        perfLowRadio: 'perf-low',
+        audioOutputSelect: 'audio-output-select',
+        audioOutputRefreshBtn: 'audio-output-refresh-btn',
+        audioOutputPickerBtn: 'audio-output-picker-btn',
+        audioOutputStatus: 'audio-output-status'
     };
 
     for (const key in elementMap) {
