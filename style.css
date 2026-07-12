@@ -1207,6 +1207,10 @@
         display: none !important;
     }
 
+    body.show-mode .sound-button .volume-control {
+        transform: translateY(-5px);
+    }
+
     /* --- START: Master Effect Knob Bar --- */
     #master-effect-bar {
       display: flex;
