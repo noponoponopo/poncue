@@ -225,6 +225,49 @@ function getCurrentPlaybackRate(audioInfo) {
     return audioInfo.audioElement ? audioInfo.audioElement.playbackRate : audioInfo.playbackRate;
 }
 
+export function getTrimBounds(sound, duration, reversed = false) {
+    const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    const configuredStart = Number.isFinite(sound?.trimStart) ? sound.trimStart : 0;
+    const configuredEnd = Number.isFinite(sound?.trimEnd) ? sound.trimEnd : safeDuration;
+    const start = Math.min(safeDuration, Math.max(0, configuredStart));
+    const end = Math.min(safeDuration, Math.max(start, configuredEnd));
+    if (!reversed) return { start, end, duration: end - start };
+    return {
+        start: safeDuration - end,
+        end: safeDuration - start,
+        duration: end - start
+    };
+}
+
+function scheduleTrimBoundary(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
+    if (!audioInfo || !soundData) return;
+
+    clearTimeout(audioInfo.trimBoundaryTimeoutId);
+    if (soundData.loop && !audioInfo.audioElement) return;
+    const remaining = audioInfo.trimEnd - getCurrentSourcePosition(audioInfo);
+    const rate = Math.max(0.25, getCurrentPlaybackRate(audioInfo) || 1);
+    const handleBoundary = () => {
+        const current = state.activeAudios[soundId];
+        if (current !== audioInfo || audioInfo.isFadingOut) return;
+        if (soundData.loop && audioInfo.audioElement) {
+            audioInfo.audioElement.currentTime = audioInfo.trimStart;
+            scheduleTrimBoundary(soundId);
+        } else if (audioInfo.audioElement) {
+            audioInfo.audioElement.pause();
+            cleanupAfterStop(soundId, null);
+        } else {
+            audioInfo.sourceNode.stop();
+        }
+    };
+    if (remaining <= 0.005) {
+        handleBoundary();
+        return;
+    }
+    audioInfo.trimBoundaryTimeoutId = setTimeout(handleBoundary, remaining / rate * 1000);
+}
+
 function cancelNaturalFadeOut(audioInfo, now) {
     const fadeStartTime = audioInfo.naturalFadeStartTime;
     if (!Number.isFinite(fadeStartTime)) return false;
@@ -250,7 +293,7 @@ function scheduleNaturalFadeOut(soundId) {
     const now = state.audioContext.currentTime;
     const fadeWasInProgress = cancelNaturalFadeOut(audioInfo, now);
     audioInfo.naturalFadeStartTime = null;
-    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
+    const duration = audioInfo.trimEnd;
     const fadeDuration = Math.max(0, soundData.fadeOutDuration ?? 0);
     const remaining = duration - getCurrentSourcePosition(audioInfo);
     const playbackRate = getCurrentPlaybackRate(audioInfo);
@@ -276,7 +319,7 @@ function scheduleNaturalFadeOut(soundId) {
     audioInfo.naturalFadeStartTime = fadeStartTime;
 }
 
-export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
+export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = null) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
 
     if (state.activeAudios[soundId]) {
@@ -291,6 +334,9 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
     let audioElement = null;
     let objectUrl = null;
     let audioBuffer = null;
+    let trimStart = 0;
+    let trimEnd = 0;
+    let playbackStart = 0;
 
     try {
         const wantsReverse = !!soundData.reverse;
@@ -307,11 +353,10 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             }
             objectUrl = URL.createObjectURL(blob);
             audioElement = new Audio(objectUrl);
-            audioElement.loop = soundData.loop;
+            audioElement.loop = false;
             audioElement.preservesPitch = Boolean(soundData.preservePitch);
             audioElement.playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
             audioElement.preload = 'auto';
-            audioElement.currentTime = Math.max(0, startOffset);
             sourceNode = state.audioContext.createMediaElementSource(audioElement);
 
             // For waveform, we still need the buffer
@@ -321,6 +366,12 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             } catch (decodeError) {
                 console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
             }
+
+            const trim = getTrimBounds(soundData, audioBuffer?.duration || soundData.duration, false);
+            trimStart = trim.start;
+            trimEnd = trim.end;
+            playbackStart = Math.min(trimEnd, Math.max(trimStart, startOffset ?? trimStart));
+            audioElement.currentTime = playbackStart;
 
         } else { // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
             let baseBuffer = state.decodedAudioBuffers[soundId];
@@ -350,9 +401,15 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 return;
             }
             const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+            const trim = getTrimBounds(soundData, audioBuffer.duration, wantsReverse);
+            trimStart = trim.start;
+            trimEnd = trim.end;
+            playbackStart = Math.min(trimEnd, Math.max(trimStart, startOffset ?? trimStart));
             sourceNode = new Tone.GrainPlayer({
                 url: audioBuffer,
                 loop: soundData.loop,
+                loopStart: trimStart,
+                loopEnd: trimEnd,
                 playbackRate,
                 detune: soundData.preservePitch ? 0 : 1200 * Math.log2(playbackRate)
             });
@@ -385,13 +442,22 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
-            playbackPosition: Math.max(0, startOffset),
+            playbackPosition: playbackStart,
             playbackPositionContextTime: state.audioContext.currentTime,
             playbackRate: Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1)),
+            trimStart, trimEnd, trimBoundaryTimeoutId: null,
             fadeInEndTime: null, naturalFadeStartTime: null,
             soundId: soundId,
             peakL: 0, peakR: 0
         };
+
+        if (audioElement) {
+            const trimTimeUpdateHandler = () => {
+                if (audioElement.currentTime >= trimEnd - 0.005) scheduleTrimBoundary(soundId);
+            };
+            state.activeAudios[soundId].trimTimeUpdateHandler = trimTimeUpdateHandler;
+            audioElement.addEventListener('timeupdate', trimTimeUpdateHandler);
+        }
 
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
@@ -413,6 +479,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 triggerWaveformUpdate();
                 fadeInSound(soundId, soundData.volume);
                 scheduleNaturalFadeOut(soundId);
+                scheduleTrimBoundary(soundId);
                 startProgressBarUpdate(soundId, soundButtonElement);
                 startMeterUpdate(soundId);
             }).catch(err => {
@@ -424,13 +491,14 @@ ${err.message}`);
             if ('onended' in sourceNode) sourceNode.onended = onEnd;
             else sourceNode.onstop = onEnd;
             const startedAt = performance.now();
-            sourceNode.start(0, Math.max(0, startOffset));
+            sourceNode.start(0, playbackStart);
             recordStartMetric(soundId, clickTime, startedAt);
             updateButtonUI(soundId, soundButtonElement, true);
             createMeterElement(soundId, soundData.name);
             triggerWaveformUpdate();
             fadeInSound(soundId, soundData.volume);
             scheduleNaturalFadeOut(soundId);
+            scheduleTrimBoundary(soundId);
             startProgressBarUpdate(soundId, soundButtonElement);
             startMeterUpdate(soundId);
         }
@@ -523,6 +591,7 @@ export function seekSound(soundId, seekTime) {
             const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
             fadeInSound(soundId, soundData?.volume ?? 1);
             scheduleNaturalFadeOut(soundId);
+            scheduleTrimBoundary(soundId);
         }, MIN_STOP_FADE_SECONDS * 1000);
     } else if (audioInfo.audioBuffer) { // HIGH_PERFORMANCE
         // Seeking must not wait for the user-configured fade-out duration.
@@ -578,6 +647,7 @@ export function updateActiveSoundSpeed(soundId) {
     if (audioInfo.audioElement) {
         audioInfo.audioElement.preservesPitch = Boolean(soundData.preservePitch);
         audioInfo.audioElement.playbackRate = rate;
+        scheduleTrimBoundary(soundId);
     } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
         audioInfo.sourceNode.playbackRate = rate;
         audioInfo.sourceNode.detune = soundData.preservePitch ? 0 : 1200 * Math.log2(rate);
@@ -587,6 +657,21 @@ export function updateActiveSoundSpeed(soundId) {
         } catch (e) {
             try { audioInfo.sourceNode.playbackRate.value = rate; } catch (_) { /* ignore */ }
         }
+    }
+    scheduleNaturalFadeOut(soundId);
+}
+
+export function updateActiveSoundLoop(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
+    if (!audioInfo || !soundData) return;
+    if (audioInfo.audioElement) {
+        audioInfo.audioElement.loop = false;
+        scheduleTrimBoundary(soundId);
+    } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
+        audioInfo.sourceNode.loopStart = audioInfo.trimStart;
+        audioInfo.sourceNode.loopEnd = audioInfo.trimEnd;
+        audioInfo.sourceNode.loop = soundData.loop;
     }
     scheduleNaturalFadeOut(soundId);
 }
@@ -602,6 +687,8 @@ function cleanupAfterStop(soundId, soundButtonElement) {
             if (audioInfo.sourceNode instanceof Tone.GrainPlayer) audioInfo.sourceNode.dispose();
         }
         if (audioInfo.audioElement) {
+            clearTimeout(audioInfo.trimBoundaryTimeoutId);
+            audioInfo.audioElement.removeEventListener('timeupdate', audioInfo.trimTimeUpdateHandler);
             audioInfo.audioElement.onended = null;
             audioInfo.audioElement.onerror = null;
             audioInfo.audioElement.src = '';
@@ -728,6 +815,80 @@ export async function normalizeSoundVolume(soundId, targetLufs = -18) {
     };
 }
 
+export async function analyzeAndApplySilenceTrim(soundId, thresholdDb = -50, paddingSeconds = 0.02) {
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
+    if (!soundData?.audioId || !state.audioContext) return null;
+
+    const safeThresholdDb = Math.min(-20, Math.max(-80, Number(thresholdDb) || -50));
+    let audioBuffer = state.decodedAudioBuffers[soundId];
+    if (!audioBuffer) {
+        try {
+            const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+            const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+            if (!blob) return null;
+            audioBuffer = await state.audioContext.decodeAudioData(await blob.arrayBuffer());
+        } catch (_) {
+            return null;
+        }
+    }
+    if (!audioBuffer?.length || !audioBuffer.numberOfChannels) return null;
+
+    const threshold = 10 ** (safeThresholdDb / 20);
+    const frameSize = Math.max(1, Math.round(audioBuffer.sampleRate * 0.01));
+    let firstActiveSample = -1;
+    let lastActiveSample = -1;
+
+    for (let frameStart = 0; frameStart < audioBuffer.length; frameStart += frameSize) {
+        const frameEnd = Math.min(audioBuffer.length, frameStart + frameSize);
+        let highestRms = 0;
+        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+            const samples = audioBuffer.getChannelData(channel);
+            let sumSquares = 0;
+            for (let sample = frameStart; sample < frameEnd; sample++) {
+                sumSquares += samples[sample] * samples[sample];
+            }
+            highestRms = Math.max(highestRms, Math.sqrt(sumSquares / (frameEnd - frameStart)));
+        }
+        if (highestRms >= threshold) {
+            if (firstActiveSample < 0) firstActiveSample = frameStart;
+            lastActiveSample = frameEnd;
+        }
+    }
+
+    if (firstActiveSample < 0 || lastActiveSample <= firstActiveSample) {
+        return { silent: true, thresholdDb: safeThresholdDb, duration: audioBuffer.duration };
+    }
+
+    const padding = Math.max(0, Math.min(0.25, Number(paddingSeconds) || 0));
+    const trimStart = Math.max(0, firstActiveSample / audioBuffer.sampleRate - padding);
+    const trimEnd = Math.min(audioBuffer.duration, lastActiveSample / audioBuffer.sampleRate + padding);
+    forceStopSound(soundId);
+    soundData.trimStart = trimStart;
+    soundData.trimEnd = trimEnd;
+    soundData.trimThresholdDb = safeThresholdDb;
+
+    return {
+        silent: false,
+        thresholdDb: safeThresholdDb,
+        trimStart,
+        trimEnd,
+        duration: trimEnd - trimStart,
+        removedStart: trimStart,
+        removedEnd: audioBuffer.duration - trimEnd,
+        originalDuration: audioBuffer.duration
+    };
+}
+
+export function clearSilenceTrim(soundId) {
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
+    if (!soundData) return false;
+    forceStopSound(soundId);
+    delete soundData.trimStart;
+    delete soundData.trimEnd;
+    delete soundData.trimThresholdDb;
+    return true;
+}
+
 async function measureIntegratedLufs(audioBuffer) {
     const offline = new OfflineAudioContext(
         audioBuffer.numberOfChannels,
@@ -788,7 +949,7 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
 
     const formatTime = (s) => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    const duration = audioBuffer?.duration || audioElement?.duration || soundData?.duration || 0;
+    const duration = Math.max(0, audioInfo.trimEnd - audioInfo.trimStart);
 
     const update = () => {
         if (!state.activeAudios[soundId] || !duration) {
@@ -803,7 +964,10 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
         if (!progressBarValue || !timeDisplay) return;
 
         const sourcePosition = getCurrentSourcePosition(audioInfo);
-        const currentTime = soundData?.loop ? sourcePosition % duration : Math.min(duration, sourcePosition);
+        const elapsed = sourcePosition - audioInfo.trimStart;
+        const currentTime = soundData?.loop
+            ? ((elapsed % duration) + duration) % duration
+            : Math.min(duration, Math.max(0, elapsed));
 
         progressBarValue.style.width = `${Math.min(100, (currentTime / duration) * 100)}%`;
         timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
@@ -1033,7 +1197,9 @@ function startWaveformDisplayLoop() {
                 if (!soundData) continue;
 
                 const gainValue = individualGain.gain.value;
-                const duration = audioBuffer.duration;
+                const trimStart = audioInfo.trimStart ?? 0;
+                const trimEnd = audioInfo.trimEnd ?? audioBuffer.duration;
+                const duration = trimEnd - trimStart;
                 const rawBaseTime = getCurrentSourcePosition(audioInfo);
                 const playbackRate = getCurrentPlaybackRate(audioInfo);
 
@@ -1043,10 +1209,10 @@ function startWaveformDisplayLoop() {
                 let currentSoundBufferTime = snappedBaseTime + timeOffsetFromLeftEdge * playbackRate;
 
                 if (soundData.loop && duration > 0) {
-                    currentSoundBufferTime %= duration;
+                    currentSoundBufferTime = trimStart + (((currentSoundBufferTime - trimStart) % duration) + duration) % duration;
                 }
 
-                if (currentSoundBufferTime < 0 || currentSoundBufferTime >= duration) {
+                if (currentSoundBufferTime < trimStart || currentSoundBufferTime >= trimEnd) {
                     continue;
                 }
 
@@ -1054,6 +1220,7 @@ function startWaveformDisplayLoop() {
                 const peakIdxStart = Math.floor(currentSoundBufferTime * waveformPeaks.peaksPerSecond);
                 const peakIdxEnd = Math.min(
                     Math.floor((currentSoundBufferTime + sourceSecondsPerPixel) * waveformPeaks.peaksPerSecond),
+                    Math.floor(trimEnd * waveformPeaks.peaksPerSecond),
                     waveformPeaks.peaks.length / 2 - 1
                 );
 

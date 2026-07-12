@@ -193,6 +193,12 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                     <button type="button" id="normalize-btn" class="modal-input effect-action-btn">LUFSノーマライズ</button>
                     <span id="normalize-result" class="effect-param-value" role="status"></span>
                 </div>
+                <div class="effect-action-row">
+                    <div class="effect-knob-slot" data-knob="trim-threshold"></div>
+                    <button type="button" id="trim-silence-btn" class="modal-input effect-action-btn">前後の無音をトリム</button>
+                    <button type="button" id="trim-reset-btn" class="modal-input effect-color-clear-btn" ${Number.isFinite(sound.trimStart) || Number.isFinite(sound.trimEnd) ? '' : 'disabled'}>解除</button>
+                    <span id="trim-result" class="effect-param-value" role="status"></span>
+                </div>
             </div>
             <div class="effect-divider"></div>
             <div class="effect-section">
@@ -259,6 +265,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         const preservePitchInput = dom.customModalMessage.querySelector('#preserve-pitch-input');
         const normalizeBtn = dom.customModalMessage.querySelector('#normalize-btn');
         const normalizeResult = dom.customModalMessage.querySelector('#normalize-result');
+        const trimSilenceBtn = dom.customModalMessage.querySelector('#trim-silence-btn');
+        const trimResetBtn = dom.customModalMessage.querySelector('#trim-reset-btn');
+        const trimResult = dom.customModalMessage.querySelector('#trim-result');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
         const delayEnabledInput = dom.customModalMessage.querySelector('#delay-enabled-input');
@@ -313,6 +322,13 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             value: -18, dragPixels: 200
         });
         mount('normalize-target', normalizeTargetKnob);
+
+        const trimThresholdKnob = createKnob({
+            min: -80, max: -20, step: 1, default: -50, unit: 'dBFS', label: '無音閾値',
+            value: Number.isFinite(sound.trimThresholdDb) ? sound.trimThresholdDb : -50,
+            dragPixels: 300
+        });
+        mount('trim-threshold', trimThresholdKnob);
 
         // エフェクト knobs
         const wetKnob = createKnob({
@@ -443,6 +459,30 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             }
         };
 
+        const handleTrimSilence = async () => {
+            trimSilenceBtn.disabled = true;
+            trimResult.textContent = '解析中...';
+            try {
+                const result = await callbacks.onTrimSilence?.(trimThresholdKnob.getValue());
+                if (!result) {
+                    trimResult.textContent = '音声を解析できませんでした';
+                } else if (result.silent) {
+                    trimResult.textContent = '全区間が閾値以下です。設定を変更して再試行してください';
+                } else {
+                    trimResult.textContent = `前 ${result.removedStart.toFixed(2)}s / 後 ${result.removedEnd.toFixed(2)}s を除外（再生 ${result.duration.toFixed(2)}s）`;
+                    trimResetBtn.disabled = false;
+                }
+            } finally {
+                trimSilenceBtn.disabled = false;
+            }
+        };
+
+        const handleTrimReset = async () => {
+            if (!await callbacks.onResetTrim?.()) return;
+            trimResetBtn.disabled = true;
+            trimResult.textContent = 'トリムを解除しました';
+        };
+
         // --- 保存時にknob値から最終エフェクト設定を構築 ---
         const buildEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
@@ -473,6 +513,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         fadeOutEasingInput.addEventListener('change', handleFadeOutEasingInput);
         reverseInput.addEventListener('change', handleReverseInput);
         normalizeBtn.addEventListener('click', handleNormalize);
+        trimSilenceBtn.addEventListener('click', handleTrimSilence);
+        trimResetBtn.addEventListener('click', handleTrimReset);
         effectEnabledInput.addEventListener('change', updateEffectSectionState);
 
         dom.customModalOkBtn.textContent = '保存';
@@ -488,6 +530,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
             reverseInput.removeEventListener('change', handleReverseInput);
             normalizeBtn.removeEventListener('click', handleNormalize);
+            trimSilenceBtn.removeEventListener('click', handleTrimSilence);
+            trimResetBtn.removeEventListener('click', handleTrimReset);
             effectEnabledInput.removeEventListener('change', updateEffectSectionState);
         };
 
@@ -1020,7 +1064,10 @@ export function resetProgressBar(soundButtonElement) {
         const soundId = soundButtonElement.dataset.id;
         // Find the sound data from the persistent scenes state to ensure duration is always available
         const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-        const duration = soundData?.duration || 0;
+        const fullDuration = soundData?.duration || 0;
+        const trimStart = Number.isFinite(soundData?.trimStart) ? soundData.trimStart : 0;
+        const trimEnd = Number.isFinite(soundData?.trimEnd) ? soundData.trimEnd : fullDuration;
+        const duration = Math.max(0, trimEnd - trimStart);
 
         const formatTime = (seconds) => {
             if (isNaN(seconds) || seconds < 0) return '--:--';

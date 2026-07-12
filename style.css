@@ -772,7 +772,8 @@
       flex: 0 0 auto;
     }
 
-    .effect-action-row #normalize-result {
+    .effect-action-row #normalize-result,
+    .effect-action-row #trim-result {
       flex: 1 1 200px;
       min-width: 180px;
       text-align: left;
