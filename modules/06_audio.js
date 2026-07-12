@@ -147,28 +147,23 @@ function recordStartMetric(soundId, requestedAt, startedAt) {
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') {
-        console.log('[MIDI] playSound early-return: audioContext', state.audioContext ? state.audioContext.state : 'null');
         return;
     }
 
     const existing = state.activeAudios[soundId];
     if (existing) {
         if (existing.isFadingOut) {
-            console.log('[MIDI] playSound: previous entry fading out, force-clean to restart', soundId);
             cleanupAfterStop(soundId, soundButtonElement);
         } else {
-            console.log('[MIDI] playSound early-return: already playing', soundId);
             return;
         }
     }
 
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.audioId) {
-        console.log('[MIDI] playSound early-return: missing soundData/audioId', soundId);
         if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。");
         return;
     }
-    console.log('[MIDI] playSound start', { soundId, perf: state.performanceMode, loop: soundData.loop, dur: soundData.duration });
 
     let sourceNode;
     let audioElement = null;

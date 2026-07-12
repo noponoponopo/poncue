@@ -227,7 +227,6 @@ async function dispatchControlAction(action, midiEvent = null) {
 
     if (midiEvent?.phase === 'release') return;
 
-    console.log('[MIDI] global action', action.type);
     if (action.type === MIDI_GLOBAL_ACTIONS.STOP_ALL) {
         await stopAllSounds(false);
     } else if (action.type === MIDI_GLOBAL_ACTIONS.FADE_ALL) {
@@ -265,8 +264,7 @@ async function dispatchSoundAction(soundId, mode = MIDI_PLAYBACK_MODE.TOGGLE, mi
 
     if (mode === MIDI_PLAYBACK_MODE.GATE) {
         if (phase === 'press' && !isPlaying) {
-            console.log('[MIDI] GATE play', soundId);
-            await playSound(soundId, soundButtonElement, performance.now());
+            await playSound(soundId, soundButtonElement, midiEvent?.receivedAt ?? performance.now());
         } else if (phase === 'release' && Boolean(audioInfo)) {
             await stopSound(soundId, soundButtonElement, true);
         }
@@ -277,20 +275,16 @@ async function dispatchSoundAction(soundId, mode = MIDI_PLAYBACK_MODE.TOGGLE, mi
 
     if (mode === MIDI_PLAYBACK_MODE.ONESHOT) {
         if (!isPlaying) {
-            console.log('[MIDI] ONESHOT play', soundId);
-            await playSound(soundId, soundButtonElement, performance.now());
+            await playSound(soundId, soundButtonElement, midiEvent?.receivedAt ?? performance.now());
         }
     } else if (mode === MIDI_PLAYBACK_MODE.RETRIGGER) {
         if (Boolean(audioInfo)) await stopSound(soundId, soundButtonElement, false);
-        console.log('[MIDI] RETRIGGER play', soundId);
-        await playSound(soundId, soundButtonElement, performance.now());
+        await playSound(soundId, soundButtonElement, midiEvent?.receivedAt ?? performance.now());
     } else { // TOGGLE
         if (isPlaying) {
-            console.log('[MIDI] TOGGLE stop', soundId);
             await stopSound(soundId, soundButtonElement, true);
         } else {
-            console.log('[MIDI] TOGGLE play', soundId);
-            await playSound(soundId, soundButtonElement, performance.now());
+            await playSound(soundId, soundButtonElement, midiEvent?.receivedAt ?? performance.now());
         }
     }
 }

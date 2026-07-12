@@ -5,10 +5,9 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 
 let controlEventHandler = null;
-let duplicateSuppressCount = 0;
-const DUP_WINDOW_MS = 5;
-const RECENT_MAX = 64;
-const recentMessages = [];
+let midiAccessRequest = null;
+let connectionGeneration = 0;
+let connectedInputIds = new Set();
 
 export function isMidiSupported() {
     return typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function';
@@ -34,53 +33,51 @@ export async function enableMidiInput(onControlEvent) {
         throw new Error('Web MIDI API is not supported in this browser.');
     }
 
-    // 権限状態の事前確認（Permissions API 非対応ブラウザはスキップ）
-    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
-        try {
-            const result = await navigator.permissions.query({ name: 'midi', sysex: false });
-            if (result.state === 'denied') {
-                updateState({ midiStatus: 'error', midiEnabled: false });
-                updateMidiButtonState('error');
-                throw new Error('MIDI access permission was denied by the browser.');
-            }
-        } catch {
-            // 'midi' 権限名をサポートしないブラウザはそのまま続行
-        }
+    if (state.midiAccess && state.midiEnabled) {
+        refreshMidiInputs();
+        return state.midiAccess;
     }
 
+    if (midiAccessRequest) return midiAccessRequest;
+
+    const generation = ++connectionGeneration;
     updateState({ midiStatus: 'connecting' });
     updateMidiButtonState('connecting');
 
-    const midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-    updateState({
-        midiAccess,
-        midiEnabled: true,
-        midiSettings: normalizeMidiSettings({ ...state.midiSettings, enabled: true })
-    });
-    midiAccess.onstatechange = handleMidiStateChange;
+    const request = navigator.requestMIDIAccess({ sysex: false }).then(midiAccess => {
+        if (generation !== connectionGeneration) {
+            closeMidiAccess(midiAccess);
+            throw new Error('MIDI connection was cancelled.');
+        }
 
-    refreshMidiInputs();
-    startMidiStatsReporting();
-    return midiAccess;
+        updateState({
+            midiAccess,
+            midiEnabled: true,
+            midiSettings: normalizeMidiSettings({ ...state.midiSettings, enabled: true })
+        });
+        midiAccess.onstatechange = handleMidiStateChange;
+        refreshMidiInputs();
+        return midiAccess;
+    }).catch(err => {
+        if (generation === connectionGeneration) {
+            updateState({ midiStatus: 'error', midiEnabled: false });
+            updateMidiButtonState('error');
+        }
+        throw err;
+    }).finally(() => {
+        if (midiAccessRequest === request) midiAccessRequest = null;
+    });
+
+    midiAccessRequest = request;
+    return request;
 }
 
 export function disableMidiInput() {
+    connectionGeneration += 1;
+    midiAccessRequest = null;
     cancelMidiLearn();
     const access = state.midiAccess;
-    if (access) {
-        try {
-            for (const input of access.inputs.values()) {
-                input.onmidimessage = null;
-            }
-            access.onstatechange = null;
-            if (typeof access.close === 'function') {
-                Promise.resolve(access.close()).catch(err => console.warn('[MIDI] close error:', err));
-            }
-        } catch (err) {
-            console.warn('[MIDI] disconnect error:', err);
-        }
-    }
-    stopMidiStatsReporting();
+    if (access) closeMidiAccess(access);
     updateState({
         midiAccess: null,
         midiEnabled: false,
@@ -88,6 +85,7 @@ export function disableMidiInput() {
         midiStatus: 'idle',
         midiSettings: normalizeMidiSettings({ ...state.midiSettings, enabled: false })
     });
+    connectedInputIds = new Set();
     updateMidiButtonState('idle');
 }
 
@@ -248,7 +246,9 @@ export function resolveMidiActions(midiEvent) {
         return actions;
     }
 
-    for (const [actionType, binding] of Object.entries(state.midiSettings.globalMappings || {})) {
+    const globalMappings = state.midiSettings.globalMappings || {};
+    for (const actionType in globalMappings) {
+        const binding = globalMappings[actionType];
         if (binding && midiEventMatchesBinding(midiEvent, binding)) {
             actions.push({ type: actionType });
         }
@@ -275,7 +275,8 @@ export function resolveMidiActions(midiEvent) {
     return actions;
 }
 
-function handleMidiStateChange() {
+function handleMidiStateChange(event) {
+    if (event?.currentTarget && event.currentTarget !== state.midiAccess) return;
     refreshMidiInputs();
 }
 
@@ -286,65 +287,40 @@ function refreshMidiInputs() {
     }
 
     let connectedCount = 0;
+    const nextConnectedInputIds = new Set();
     for (const input of state.midiAccess.inputs.values()) {
         if (input.state !== 'disconnected') {
             input.onmidimessage = handleMidiMessage;
+            nextConnectedInputIds.add(input.id);
             connectedCount += 1;
         } else {
             input.onmidimessage = null;
         }
     }
 
-    updateMidiButtonState(connectedCount > 0 ? 'connected' : 'waiting');
-}
-
-function rawBytesKey(data) {
-    let key = '';
-    for (let i = 0; i < data.length; i++) {
-        key += data[i].toString(16).padStart(2, '0');
+    // A disconnect can prevent Note Off from arriving. Do not carry stale held
+    // state into a reconnect, where it would suppress the first Note On.
+    if ([...connectedInputIds].some(id => !nextConnectedInputIds.has(id))) {
+        updateState({ midiHeldKeys: {} });
     }
-    return key;
+    connectedInputIds = nextConnectedInputIds;
+
+    updateMidiButtonState(connectedCount > 0 ? 'connected' : 'waiting');
 }
 
 function handleMidiMessage(event) {
     const data = event.data;
+    if (!data || data.length === 0) return;
 
-    // フィードバックループのエコー検出: 同一HEXが5ms以内に再到着したらエコーとみなす。
-    // event.timeStamp は macOS CoreMIDI で 0=「now」を意味し、正規の入力も 0 になり得るため、
-    // 到着時刻の判定には performance.now() を使う（event.timeStamp では判定しない）。
-    const now = performance.now();
-    const rawKey = rawBytesKey(data);
-    let isEcho = false;
-    for (let i = recentMessages.length - 1; i >= 0; i--) {
-        if (recentMessages[i].key === rawKey && (now - recentMessages[i].t) <= DUP_WINDOW_MS) {
-            isEcho = true;
-            break;
-        }
-        if ((now - recentMessages[i].t) > DUP_WINDOW_MS) break;
-    }
+    // Clock and Active Sensing can arrive hundreds of times per second. Reject
+    // them before allocations or state work on the latency-sensitive path.
+    if (data[0] === 0xf8 || data[0] === 0xfe) return;
 
-    if (isEcho) {
-        duplicateSuppressCount += 1;
-        return;
-    }
-
-    if (duplicateSuppressCount > 0) {
-        console.log(`[MIDI] suppressed ${duplicateSuppressCount} duplicate messages`);
-        duplicateSuppressCount = 0;
-    }
-
-    recentMessages.push({ key: rawKey, t: now });
-    if (recentMessages.length > RECENT_MAX) recentMessages.shift();
-
-    console.log('[MIDI-RAW]', event.timeStamp.toFixed(3), Array.from(data).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
-
-    bumpMidiMessageStats(data);
-
-    const midiEvent = parseMidiMessage(event.data);
+    const receivedAt = performance.now();
+    const midiEvent = parseMidiMessage(data);
     if (!midiEvent) return;
 
-    midiEvent.raw = Array.from(event.data);
-    midiEvent.timestamp = event.timeStamp;
+    midiEvent.receivedAt = receivedAt;
     midiEvent.inputId = event.currentTarget?.id || '';
     midiEvent.inputName = event.currentTarget?.name || '';
     midiEvent.phase = getMidiEventPhase(midiEvent);
@@ -355,33 +331,31 @@ function handleMidiMessage(event) {
 
     if (!passesMidiFilters(midiEvent)) return;
 
-    // === Task 3: held-note tracking & duplicate Note On suppression (no debounce) ===
-    const key = noteStateKey(midiEvent);
-    const held = { ...(state.midiHeldKeys || {}) };
+    const held = state.midiHeldKeys || (state.midiHeldKeys = {});
     let isDuplicateNoteOn = false;
 
     if (midiEvent.type === 'noteon') {
+        const key = noteStateKey(midiEvent);
         isDuplicateNoteOn = Boolean(held[key]);
         held[key] = true;
     } else if (midiEvent.type === 'noteoff') {
-        delete held[key];
+        delete held[noteStateKey(midiEvent)];
     } else if (midiEvent.type === 'cc') {
         // CC as toggle: ignore repeated >0 while held
+        const key = noteStateKey(midiEvent);
         const isPressed = midiEvent.value > 0;
         const wasPressed = Boolean(held[key]);
         if (isPressed && wasPressed) {
-            updateState({ midiHeldKeys: held });
             return;
         }
-        held[key] = isPressed;
+        if (isPressed) held[key] = true;
+        else delete held[key];
     }
-    updateState({ midiHeldKeys: held });
 
     // Learn mode takes priority over action dispatch
     if (state.midiLearnTarget) {
         const binding = createBindingFromMidiEvent(midiEvent);
         if (binding) {
-            console.log('[MIDI] learn captured', binding);
             const resolver = state.midiLearnTarget.resolve;
             updateState({ midiLearnTarget: null });
             updateMidiButtonState(getConnectedInputCount() > 0 ? 'connected' : 'waiting');
@@ -409,60 +383,28 @@ function handleMidiMessage(event) {
     }
 
     if (dispatchable.length > 0 && typeof controlEventHandler === 'function') {
-        console.log('[MIDI] dispatch', {
-            type: midiEvent.type,
-            ch: midiEvent.channel,
-            num: midiEvent.number,
-            phase: midiEvent.phase,
-            cmd: midiEvent.command,
-            count: dispatchable.length,
-            dup: isDuplicateNoteOn
-        });
         controlEventHandler({ midiEvent, actions: dispatchable });
     }
 }
 
 function noteStateKey(midiEvent) {
     const ident = midiEvent.number ?? midiEvent.command ?? midiEvent.value ?? 'none';
-    return `${midiEvent.inputId || 'all'}:${midiEvent.channel ?? 'sys'}:${ident}`;
+    const family = midiEvent.type === 'noteon' || midiEvent.type === 'noteoff' ? 'note' : midiEvent.type;
+    return `${midiEvent.inputId || 'all'}:${family}:${midiEvent.channel ?? 'sys'}:${ident}`;
 }
 
-// === Task 5: 5-second message composition counter ===
-let midiStats = { total: 0, noteon: 0, noteoff: 0, clock: 0, sensing: 0, transport: 0, other: 0 };
-let midiStatsTimer = null;
-
-function bumpMidiMessageStats(data) {
-    midiStats.total += 1;
-    if (!data || data.length === 0) return;
-    const status = data[0];
-    if (status === 0xf8) midiStats.clock += 1;
-    else if (status === 0xfe) midiStats.sensing += 1;
-    else if (status === 0xfa || status === 0xfb || status === 0xfc) midiStats.transport += 1;
-    else if ((status & 0xf0) === 0x90 && data.length >= 3 && data[2] > 0) midiStats.noteon += 1;
-    else if (((status & 0xf0) === 0x80) || ((status & 0xf0) === 0x90 && data.length >= 3 && data[2] === 0)) midiStats.noteoff += 1;
-    else midiStats.other += 1;
-}
-
-function startMidiStatsReporting() {
-    if (midiStatsTimer) return;
-    midiStatsTimer = setInterval(() => {
-        if (duplicateSuppressCount > 0) {
-            console.log(`[MIDI] suppressed ${duplicateSuppressCount} duplicate messages`);
-            duplicateSuppressCount = 0;
+function closeMidiAccess(access) {
+    try {
+        access.onstatechange = null;
+        for (const input of access.inputs.values()) {
+            input.onmidimessage = null;
+            if (typeof input.close === 'function') {
+                Promise.resolve(input.close()).catch(err => console.warn('[MIDI] input close error:', err));
+            }
         }
-        const s = midiStats;
-        if (s.total === 0) return;
-        console.log(`[MIDI] received ${s.total} messages in last 5s (noteon:${s.noteon} noteoff:${s.noteoff} clock:${s.clock} sensing:${s.sensing} transport:${s.transport} other:${s.other})`);
-        midiStats = { total: 0, noteon: 0, noteoff: 0, clock: 0, sensing: 0, transport: 0, other: 0 };
-    }, 5000);
-}
-
-function stopMidiStatsReporting() {
-    if (midiStatsTimer) {
-        clearInterval(midiStatsTimer);
-        midiStatsTimer = null;
+    } catch (err) {
+        console.warn('[MIDI] disconnect error:', err);
     }
-    midiStats = { total: 0, noteon: 0, noteoff: 0, clock: 0, sensing: 0, transport: 0, other: 0 };
 }
 
 function passesMidiFilters(midiEvent) {
