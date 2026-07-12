@@ -5,7 +5,7 @@ import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -57,6 +57,15 @@ export function normalizeSoundFade(sound) {
     }
     if (!FADE_EASING_TYPES.includes(sound.fadeInEasing)) sound.fadeInEasing = DEFAULT_FADE_EASING;
     if (!FADE_EASING_TYPES.includes(sound.fadeOutEasing)) sound.fadeOutEasing = DEFAULT_FADE_EASING;
+    return sound;
+}
+
+export function normalizeSoundTriggerMode(sound) {
+    if (!sound || typeof sound !== 'object') return sound;
+    if (!TRIGGER_MODES.includes(sound.triggerMode)) {
+        sound.triggerMode = sound.holdToPlay ? 'momentary' : DEFAULT_TRIGGER_MODE;
+    }
+    delete sound.holdToPlay;
     return sound;
 }
 
@@ -226,7 +235,7 @@ export async function initializeApp() {
                 }
             }
             if (sceneUpdated) {
-                await saveCurrentSceneSounds(`migration-duration-${sceneId}`);
+                await saveCurrentSceneSounds(`migration-duration-${sceneId}`, sceneId);
             }
         }
         console.log("Duration migration finished.");
@@ -254,10 +263,36 @@ export async function initializeApp() {
                 }
             }
             if (sceneUpdated) {
-                await saveCurrentSceneSounds(`migration-fade-${sceneId}`);
+                await saveCurrentSceneSounds(`migration-fade-${sceneId}`, sceneId);
             }
         }
         console.log("Fade schema migration finished.");
+    }
+
+    let triggerMigrationNeeded = false;
+    for (const sceneId in state.scenes) {
+        for (const sound of state.scenes[sceneId].sounds) {
+            if (!TRIGGER_MODES.includes(sound.triggerMode) || 'holdToPlay' in sound) {
+                triggerMigrationNeeded = true;
+                break;
+            }
+        }
+        if (triggerMigrationNeeded) break;
+    }
+    if (triggerMigrationNeeded) {
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            let sceneUpdated = false;
+            for (const sound of scene.sounds) {
+                if (!TRIGGER_MODES.includes(sound.triggerMode) || 'holdToPlay' in sound) {
+                    normalizeSoundTriggerMode(sound);
+                    sceneUpdated = true;
+                }
+            }
+            if (sceneUpdated) {
+                await saveCurrentSceneSounds(`migration-trigger-${sceneId}`, sceneId);
+            }
+        }
     }
     // --- End of Data Migration ---
 
@@ -500,6 +535,7 @@ export async function handleAudioFileSelect(event) {
                 volume: 1.0,
                 pan: 0,
                 audioId: audioId,
+                triggerMode: DEFAULT_TRIGGER_MODE,
                 fadeInDuration: 0.0,
                 fadeOutDuration: 0.0,
                 fadeInEasing: DEFAULT_FADE_EASING,
@@ -555,9 +591,9 @@ export async function removeSound(soundId) {
     }
 }
 
-export async function saveCurrentSceneSounds(triggeredBy = "unknown") {
-    if (!state.currentSceneId) return;
-    const scene = state.scenes[state.currentSceneId];
+export async function saveCurrentSceneSounds(triggeredBy = "unknown", sceneId = state.currentSceneId) {
+    if (!sceneId) return;
+    const scene = state.scenes[sceneId];
     if (!scene) return;
 
     const sceneToSave = JSON.parse(JSON.stringify(scene));
@@ -676,6 +712,7 @@ async function handleZipImport(file) {
         for (const sound of importedScene.sounds) {
             normalizeSoundFade(sound);
             if ('fadeDuration' in sound) delete sound.fadeDuration;
+            normalizeSoundTriggerMode(sound);
             if (sound.fileName) {
                 const audioFileInZip = zip.file(sound.fileName);
                 if (audioFileInZip) {
@@ -739,6 +776,7 @@ async function handleLegacyJsonImport(file) {
             for (const sound of importedScene.sounds) {
                 normalizeSoundFade(sound);
                 if ('fadeDuration' in sound) delete sound.fadeDuration;
+                normalizeSoundTriggerMode(sound);
                 if (sound.dataUrl) {
                     const blob = dataURLtoBlob(sound.dataUrl);
                     if (blob) {

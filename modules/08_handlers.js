@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -12,7 +12,7 @@ import {
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
-import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -383,7 +383,7 @@ async function handleSoundSettings(soundId) {
     });
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newColor, newHoldToPlay, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
+        const { newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
@@ -402,14 +402,17 @@ async function handleSoundSettings(soundId) {
         }
         await saveSetting('shortcuts', state.shortcuts);
 
+        if (TRIGGER_MODES.includes(newTriggerMode)) {
+            sound.triggerMode = newTriggerMode;
+        }
+        delete sound.holdToPlay;
+
         // Update pad color
         if (newColor === null) {
             delete sound.color;
         } else if (typeof newColor === 'string') {
             sound.color = newColor;
         }
-        sound.holdToPlay = newHoldToPlay;
-
         // Update fade (in/out split + easing)
         sound.fadeInDuration = newFadeInDuration;
         sound.fadeOutDuration = newFadeOutDuration;
@@ -475,22 +478,31 @@ async function handleKeyDown(event) {
     if (soundId) {
         event.preventDefault();
         const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
-        if (soundButtonElement) {
-            const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
-            if (sound?.holdToPlay) {
-                if (!event.repeat) startHoldPlayback(soundId, soundButtonElement, `key:${normalizedKey}`);
-            } else if (!event.repeat) {
-                handleSoundButtonClick(soundId, soundButtonElement);
-            }
+        if (!soundButtonElement) return;
+        const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+        const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
+        if (triggerMode === 'momentary') {
+            if (!event.repeat) startHoldPlayback(soundId, soundButtonElement, `key:${normalizedKey}`);
+        } else if (!event.repeat) {
+            if (triggerMode === 'retrigger') startRetriggerPlayback(soundId, soundButtonElement);
+            else handleSoundButtonClick(soundId, soundButtonElement);
         }
     }
 }
 
 function handleKeyUp(event) {
+    if (dom.customModalOverlay.classList.contains('active') ||
+        dom.sceneSettingsModal.classList.contains('active') ||
+        document.activeElement.tagName === 'INPUT' ||
+        document.activeElement.tagName === 'TEXTAREA') {
+        return;
+    }
+
     const normalizedKey = normalizeKey(event);
     const soundId = state.shortcuts[normalizedKey];
+
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
-    if (!sound?.holdToPlay) return;
+    if (sound?.triggerMode !== 'momentary') return;
     event.preventDefault();
     endHoldPlayback(soundId, `key:${normalizedKey}`);
 }
@@ -547,6 +559,21 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
     } else {
         playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
     }
+}
+
+// リトリガーモード用の再生開始。再生中なら即時停止（フェードなし）して頭出し再生。
+async function startRetriggerPlayback(soundId, soundButtonElement) {
+    const clickTime = performance.now();
+    if (!state.audioContext) { if (!initAudioContext()) { return; } }
+    await resumeAudioContext();
+    if (state.audioContext?.state !== 'running') { return; }
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (soundData?.error) {
+        showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
+        return;
+    }
+    forceStopSound(soundId, soundButtonElement);
+    playSound(soundId, soundButtonElement, clickTime);
 }
 
 async function toggleLoop(soundId, loopBtnElement, soundBtnElement) {
@@ -664,9 +691,6 @@ function handleTouchStart(event) {
     if (!state.isSortableEnabled) return;
     const targetButton = event.target.closest('.sound-button');
     if (!targetButton || isDraggingViaTouch || event.target.closest('.volume-control')) return;
-    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === targetButton.dataset.id);
-    if (sound?.holdToPlay) return;
-    
     touchMoveOccurred = false;
     const touch = event.touches[0];
     draggedElementTouch = targetButton;
@@ -788,6 +812,10 @@ function createSoundButton(sound) {
     buttonWrapper.dataset.id = sound.id;
     buttonWrapper.title = sound.name;
     if (sound.loop) buttonWrapper.classList.add('loop-on');
+    const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
+    if (triggerMode !== 'toggle') {
+        buttonWrapper.classList.add(`trigger-${triggerMode}`);
+    }
     if (sound.color) {
         buttonWrapper.style.setProperty('--pad-color', sound.color);
         buttonWrapper.classList.add('has-color');
@@ -811,8 +839,11 @@ function createSoundButton(sound) {
 
     const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
 
+    const triggerIndicatorText = triggerMode === 'momentary' ? 'HOLD' : (triggerMode === 'retrigger' ? 'RETRIG' : '');
+
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
+        <span class="trigger-indicator">${triggerIndicatorText}</span>
         <div class="button-content">
             <i class="fas fa-play sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>
@@ -836,7 +867,7 @@ function createSoundButton(sound) {
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
-        if (sound.holdToPlay && e.button === 0) {
+        if (triggerMode === 'momentary' && !state.isSortableEnabled && e.button === 0) {
             e.preventDefault();
             const inputId = `pointer:${e.pointerId}`;
             _toggleHandled.add(sound.id);
@@ -850,14 +881,15 @@ function createSoundButton(sound) {
         if (!state.isSortableEnabled && e.pointerType === 'mouse' && e.button === 0 && !isDraggingViaTouch) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
-            handleSoundButtonClick(sound.id, buttonWrapper);
+            if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
+            else handleSoundButtonClick(sound.id, buttonWrapper);
         } else {
             _toggleHandled.delete(sound.id);
         }
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
-        if (sound.holdToPlay || _longPressHandled.delete(sound.id)) {
+        if ((triggerMode === 'momentary' && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
             return;
@@ -865,14 +897,18 @@ function createSoundButton(sound) {
         if (!isDraggingViaTouch) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
-            handleSoundButtonClick(sound.id, buttonWrapper);
+            if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
+            else handleSoundButtonClick(sound.id, buttonWrapper);
         }
         clearTimeout(longPressTimeoutId);
     }, { passive: false });
     buttonWrapper.addEventListener('click', e => {
         if (isControlTarget(e.target)) return;
         if (_toggleHandled.delete(sound.id)) return;
-        if (!touchFlag && !isDraggingViaTouch) handleSoundButtonClick(sound.id, buttonWrapper);
+        if (!touchFlag && !isDraggingViaTouch) {
+            if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
+            else if (triggerMode !== 'momentary') handleSoundButtonClick(sound.id, buttonWrapper);
+        }
     });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');

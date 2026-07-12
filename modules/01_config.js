@@ -10,6 +10,10 @@ export const SETTINGS_STORE_NAME = 'settings';
 export const MAX_FILE_SIZE_MB = 512;
 export const LONG_PRESS_DURATION = 300;
 
+// サウンドの起動モード。toggle=クリックで再生/停止、momentary=押している間だけ再生、retrigger=常に頭出し再生
+export const TRIGGER_MODES = ['toggle', 'momentary', 'retrigger'];
+export const DEFAULT_TRIGGER_MODE = 'toggle';
+
 export const ANALYSER_FFT_SIZE = 256;
 export const WAVEFORM_SECONDS_AHEAD = 5;
 export const WAVEFORM_DOWNSAMPLE = 10;

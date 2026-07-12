@@ -4,7 +4,14 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
-import { FADE_EASING_TYPES } from './01_config.js';
+import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
+
+const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
+function triggerOptions(selected) {
+    return TRIGGER_MODES
+        .map(mode => `<option value="${mode}"${mode === selected ? ' selected' : ''}>${TRIGGER_LABELS[mode] ?? mode}</option>`)
+        .join('');
+}
 
 // フェードイージングの表示ラベル（type リストは 01_config.js の FADE_EASING_TYPES と同期）
 const EASING_LABELS = { linear: '直線', easeIn: 'イーズイン', easeOut: 'イーズアウト', sCurve: 'イーズインアウト' };
@@ -115,7 +122,7 @@ export function formatPanValue(v) {
     return v < 0 ? `L${pct}` : `R${pct}`;
 }
 
-export async function showSoundSettingsModal(soundId, currentShortcut = '') {
+export async function showSoundSettingsModal(soundId, currentShortcut = '', callbacks = {}) {
     return new Promise(resolve => {
         if (!dom.customModalOverlay) {
             showAlert("設定モーダルを表示できません。", "エラー");
@@ -132,6 +139,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
+        const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
         const initialPan = Number.isFinite(sound.pan) ? sound.pan : 0;
         const fadeInDuration = Number.isFinite(sound.fadeInDuration) ? sound.fadeInDuration : 0;
         const fadeOutDuration = Number.isFinite(sound.fadeOutDuration) ? sound.fadeOutDuration : 0;
@@ -148,13 +156,14 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
                 </div>
                 <div class="effect-param-row">
+                    <label for="trigger-mode-input" class="effect-param-label">起動</label>
+                    <select id="trigger-mode-input" class="modal-input effect-select">${triggerOptions(triggerMode)}</select>
+                </div>
+                <div class="effect-param-row">
                     <label for="pad-color-input" class="effect-param-label">カラー</label>
                     <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
                     <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
                 </div>
-                <label class="effect-toggle hold-to-play-setting">
-                    <input type="checkbox" id="hold-to-play-input" ${sound.holdToPlay ? 'checked' : ''}> ホールド中のみ再生
-                </label>
                 <div class="effect-param-row">
                     <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
                     <span class="effect-param-value"><span id="fade-in-duration-value">${fadeInDuration.toFixed(2)}</span>s</span>
@@ -300,9 +309,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
+        const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
         const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
         const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
-        const holdToPlayInput = dom.customModalMessage.querySelector('#hold-to-play-input');
         const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
         const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
         const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
@@ -342,6 +351,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const limiterThresholdInput = dom.customModalMessage.querySelector('#limiter-threshold-input');
 
         let newShortcut = currentShortcut;
+        let newTriggerMode = triggerMode;
         let newColor = (typeof sound.color === 'string' && sound.color) ? sound.color : null;
         let newFadeInDuration = fadeInDuration;
         let newFadeOutDuration = fadeOutDuration;
@@ -425,6 +435,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             }
         };
 
+        const handleTriggerModeInput = (e) => { newTriggerMode = e.target.value; };
+
         const readEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
             wet: parseFloat(effectWetInput.value),
@@ -484,6 +496,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
+        triggerModeInput.addEventListener('change', handleTriggerModeInput);
         padColorInput.addEventListener('input', handlePadColorInput);
         padColorClearBtn.addEventListener('click', handlePadColorClear);
         fadeInDurationInput.addEventListener('input', handleFadeInDurationInput);
@@ -505,6 +518,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
 
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            triggerModeInput.removeEventListener('change', handleTriggerModeInput);
             padColorInput.removeEventListener('input', handlePadColorInput);
             padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
@@ -520,11 +534,12 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newColor, newHoldToPlay: holdToPlayInput.checked, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newEffects: readEffects() });
+            resolve({ newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
+            triggerModeInput.removeEventListener('change', handleTriggerModeInput);
             padColorInput.removeEventListener('input', handlePadColorInput);
             padColorClearBtn.removeEventListener('click', handlePadColorClear);
             fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
@@ -920,7 +935,7 @@ export function createGhostElement(originalElement, touch) {
     removeGhostElement();
     const ghost = originalElement.cloneNode(true);
     ghost.classList.add('ghost-element');
-    ghost.classList.remove('playing', 'loop-on', 'dragging', 'drag-over');
+    ghost.classList.remove('playing', 'loop-on', 'momentary', 'retrigger', 'dragging', 'drag-over');
     ghost.style.width = `${originalElement.offsetWidth}px`;
     ghost.style.height = `${originalElement.offsetHeight}px`;
     const rect = originalElement.getBoundingClientRect();

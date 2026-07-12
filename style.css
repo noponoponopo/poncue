@@ -739,10 +739,6 @@
       cursor: pointer;
     }
 
-    .hold-to-play-setting {
-      margin: 8px 0 10px;
-    }
-
     .modal-scene-list {
       list-style: none;
       padding: 0;
@@ -1047,6 +1043,27 @@
     }
 
     .sound-button.loop-on .loop-indicator {
+      display: inline-block;
+    }
+
+    .trigger-indicator {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background-color: var(--secondary-color);
+      color: white;
+      font-size: calc(var(--button-min-size) * var(--loop-indicator-font-size-ratio));
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      line-height: 1;
+      z-index: 5;
+      display: none;
+      pointer-events: none;
+    }
+
+    .sound-button.trigger-momentary .trigger-indicator,
+    .sound-button.trigger-retrigger .trigger-indicator {
       display: inline-block;
     }
 
