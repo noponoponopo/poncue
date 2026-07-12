@@ -152,9 +152,12 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     if (!rack) return;
     const normalized = normalizeEffectSettings(settings);
     const ramp = immediate ? 0.001 : AUDIO_PARAM_RAMP_SECONDS;
+    // 親トグルがoffの時は、子エフェクトのenabledに関わらず全て無効化する
+    // (UI側でも制御するが、音響ロジックでも確実にガードする)
+    const masterEnabled = normalized.enabled;
 
     // EQ3: disabled = flat (0 dB all bands)
-    const eqActive = normalized.eq.enabled;
+    const eqActive = masterEnabled && normalized.eq.enabled;
     rampParam(rack.eq3.low, eqActive ? normalized.eq.low : 0, ramp);
     rampParam(rack.eq3.mid, eqActive ? normalized.eq.mid : 0, ramp);
     rampParam(rack.eq3.high, eqActive ? normalized.eq.high : 0, ramp);
@@ -164,19 +167,19 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     } catch (e) { /* frequency signals are set directly */ }
 
     // Compressor: disabled = unity (ratio 1, no reduction)
-    const compActive = normalized.compressor.enabled;
+    const compActive = masterEnabled && normalized.compressor.enabled;
     rampParam(rack.compressor.threshold, compActive ? normalized.compressor.threshold : 0, ramp);
     rampParam(rack.compressor.ratio, compActive ? normalized.compressor.ratio : 1, ramp);
 
     // Distortion: disabled = wet 0 (bypass)
-    const distortionActive = normalized.distortion.enabled;
+    const distortionActive = masterEnabled && normalized.distortion.enabled;
     rampParam(rack.distortionNode.wet, distortionActive ? 1 : 0, ramp);
     if (distortionActive) {
         try { rack.distortionNode.distortion = normalized.distortion.amount; } catch (e) { /* amount set directly */ }
     }
 
     // Reverb: disabled = wet 0 (bypass). decay/preDelay set directly (async generate, immediate .value is fine)
-    const reverbActive = normalized.reverb.enabled;
+    const reverbActive = masterEnabled && normalized.reverb.enabled;
     try {
         rack.reverbNode.decay = normalized.reverb.decay;
         rack.reverbNode.preDelay = normalized.reverb.preDelay;
@@ -184,24 +187,25 @@ export function applyEffectSettings(rack, settings, _audioContext = null, immedi
     rampParam(rack.reverbNode.wet, reverbActive ? normalized.reverb.wet : 0, ramp);
 
     // Delay: taps from reverb output, disabled = zero return
-    const delayActive = normalized.delay.enabled;
+    const delayActive = masterEnabled && normalized.delay.enabled;
     rampParam(rack.feedbackDelay.delayTime, normalized.delay.time, ramp);
     rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
     rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
 
+    // Limiter: 親トグル連動。thresholdは常に保持(有効化時に即座に効くように)
+    const limiterActive = masterEnabled && normalized.limiter.enabled;
     rampParam(rack.limiter.threshold, normalized.limiter.threshold, ramp);
     rampParam(rack.limiterSafety.threshold, normalized.limiter.threshold, ramp);
-    rampParam(rack.limiterDry.gain, normalized.limiter.enabled ? 0 : 1, ramp);
-    rampParam(rack.limiterWet.gain, normalized.limiter.enabled ? 1 : 0, ramp);
+    rampParam(rack.limiterDry.gain, limiterActive ? 0 : 1, ramp);
+    rampParam(rack.limiterWet.gain, limiterActive ? 1 : 0, ramp);
 
     // Dry / wet balance
     // dryGain is always active — it carries the post-chain signal at a
     // level that depends on whether serial effects (EQ/Comp/Distortion)
     // are engaged. wetGain boosts the same signal further when those are active.
     // Reverb mixes internally via its own wet param, so it is not part of wetGain.
-    const hasSerialEffect = normalized.eq.enabled || normalized.compressor.enabled ||
-        normalized.distortion.enabled;
-    const anyEffect = normalized.enabled && (hasSerialEffect || delayActive || reverbActive);
+    const hasSerialEffect = eqActive || compActive || distortionActive;
+    const anyEffect = masterEnabled && (hasSerialEffect || delayActive || reverbActive);
 
     if (anyEffect) {
         const wetLevel = normalized.wet;

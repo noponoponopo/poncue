@@ -16,8 +16,7 @@ export function initDom() {
         showModeBtn: 'show-mode-btn',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
-        masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正
-        masterVolumeValue: 'master-volume-value',
+        masterVolumeControl: 'master-volume-control',
         masterLimiterControl: 'master-limiter-control',
         sceneSettingsBtn: 'scene-settings-btn',
         sceneSettingsModal: 'scene-settings-modal',
@@ -67,7 +66,7 @@ export function checkElements() {
     let missingElements = false;
     // 必須要素のキーリスト（キー名は変更しない）
     const essentialElements = [
-        'soundboard', 'addSoundBtn', 'fileInput', 'masterVolumeSlider', 'sceneSettingsBtn'
+        'soundboard', 'addSoundBtn', 'fileInput', 'masterVolumeControl', 'sceneSettingsBtn'
     ];
     
     for (const key of essentialElements) {

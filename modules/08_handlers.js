@@ -3,7 +3,7 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
@@ -28,27 +28,16 @@ function debounce(func, delay) {
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
 
-// Move master volume between header and master-effect-bar based on available width
-function relocateMasterVolume() {
-    const volumeControl = document.getElementById('master-volume-control');
-    if (!volumeControl) return;
-    const effectBar = dom.masterEffectBar;
-    const headerControls = document.querySelector('header .controls');
-    if (!effectBar || !headerControls) return;
-
-    const wantInBar = window.innerWidth >= 900;
-    const inBar = volumeControl.parentElement === effectBar;
-
-    if (wantInBar && !inBar) {
-        effectBar.appendChild(volumeControl);
-    } else if (!wantInBar && inBar) {
-        headerControls.insertBefore(volumeControl, headerControls.querySelector('#scene-settings-btn'));
-    }
-}
-
 // --- Event Listener Setup ---
 export function setupEventListeners() {
     createMasterMeterElement();
+    createMasterVolumeKnob(state.masterVolume, (value, save) => {
+        updateState({ masterVolume: value });
+        if (state.masterGainNode) {
+            state.masterGainNode.gain.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
+        }
+        if (save) saveSetting('masterVolume', value);
+    });
     createMasterLimiterKnob(state.masterLimiter.threshold, (value, save) => {
         setMasterLimiterThreshold(value);
         if (save) saveSetting('masterLimiter', state.masterLimiter);
@@ -60,7 +49,6 @@ export function setupEventListeners() {
         saveSetting(stateKey, state[stateKey]);
     });
     startMasterMeter();
-    relocateMasterVolume();
 
     // Custom Modal — only close on genuine click, not drag-end on overlay
     let modalMouseDownPos = null;
@@ -89,14 +77,7 @@ export function setupEventListeners() {
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
-    dom.masterVolumeSlider?.addEventListener('input', handleMasterVolumeChange);
-    dom.masterVolumeSlider?.addEventListener('change', () => saveSetting('masterVolume', state.masterVolume));
-    dom.masterVolumeSlider?.addEventListener('dblclick', () => {
-        dom.masterVolumeSlider.value = 1;
-        handleMasterVolumeChange();
-        saveSetting('masterVolume', state.masterVolume);
-    });
-    
+
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
     dom.modalCloseBtn?.addEventListener('click', closeSceneSettingsModal);
@@ -149,7 +130,6 @@ export function setupEventListeners() {
             resizeFrameId = null;
             setupCanvasResize();
             triggerWaveformUpdate();
-            relocateMasterVolume();
         });
     });
 
@@ -200,17 +180,6 @@ function handleModalOk() {
 function handleModalCancel() {
     if (state.confirmResolve) state.confirmResolve(false);
     hideModal();
-}
-
-// --- Header & Main Control Handlers ---
-function handleMasterVolumeChange() {
-    updateState({ masterVolume: parseFloat(dom.masterVolumeSlider.value) });
-    if (dom.masterVolumeValue) {
-        dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
-    }
-    if (state.masterGainNode) {
-        state.masterGainNode.gain.setTargetAtTime(state.masterVolume, state.audioContext.currentTime, 0.01);
-    }
 }
 
 // --- App Settings Handlers ---

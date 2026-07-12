@@ -207,30 +207,25 @@
       flex-shrink: 0;
     }
 
-    .master-volume-control {
+    .header-volume-control {
       display: flex;
       align-items: center;
-      gap: 8px;
-      color: var(--secondary-color);
+      min-width: 52px;
     }
 
-    .master-volume-control i {
-      font-size: 1.1em;
+    .header-volume-knob {
+      gap: 1px;
     }
 
-    .master-volume-control input[type="range"] {
-      width: 140px;
-      cursor: pointer;
-      accent-color: var(--primary-color);
+    .header-volume-knob .knob {
+      width: 30px;
+      height: 30px;
     }
 
-    .master-volume-value {
-      font-size: 0.8em;
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-      min-width: 3em;
-      text-align: right;
-      color: var(--text-color);
+    .header-volume-knob .knob-value,
+    .header-volume-knob .knob-name {
+      font-size: 0.58rem;
+      line-height: 1;
     }
 
     .header-limiter-control {
@@ -254,18 +249,9 @@
       line-height: 1;
     }
 
-    /* When volume control is inside master-effect-bar */
-    #master-effect-bar .master-volume-control {
-      margin-left: auto;
-      padding-left: 16px;
-      border-left: 1px solid var(--border-color);
-      flex: 1;
-      max-width: 400px;
-    }
-
-    #master-effect-bar .master-volume-control input[type="range"] {
-      width: 100%;
-      flex: 1;
+    /* When volume control is inside master-effect-bar (legacy, now always in header) */
+    #master-effect-bar .header-volume-control {
+      display: none;
     }
 
     .performance-mode-selector {
@@ -516,6 +502,40 @@
       border-color: var(--primary-color);
     }
 
+    /* 本番(Show Mode)ボタン — 他のheaderボタンと統一したborderスタイル */
+    #show-mode-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--secondary-color);
+      font-size: 0.9em;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: color var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed), box-shadow var(--transition-speed);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    #show-mode-btn:hover {
+      background-color: var(--control-hover-bg);
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+    }
+
+    #show-mode-btn:active {
+      transform: scale(0.98);
+    }
+
+    body.show-mode #show-mode-btn {
+      background-color: var(--primary-color);
+      color: white;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 30%, transparent);
+    }
+
     /* Scene Settings Modal */
     .modal-overlay {
       position: fixed;
@@ -695,6 +715,92 @@
       flex-shrink: 0;
     }
 
+    /* --- Modal Knob Layout --- */
+    /* 基本設定のknobを横並び(フェード/PAN/速度など) */
+    .effect-knob-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding: 10px 6px;
+      background: var(--control-bg);
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+
+    /* knobのスロット(最低幅を保証して中央寄せ) */
+    .effect-knob-slot {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 64px;
+      flex: 1 1 64px;
+    }
+
+    /* エフェクト群のknobクラスタ(fieldset内で横並び) */
+    .effect-knob-cluster {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 6px 2px 2px;
+      align-items: flex-end;
+    }
+
+    .effect-master-row .effect-knob-cluster {
+      padding: 0;
+      margin-left: auto;
+    }
+
+    /* Normalize行: knob + ボタン + 結果表示 */
+    .effect-action-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      padding: 8px 6px;
+      background: var(--control-bg);
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+
+    .effect-action-row .effect-knob-slot {
+      flex: 0 0 auto;
+    }
+
+    .effect-action-row .effect-action-btn {
+      flex: 0 0 auto;
+    }
+
+    .effect-action-row #normalize-result {
+      flex: 1 1 200px;
+      min-width: 180px;
+      text-align: left;
+      font-size: 0.75em;
+    }
+
+    /* モーダル内 knob — ヘッダーより大きめで操作しやすく */
+    .modal-knob {
+      min-width: 60px;
+    }
+
+    .modal-knob .knob {
+      width: 40px;
+      height: 40px;
+    }
+
+    .modal-knob .knob-indicator {
+      height: 13px;
+    }
+
+    .modal-knob .knob-value {
+      font-size: 0.72em;
+    }
+
+    .modal-knob .knob-name {
+      font-size: 0.62em;
+    }
+
     .effect-text-input {
       width: 100%;
       padding: 4px 8px;
@@ -715,6 +821,63 @@
       color: var(--text-color);
       font-size: 0.85em;
       cursor: pointer;
+    }
+
+    /* --- イージングカーブ選択(フェードイン/アウト) --- */
+    .easing-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .easing-pair {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .easing-pair .effect-select {
+      grid-column: auto;
+      width: 100%;
+      padding: 5px 8px;
+    }
+
+    /* --- LUFSノーマライズボタン --- */
+    .effect-action-btn {
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 7px 14px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.8em;
+      font-weight: 500;
+      transition: background-color var(--transition-speed), transform 0.1s, opacity var(--transition-speed);
+      white-space: nowrap;
+    }
+
+    .effect-action-btn:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .effect-action-btn:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    .effect-action-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    /* --- 親エフェクトトグルがoffの時の無効化表示 --- */
+    /* 親トグル(.effect-toggle)自体はクリック可能なまま、内部だけを無効化 */
+    .effect-section.is-inactive .effect-master-row .effect-knob-cluster,
+    .effect-section.is-inactive .effect-group {
+      opacity: 0.4;
+      pointer-events: none;
+      filter: grayscale(0.5);
+      transition: opacity var(--transition-speed), filter var(--transition-speed);
     }
 
     .effect-color-input {
@@ -1693,10 +1856,6 @@
         gap: 10px;
       }
 
-      .master-volume-control input[type="range"] {
-        width: 80px;
-      }
-
       button#add-sound-btn {
         padding: 8px 15px;
         font-size: 0.9em;
@@ -1714,10 +1873,6 @@
 
       #level-meter-area {
         padding: 8px 15px;
-      }
-
-      .master-volume-control {
-        display: flex;
       }
     }
 

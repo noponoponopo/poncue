@@ -47,20 +47,12 @@
         <button id="show-mode-btn" title="本番モード切替" aria-label="本番モードの切替">
           <i class="fas fa-expand"></i> <span>本番</span>
         </button>
-        <div class="master-volume-control" id="master-volume-control">
-          <i class="fas fa-volume-down"></i>
-          <input
-            type="range"
-            id="master-volume"
-            min="0"
-            max="2"
-            step="0.01"
-            value="1"
-            aria-label="マスター音量"
-          />
-          <i class="fas fa-volume-up"></i>
-          <span id="master-volume-value" class="master-volume-value">100%</span>
-        </div>
+        <div
+          id="master-volume-control"
+          class="header-volume-control"
+          aria-label="マスター音量"
+          title="マスター音量 (ダブルクリックで100%)"
+        ></div>
         <div id="master-limiter-control" class="header-limiter-control" aria-label="マスターリミッター"></div>
         <button id="scene-settings-btn" title="シーン設定">
           <i class="fas fa-cog"></i>

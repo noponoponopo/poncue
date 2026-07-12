@@ -164,50 +164,32 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                     <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
                     <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
                 </div>
-                <div class="effect-param-row">
-                    <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
-                    <span class="effect-param-value"><span id="fade-in-duration-value">${fadeInDuration.toFixed(2)}</span>s</span>
-                    <input type="range" id="fade-in-duration-input" min="0" max="5" step="0.01" value="${fadeInDuration}" class="modal-input effect-slider">
+                <div class="effect-knob-row">
+                    <div class="effect-knob-slot" data-knob="fade-in"></div>
+                    <div class="effect-knob-slot" data-knob="fade-out"></div>
+                    <div class="effect-knob-slot" data-knob="pan"></div>
+                    <div class="effect-knob-slot" data-knob="speed"></div>
                 </div>
-                <div class="effect-param-row">
-                    <label for="fade-in-easing-input" class="effect-param-label">イン カーブ</label>
-                    <select id="fade-in-easing-input" class="modal-input effect-select">${easingOptions(fadeInEasing)}</select>
-                </div>
-                <div class="effect-param-row">
-                    <label for="fade-out-duration-input" class="effect-param-label">フェードアウト</label>
-                    <span class="effect-param-value"><span id="fade-out-duration-value">${fadeOutDuration.toFixed(2)}</span>s</span>
-                    <input type="range" id="fade-out-duration-input" min="0" max="5" step="0.01" value="${fadeOutDuration}" class="modal-input effect-slider">
-                </div>
-                <div class="effect-param-row">
-                    <label for="fade-out-easing-input" class="effect-param-label">アウト カーブ</label>
-                    <select id="fade-out-easing-input" class="modal-input effect-select">${easingOptions(fadeOutEasing)}</select>
-                </div>
-                <div class="effect-param-row">
-                    <label for="pan-input" class="effect-param-label">Pan</label>
-                    <span class="effect-param-value"><span id="pan-value">${formatPanValue(initialPan)}</span></span>
-                    <div class="pan-slider-wrap">
-                        <span class="pan-marker">L</span>
-                        <input type="range" id="pan-input" min="-1" max="1" step="0.01" value="${initialPan}" class="modal-input effect-slider">
-                        <span class="pan-marker">R</span>
+                <div class="easing-row">
+                    <div class="easing-pair">
+                        <label for="fade-in-easing-input" class="effect-param-label">イン カーブ</label>
+                        <select id="fade-in-easing-input" class="modal-input effect-select">${easingOptions(fadeInEasing)}</select>
+                    </div>
+                    <div class="easing-pair">
+                        <label for="fade-out-easing-input" class="effect-param-label">アウト カーブ</label>
+                        <select id="fade-out-easing-input" class="modal-input effect-select">${easingOptions(fadeOutEasing)}</select>
                     </div>
                 </div>
                 <div class="effect-param-row">
                     <label for="reverse-input" class="effect-param-label">逆再生</label>
                     <input type="checkbox" id="reverse-input" ${reverse ? 'checked' : ''}>
                 </div>
-                <div class="effect-param-row">
-                    <label for="playback-speed-input" class="effect-param-label">速度</label>
-                    <span class="effect-param-value"><span id="playback-speed-value">${initialSpeed.toFixed(2)}</span>x</span>
-                    <input type="range" id="playback-speed-input" min="0.5" max="2" step="0.05" value="${initialSpeed}" class="modal-input effect-slider">
-                </div>
                 <div class="effect-param-row effect-checkbox-row">
                     <span class="effect-param-label">ピッチ</span>
                     <label><input type="checkbox" id="preserve-pitch-input" ${sound.preservePitch ? 'checked' : ''}> 速度変更時も保持</label>
                 </div>
-                <div class="effect-param-row effect-action-row">
-                    <label for="normalize-target-input" class="effect-param-label">目標ラウドネス</label>
-                    <span class="effect-param-value"><span id="normalize-target-value">-18</span> LUFS</span>
-                    <input type="range" id="normalize-target-input" min="-24" max="-9" step="1" value="-18" class="modal-input effect-slider">
+                <div class="effect-action-row">
+                    <div class="effect-knob-slot" data-knob="normalize-target"></div>
                     <button type="button" id="normalize-btn" class="modal-input effect-action-btn">LUFSノーマライズ</button>
                     <span id="normalize-result" class="effect-param-value" role="status"></span>
                 </div>
@@ -216,140 +198,76 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             <div class="effect-section">
                 <div class="effect-master-row">
                     <label class="effect-toggle"><input type="checkbox" id="effect-enabled-input" ${effectSettings.enabled ? 'checked' : ''}> エフェクト</label>
-                    <div class="effect-param-row inline">
-                        <span class="effect-param-label">Dry/Wet</span>
-                        <span class="effect-param-value"><span id="effect-wet-value">${Math.round(effectSettings.wet * 100)}</span>%</span>
-                        <input type="range" id="effect-wet-input" min="0" max="1" step="0.01" value="${effectSettings.wet}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="wet"></div>
                     </div>
                 </div>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="eq-enabled-input" ${effectSettings.eq.enabled ? 'checked' : ''}> 3バンドEQ</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Low</span>
-                        <span class="effect-param-value"><span id="eq-low-value">${effectSettings.eq.low > 0 ? '+' : ''}${effectSettings.eq.low}</span>dB</span>
-                        <input type="range" id="eq-low-input" min="-12" max="12" step="0.5" value="${effectSettings.eq.low}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Mid</span>
-                        <span class="effect-param-value"><span id="eq-mid-value">${effectSettings.eq.mid > 0 ? '+' : ''}${effectSettings.eq.mid}</span>dB</span>
-                        <input type="range" id="eq-mid-input" min="-12" max="12" step="0.5" value="${effectSettings.eq.mid}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">High</span>
-                        <span class="effect-param-value"><span id="eq-high-value">${effectSettings.eq.high > 0 ? '+' : ''}${effectSettings.eq.high}</span>dB</span>
-                        <input type="range" id="eq-high-input" min="-12" max="12" step="0.5" value="${effectSettings.eq.high}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="eq-low"></div>
+                        <div class="effect-knob-slot" data-knob="eq-mid"></div>
+                        <div class="effect-knob-slot" data-knob="eq-high"></div>
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="delay-enabled-input" ${effectSettings.delay.enabled ? 'checked' : ''}> ディレイ</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Time</span>
-                        <span class="effect-param-value"><span id="delay-time-value">${effectSettings.delay.time.toFixed(2)}</span>s</span>
-                        <input type="range" id="delay-time-input" min="0" max="2" step="0.01" value="${effectSettings.delay.time}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Feedback</span>
-                        <span class="effect-param-value"><span id="delay-feedback-value">${Math.round(effectSettings.delay.feedback * 100)}</span>%</span>
-                        <input type="range" id="delay-feedback-input" min="0" max="0.85" step="0.01" value="${effectSettings.delay.feedback}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Level</span>
-                        <span class="effect-param-value"><span id="delay-level-value">${Math.round(effectSettings.delay.level * 100)}</span>%</span>
-                        <input type="range" id="delay-level-input" min="0" max="1" step="0.01" value="${effectSettings.delay.level}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="delay-time"></div>
+                        <div class="effect-knob-slot" data-knob="delay-feedback"></div>
+                        <div class="effect-knob-slot" data-knob="delay-level"></div>
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="compressor-enabled-input" ${effectSettings.compressor.enabled ? 'checked' : ''}> コンプレッサー</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Threshold</span>
-                        <span class="effect-param-value"><span id="compressor-threshold-value">${effectSettings.compressor.threshold}</span>dB</span>
-                        <input type="range" id="compressor-threshold-input" min="-60" max="0" step="1" value="${effectSettings.compressor.threshold}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Ratio</span>
-                        <span class="effect-param-value"><span id="compressor-ratio-value">${effectSettings.compressor.ratio.toFixed(1)}</span>:1</span>
-                        <input type="range" id="compressor-ratio-input" min="1" max="20" step="0.1" value="${effectSettings.compressor.ratio}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="comp-threshold"></div>
+                        <div class="effect-knob-slot" data-knob="comp-ratio"></div>
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="distortion-enabled-input" ${effectSettings.distortion.enabled ? 'checked' : ''}> ディストーション</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Amount</span>
-                        <span class="effect-param-value"><span id="distortion-amount-value">${Math.round(effectSettings.distortion.amount * 100)}</span>%</span>
-                        <input type="range" id="distortion-amount-input" min="0" max="1" step="0.01" value="${effectSettings.distortion.amount}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="dist-amount"></div>
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="reverb-enabled-input" ${effectSettings.reverb.enabled ? 'checked' : ''}> リバーブ</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Decay</span>
-                        <span class="effect-param-value"><span id="reverb-decay-value">${effectSettings.reverb.decay.toFixed(1)}</span>s</span>
-                        <input type="range" id="reverb-decay-input" min="0.1" max="10" step="0.1" value="${effectSettings.reverb.decay}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">PreDelay</span>
-                        <span class="effect-param-value"><span id="reverb-preDelay-value">${(effectSettings.reverb.preDelay * 1000).toFixed(0)}</span>ms</span>
-                        <input type="range" id="reverb-preDelay-input" min="0" max="0.1" step="0.001" value="${effectSettings.reverb.preDelay}" class="modal-input effect-slider">
-                    </div>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Wet</span>
-                        <span class="effect-param-value"><span id="reverb-wet-value">${Math.round(effectSettings.reverb.wet * 100)}</span>%</span>
-                        <input type="range" id="reverb-wet-input" min="0" max="1" step="0.01" value="${effectSettings.reverb.wet}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="reverb-decay"></div>
+                        <div class="effect-knob-slot" data-knob="reverb-preDelay"></div>
+                        <div class="effect-knob-slot" data-knob="reverb-wet"></div>
                     </div>
                 </fieldset>
                 <fieldset class="effect-group">
                     <legend><label><input type="checkbox" id="limiter-enabled-input" ${effectSettings.limiter.enabled ? 'checked' : ''}> リミッター</label></legend>
-                    <div class="effect-param-row">
-                        <span class="effect-param-label">Ceiling</span>
-                        <span class="effect-param-value"><span id="limiter-threshold-value">${effectSettings.limiter.threshold}</span>dBFS</span>
-                        <input type="range" id="limiter-threshold-input" min="-12" max="0" step="0.5" value="${effectSettings.limiter.threshold}" class="modal-input effect-slider">
+                    <div class="effect-knob-cluster">
+                        <div class="effect-knob-slot" data-knob="limiter-threshold"></div>
                     </div>
                 </fieldset>
             </div>
         `;
 
+        // --- DOM 参照(トグル系・テキスト系) ---
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
         const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
         const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
-        const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
-        const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
         const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
-        const fadeOutDurationInput = dom.customModalMessage.querySelector('#fade-out-duration-input');
-        const fadeOutDurationValueSpan = dom.customModalMessage.querySelector('#fade-out-duration-value');
         const fadeOutEasingInput = dom.customModalMessage.querySelector('#fade-out-easing-input');
-        const panInput = dom.customModalMessage.querySelector('#pan-input');
-        const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
         const reverseInput = dom.customModalMessage.querySelector('#reverse-input');
-        const playbackSpeedInput = dom.customModalMessage.querySelector('#playback-speed-input');
-        const playbackSpeedValueSpan = dom.customModalMessage.querySelector('#playback-speed-value');
         const preservePitchInput = dom.customModalMessage.querySelector('#preserve-pitch-input');
-        const normalizeTargetInput = dom.customModalMessage.querySelector('#normalize-target-input');
-        const normalizeTargetValue = dom.customModalMessage.querySelector('#normalize-target-value');
         const normalizeBtn = dom.customModalMessage.querySelector('#normalize-btn');
         const normalizeResult = dom.customModalMessage.querySelector('#normalize-result');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
-        const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
-        const eqLowInput = dom.customModalMessage.querySelector('#eq-low-input');
-        const eqMidInput = dom.customModalMessage.querySelector('#eq-mid-input');
-        const eqHighInput = dom.customModalMessage.querySelector('#eq-high-input');
         const delayEnabledInput = dom.customModalMessage.querySelector('#delay-enabled-input');
-        const delayTimeInput = dom.customModalMessage.querySelector('#delay-time-input');
-        const delayFeedbackInput = dom.customModalMessage.querySelector('#delay-feedback-input');
-        const delayLevelInput = dom.customModalMessage.querySelector('#delay-level-input');
         const compressorEnabledInput = dom.customModalMessage.querySelector('#compressor-enabled-input');
-        const compressorThresholdInput = dom.customModalMessage.querySelector('#compressor-threshold-input');
-        const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
         const distortionEnabledInput = dom.customModalMessage.querySelector('#distortion-enabled-input');
-        const distortionAmountInput = dom.customModalMessage.querySelector('#distortion-amount-input');
         const reverbEnabledInput = dom.customModalMessage.querySelector('#reverb-enabled-input');
-        const reverbDecayInput = dom.customModalMessage.querySelector('#reverb-decay-input');
-        const reverbPreDelayInput = dom.customModalMessage.querySelector('#reverb-preDelay-input');
-        const reverbWetInput = dom.customModalMessage.querySelector('#reverb-wet-input');
         const limiterEnabledInput = dom.customModalMessage.querySelector('#limiter-enabled-input');
-        const limiterThresholdInput = dom.customModalMessage.querySelector('#limiter-threshold-input');
 
+        // --- ローカル状態 ---
         let newShortcut = currentShortcut;
         let newTriggerMode = triggerMode;
         let newColor = (typeof sound.color === 'string' && sound.color) ? sound.color : null;
@@ -357,32 +275,147 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         let newFadeOutDuration = fadeOutDuration;
         let newFadeInEasing = fadeInEasing;
         let newFadeOutEasing = fadeOutEasing;
-        let newPan = initialPan;
         let newReverse = reverse;
-        let newPlaybackSpeed = initialSpeed;
-        let newEffects = effectSettings;
 
+        // --- Knob 生成ヘルパー ---
+        const slot = key => dom.customModalMessage.querySelector(`[data-knob="${key}"]`);
+        const mount = (key, knob) => { slot(key)?.appendChild(knob.element); };
+
+        // 基本設定 knobs
+        const fadeInKnob = createKnob({
+            min: 0, max: 5, step: 0.01, default: 0, unit: 's', label: 'フェードイン',
+            value: fadeInDuration, dragPixels: 600,
+            onInput: v => { newFadeInDuration = v; }
+        });
+        mount('fade-in', fadeInKnob);
+
+        const fadeOutKnob = createKnob({
+            min: 0, max: 5, step: 0.01, default: 0, unit: 's', label: 'フェードアウト',
+            value: fadeOutDuration, dragPixels: 600,
+            onInput: v => { newFadeOutDuration = v; }
+        });
+        mount('fade-out', fadeOutKnob);
+
+        const panKnob = createKnob({
+            min: -1, max: 1, step: 0.01, default: 0, unit: 'pan', label: 'PAN',
+            value: initialPan, dragPixels: 300
+        });
+        mount('pan', panKnob);
+
+        const speedKnob = createKnob({
+            min: 0.5, max: 2, step: 0.05, default: 1, unit: 'x', label: '速度',
+            value: initialSpeed, dragPixels: 400
+        });
+        mount('speed', speedKnob);
+
+        const normalizeTargetKnob = createKnob({
+            min: -24, max: -9, step: 1, default: -18, unit: 'LUFS', label: '目標ラウドネス',
+            value: -18, dragPixels: 200
+        });
+        mount('normalize-target', normalizeTargetKnob);
+
+        // エフェクト knobs
+        const wetKnob = createKnob({
+            min: 0, max: 1, step: 0.01, default: 1, unit: '%', label: 'DRY/WET',
+            value: effectSettings.wet
+        });
+        mount('wet', wetKnob);
+
+        const eqLowKnob = createKnob({
+            min: -12, max: 12, step: 0.5, default: 0, unit: 'dB', label: 'LOW',
+            value: effectSettings.eq.low
+        });
+        mount('eq-low', eqLowKnob);
+
+        const eqMidKnob = createKnob({
+            min: -12, max: 12, step: 0.5, default: 0, unit: 'dB', label: 'MID',
+            value: effectSettings.eq.mid
+        });
+        mount('eq-mid', eqMidKnob);
+
+        const eqHighKnob = createKnob({
+            min: -12, max: 12, step: 0.5, default: 0, unit: 'dB', label: 'HIGH',
+            value: effectSettings.eq.high
+        });
+        mount('eq-high', eqHighKnob);
+
+        const delayTimeKnob = createKnob({
+            min: 0, max: 2, step: 0.01, default: 0.18, unit: 's', label: 'TIME',
+            value: effectSettings.delay.time, dragPixels: 600
+        });
+        mount('delay-time', delayTimeKnob);
+
+        const delayFeedbackKnob = createKnob({
+            min: 0, max: 0.85, step: 0.01, default: 0, unit: '%', label: 'FBK',
+            value: effectSettings.delay.feedback
+        });
+        mount('delay-feedback', delayFeedbackKnob);
+
+        const delayLevelKnob = createKnob({
+            min: 0, max: 1, step: 0.01, default: 0, unit: '%', label: 'LEVEL',
+            value: effectSettings.delay.level
+        });
+        mount('delay-level', delayLevelKnob);
+
+        const compThresholdKnob = createKnob({
+            min: -60, max: 0, step: 1, default: 0, unit: 'dB', label: 'THRESH',
+            value: effectSettings.compressor.threshold
+        });
+        mount('comp-threshold', compThresholdKnob);
+
+        const compRatioKnob = createKnob({
+            min: 1, max: 20, step: 0.5, default: 1, unit: ':1', label: 'RATIO',
+            value: effectSettings.compressor.ratio
+        });
+        mount('comp-ratio', compRatioKnob);
+
+        const distAmountKnob = createKnob({
+            min: 0, max: 1, step: 0.01, default: 0, unit: '%', label: 'AMOUNT',
+            value: effectSettings.distortion.amount
+        });
+        mount('dist-amount', distAmountKnob);
+
+        const reverbDecayKnob = createKnob({
+            min: 0.1, max: 10, step: 0.1, default: 2.0, unit: 's', label: 'DECAY',
+            value: effectSettings.reverb.decay, dragPixels: 600
+        });
+        mount('reverb-decay', reverbDecayKnob);
+
+        const reverbPreDelayKnob = createKnob({
+            min: 0, max: 0.1, step: 0.001, default: 0.01, unit: 'ms', label: 'PRE',
+            value: effectSettings.reverb.preDelay, dragPixels: 200
+        });
+        mount('reverb-preDelay', reverbPreDelayKnob);
+
+        const reverbWetKnob = createKnob({
+            min: 0, max: 1, step: 0.01, default: 0, unit: '%', label: 'WET',
+            value: effectSettings.reverb.wet
+        });
+        mount('reverb-wet', reverbWetKnob);
+
+        const limiterThresholdKnob = createKnob({
+            min: -12, max: 0, step: 0.5, default: -1, unit: 'dBFS', label: 'CEILING',
+            value: effectSettings.limiter.threshold
+        });
+        mount('limiter-threshold', limiterThresholdKnob);
+
+        // --- ハンドラ(テキスト・トグル系) ---
         const handleKeydown = (e) => {
-            e.preventDefault(); // Prevent default browser actions for shortcuts
-
+            e.preventDefault();
             if (e.key === 'Backspace' || e.key === 'Delete') {
                 newShortcut = '';
                 shortcutInput.value = '';
                 return;
             }
-
             const modifiers = [];
             if (e.ctrlKey) modifiers.push('Control');
             if (e.altKey) modifiers.push('Alt');
             if (e.shiftKey) modifiers.push('Shift');
-            if (e.metaKey) modifiers.push('Meta'); // Command on Mac, Windows key on Windows
-
+            if (e.metaKey) modifiers.push('Meta');
             let key = e.key;
-            if (key === ' ') key = 'Space'; // Display Space key nicely
-            if (modifiers.includes(key)) key = ''; // Don't duplicate modifier in key display
-
-            const displayKey = key.length === 1 ? key.toUpperCase() : key; // Single letters uppercase
-
+            if (key === ' ') key = 'Space';
+            if (modifiers.includes(key)) key = '';
+            const displayKey = key.length === 1 ? key.toUpperCase() : key;
             newShortcut = [...modifiers, displayKey].filter(Boolean).join('+');
             shortcutInput.value = newShortcut;
         };
@@ -392,41 +425,16 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             newColor = null;
             padColorInput.value = '#808080';
         };
-
-        const handlePlaybackSpeedInput = (e) => {
-            newPlaybackSpeed = parseFloat(e.target.value);
-            playbackSpeedValueSpan.textContent = newPlaybackSpeed.toFixed(2);
-        };
-
-        const handleFadeInDurationInput = (e) => {
-            newFadeInDuration = parseFloat(e.target.value);
-            fadeInDurationValueSpan.textContent = newFadeInDuration.toFixed(2);
-        };
-        const handleFadeOutDurationInput = (e) => {
-            newFadeOutDuration = parseFloat(e.target.value);
-            fadeOutDurationValueSpan.textContent = newFadeOutDuration.toFixed(2);
-        };
         const handleFadeInEasingInput = (e) => { newFadeInEasing = e.target.value; };
         const handleFadeOutEasingInput = (e) => { newFadeOutEasing = e.target.value; };
-
-        const handlePanInput = (e) => {
-            newPan = parseFloat(e.target.value);
-            panValueSpan.textContent = formatPanValue(newPan);
-        };
-
-        const handlePanDoubleClick = () => {
-            newPan = 0;
-            panInput.value = 0;
-            panValueSpan.textContent = formatPanValue(0);
-        };
-
         const handleReverseInput = (e) => { newReverse = e.target.checked; };
+        const handleTriggerModeInput = (e) => { newTriggerMode = e.target.value; };
 
         const handleNormalize = async () => {
             normalizeBtn.disabled = true;
             normalizeResult.textContent = '解析中...';
             try {
-                const result = await callbacks.onNormalize?.(parseFloat(normalizeTargetInput.value));
+                const result = await callbacks.onNormalize?.(normalizeTargetKnob.getValue());
                 normalizeResult.textContent = result
                     ? `検出 ${result.measuredLufs.toFixed(1)} LUFS / 適用 ${result.achievedLufs.toFixed(1)} LUFS${result.limitedByPeak ? '（ピーク制約）' : ''} / 音量 ${Math.round(result.recommendedVolume * 100)}%`
                     : 'ノーマライズできませんでした';
@@ -435,127 +443,72 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             }
         };
 
-        const handleTriggerModeInput = (e) => { newTriggerMode = e.target.value; };
-
-        const readEffects = () => normalizeEffectSettings({
+        // --- 保存時にknob値から最終エフェクト設定を構築 ---
+        const buildEffects = () => normalizeEffectSettings({
             enabled: effectEnabledInput.checked,
-            wet: parseFloat(effectWetInput.value),
-            eq: {
-                enabled: eqEnabledInput.checked,
-                low: parseFloat(eqLowInput.value),
-                mid: parseFloat(eqMidInput.value),
-                high: parseFloat(eqHighInput.value)
-            },
-            delay: {
-                enabled: delayEnabledInput.checked,
-                time: parseFloat(delayTimeInput.value),
-                feedback: parseFloat(delayFeedbackInput.value),
-                level: parseFloat(delayLevelInput.value)
-            },
-            compressor: {
-                enabled: compressorEnabledInput.checked,
-                threshold: parseFloat(compressorThresholdInput.value),
-                ratio: parseFloat(compressorRatioInput.value)
-            },
-            distortion: {
-                enabled: distortionEnabledInput.checked,
-                amount: parseFloat(distortionAmountInput.value)
-            },
-            reverb: {
-                enabled: reverbEnabledInput.checked,
-                decay: parseFloat(reverbDecayInput.value),
-                preDelay: parseFloat(reverbPreDelayInput.value),
-                wet: parseFloat(reverbWetInput.value)
-            },
-            limiter: {
-                enabled: limiterEnabledInput.checked,
-                threshold: parseFloat(limiterThresholdInput.value)
-            }
+            wet: wetKnob.getValue(),
+            eq: { enabled: eqEnabledInput.checked, low: eqLowKnob.getValue(), mid: eqMidKnob.getValue(), high: eqHighKnob.getValue() },
+            delay: { enabled: delayEnabledInput.checked, time: delayTimeKnob.getValue(), feedback: delayFeedbackKnob.getValue(), level: delayLevelKnob.getValue() },
+            compressor: { enabled: compressorEnabledInput.checked, threshold: compThresholdKnob.getValue(), ratio: compRatioKnob.getValue() },
+            distortion: { enabled: distortionEnabledInput.checked, amount: distAmountKnob.getValue() },
+            reverb: { enabled: reverbEnabledInput.checked, decay: reverbDecayKnob.getValue(), preDelay: reverbPreDelayKnob.getValue(), wet: reverbWetKnob.getValue() },
+            limiter: { enabled: limiterEnabledInput.checked, threshold: limiterThresholdKnob.getValue() }
         });
 
-        const handleEffectInput = () => {
-            newEffects = readEffects();
-            dom.customModalMessage.querySelector('#effect-wet-value').textContent = Math.round(newEffects.wet * 100);
-            dom.customModalMessage.querySelector('#eq-low-value').textContent = (newEffects.eq.low > 0 ? '+' : '') + newEffects.eq.low;
-            dom.customModalMessage.querySelector('#eq-mid-value').textContent = (newEffects.eq.mid > 0 ? '+' : '') + newEffects.eq.mid;
-            dom.customModalMessage.querySelector('#eq-high-value').textContent = (newEffects.eq.high > 0 ? '+' : '') + newEffects.eq.high;
-            dom.customModalMessage.querySelector('#delay-time-value').textContent = newEffects.delay.time.toFixed(2);
-            dom.customModalMessage.querySelector('#delay-feedback-value').textContent = Math.round(newEffects.delay.feedback * 100);
-            dom.customModalMessage.querySelector('#delay-level-value').textContent = Math.round(newEffects.delay.level * 100);
-            dom.customModalMessage.querySelector('#compressor-threshold-value').textContent = newEffects.compressor.threshold;
-            dom.customModalMessage.querySelector('#compressor-ratio-value').textContent = newEffects.compressor.ratio.toFixed(1);
-            dom.customModalMessage.querySelector('#distortion-amount-value').textContent = Math.round(newEffects.distortion.amount * 100);
-            dom.customModalMessage.querySelector('#reverb-decay-value').textContent = newEffects.reverb.decay.toFixed(1);
-            dom.customModalMessage.querySelector('#reverb-preDelay-value').textContent = (newEffects.reverb.preDelay * 1000).toFixed(0);
-            dom.customModalMessage.querySelector('#reverb-wet-value').textContent = Math.round(newEffects.reverb.wet * 100);
-            dom.customModalMessage.querySelector('#limiter-threshold-value').textContent = newEffects.limiter.threshold;
+        // --- 親エフェクトトグル連動 ---
+        // 親(effect-enabled)がoffの時、内側のDRY/WET knobと各エフェクトグループを無効化
+        // 音響ロジックは 09_effects.js 側でもガードしているが、UIでも視覚的に伝える
+        const effectSection = dom.customModalMessage.querySelectorAll('.effect-section')[1];
+        const updateEffectSectionState = () => {
+            effectSection?.classList.toggle('is-inactive', !effectEnabledInput.checked);
         };
+        updateEffectSectionState();
 
-        const handleNormalizeTargetInput = () => {
-            normalizeTargetValue.textContent = normalizeTargetInput.value;
-        };
-
+        // --- イベント登録 ---
         shortcutInput.addEventListener('keydown', handleKeydown);
         triggerModeInput.addEventListener('change', handleTriggerModeInput);
         padColorInput.addEventListener('input', handlePadColorInput);
         padColorClearBtn.addEventListener('click', handlePadColorClear);
-        fadeInDurationInput.addEventListener('input', handleFadeInDurationInput);
-        fadeOutDurationInput.addEventListener('input', handleFadeOutDurationInput);
         fadeInEasingInput.addEventListener('change', handleFadeInEasingInput);
         fadeOutEasingInput.addEventListener('change', handleFadeOutEasingInput);
-        panInput.addEventListener('input', handlePanInput);
-        panInput.addEventListener('dblclick', handlePanDoubleClick);
         reverseInput.addEventListener('change', handleReverseInput);
-        playbackSpeedInput.addEventListener('input', handlePlaybackSpeedInput);
         normalizeBtn.addEventListener('click', handleNormalize);
-        normalizeTargetInput.addEventListener('input', handleNormalizeTargetInput);
-        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
-            .forEach(input => input.addEventListener('input', handleEffectInput));
+        effectEnabledInput.addEventListener('change', updateEffectSectionState);
 
         dom.customModalOkBtn.textContent = '保存';
         dom.customModalCancelBtn.textContent = 'キャンセル';
         dom.customModalCancelBtn.style.display = 'inline-block';
 
-        dom.customModalOkBtn.onclick = () => {
+        const cleanup = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             triggerModeInput.removeEventListener('change', handleTriggerModeInput);
             padColorInput.removeEventListener('input', handlePadColorInput);
             padColorClearBtn.removeEventListener('click', handlePadColorClear);
-            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
-            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
             fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
             fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
-            panInput.removeEventListener('input', handlePanInput);
-            panInput.removeEventListener('dblclick', handlePanDoubleClick);
             reverseInput.removeEventListener('change', handleReverseInput);
-            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
             normalizeBtn.removeEventListener('click', handleNormalize);
-            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
-                .forEach(input => input.removeEventListener('input', handleEffectInput));
+            effectEnabledInput.removeEventListener('change', updateEffectSectionState);
+        };
+
+        dom.customModalOkBtn.onclick = () => {
+            cleanup();
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newEffects: readEffects() });
+            resolve({
+                newShortcut, newTriggerMode, newColor,
+                newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing,
+                newPan: panKnob.getValue(),
+                newReverse,
+                newPlaybackSpeed: speedKnob.getValue(),
+                preservePitch: preservePitchInput.checked,
+                newEffects: buildEffects()
+            });
         };
 
         dom.customModalCancelBtn.onclick = () => {
-            shortcutInput.removeEventListener('keydown', handleKeydown);
-            triggerModeInput.removeEventListener('change', handleTriggerModeInput);
-            padColorInput.removeEventListener('input', handlePadColorInput);
-            padColorClearBtn.removeEventListener('click', handlePadColorClear);
-            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
-            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
-            fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
-            fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
-            panInput.removeEventListener('input', handlePanInput);
-            panInput.removeEventListener('dblclick', handlePanDoubleClick);
-            reverseInput.removeEventListener('change', handleReverseInput);
-            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
-            normalizeBtn.removeEventListener('click', handleNormalize);
-            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
-                .forEach(input => input.removeEventListener('input', handleEffectInput));
+            cleanup();
             dom.customModalOverlay.classList.remove('active');
-            resolve(null); // User cancelled
+            resolve(null);
         };
 
         dom.customModalOverlay.classList.add('active');
@@ -730,6 +683,67 @@ export function createMasterLimiterKnob(value, onChange) {
     });
 }
 
+// --- Master Volume Knob ---
+// センター(0deg)=100%(1.0)、範囲0〜200%(0〜2.0)
+// 既存の回転ロジック (v-min)/(max-min)*270-135 に min=0,max=2 を入れると
+// v=1のとき 1/2*270-135=0deg になり、ちょうどセンターになる。
+const MASTER_VOLUME_KNOB_MIN = 0;
+const MASTER_VOLUME_KNOB_MAX = 2;
+const MASTER_VOLUME_KNOB_STEP = 0.01;
+
+export function createMasterVolumeKnob(value, onChange) {
+    if (!dom.masterVolumeControl) return;
+    dom.masterVolumeControl.innerHTML = `
+        <div class="knob-group header-volume-knob">
+            <div class="knob"><div class="knob-indicator"></div></div>
+            <span class="knob-value"></span>
+            <span class="knob-name">VOL</span>
+        </div>
+    `;
+    const knob = dom.masterVolumeControl.querySelector('.knob');
+    const valueLabel = dom.masterVolumeControl.querySelector('.knob-value');
+    const render = next => {
+        knob.style.setProperty('--knob-rotation', `${((next - MASTER_VOLUME_KNOB_MIN) / (MASTER_VOLUME_KNOB_MAX - MASTER_VOLUME_KNOB_MIN)) * 270 - 135}deg`);
+        valueLabel.textContent = `${Math.round(next * 100)}%`;
+    };
+    render(value);
+
+    knob.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        const startY = event.clientY;
+        const startValue = state.masterVolume;
+        const handleMove = moveEvent => {
+            const raw = startValue + (startY - moveEvent.clientY) / 200 * (MASTER_VOLUME_KNOB_MAX - MASTER_VOLUME_KNOB_MIN);
+            const next = Math.min(MASTER_VOLUME_KNOB_MAX, Math.max(MASTER_VOLUME_KNOB_MIN, Math.round(raw / MASTER_VOLUME_KNOB_STEP) * MASTER_VOLUME_KNOB_STEP));
+            render(next);
+            onChange(next, false);
+        };
+        const handleUp = () => {
+            window.removeEventListener('pointermove', handleMove);
+            window.removeEventListener('pointerup', handleUp);
+            onChange(state.masterVolume, true);
+        };
+        window.addEventListener('pointermove', handleMove);
+        window.addEventListener('pointerup', handleUp, { once: true });
+    });
+
+    // ダブルクリックで100%(1.0)にリセット — センター位置
+    knob.addEventListener('dblclick', () => {
+        render(1);
+        onChange(1, true);
+    });
+}
+
+// 外部(設定読み込み時など)からknob表示を更新する
+export function updateMasterVolumeKnob(value) {
+    if (!dom.masterVolumeControl) return;
+    const knob = dom.masterVolumeControl.querySelector('.knob');
+    const valueLabel = dom.masterVolumeControl.querySelector('.knob-value');
+    if (!knob || !valueLabel) return;
+    knob.style.setProperty('--knob-rotation', `${((value - MASTER_VOLUME_KNOB_MIN) / (MASTER_VOLUME_KNOB_MAX - MASTER_VOLUME_KNOB_MIN)) * 270 - 135}deg`);
+    valueLabel.textContent = `${Math.round(value * 100)}%`;
+}
+
 export function removeMeterElement(soundId) {
     const meterElement = dom.levelMeterArea?.querySelector(`.meter-pair[data-sound-id="${soundId}"]`);
     if (meterElement) {
@@ -878,6 +892,112 @@ export function createMasterEffectKnobs(allValues, onChange) {
 
         dom.masterEffectBar.appendChild(cluster);
     }
+}
+
+// --- Generic Knob Builder ---
+// モーダル内スライダーやその他のUIで使用する汎用knob生成関数。
+// 仕様:
+//   min, max, step: 値域とステップ
+//   default: ダブルクリック時のリセット値(省略時はmin)
+//   unit: フォーマット種別('dB','%','s','ms',':1','pan','x','LUFS','dBFS' または関数(v)=>string)
+//   label: knob下に表示するラベル(省略可)
+//   dragPixels: 縦ドラッグ感度(省略時は範囲から推測)
+//   value: 初期値
+//   onInput(value): 値変更時に毎フレーム呼ばれる
+// 戻り値: { element, setValue(v), getValue() }
+//   setValue(v, notify): 外部から値を設定(notify=trueでonInputも発火)
+export function createKnob(spec) {
+    const { min, max, step, unit, value: initialValue } = spec;
+    const defaultValue = spec.default ?? min;
+    const dragPixels = spec.dragPixels ?? (unit === '%' ? 400 : Math.max(200, (max - min) * 8));
+
+    const formatter = (v) => {
+        if (typeof unit === 'function') return unit(v);
+        if (unit === 'pan') return formatPanValue(v);
+        if (unit === '%') return `${Math.round(v * 100)}%`;
+        if (unit === ':1') return `${v.toFixed(1)}:1`;
+        if (unit === 'dB') return `${v > 0 ? '+' : ''}${v} dB`;
+        if (unit === 'x') return `${v.toFixed(2)}x`;
+        if (unit === 's') return `${v.toFixed(2)}s`;
+        if (unit === 'ms') return `${Math.round(v * 1000)}ms`;
+        if (unit === 'LUFS') return `${v} LUFS`;
+        if (unit === 'dBFS') return `${v} dBFS`;
+        return `${v.toFixed(2)}${unit ?? ''}`;
+    };
+
+    const rotationFor = (v) => {
+        const range = max - min;
+        if (range === 0) return 0;
+        return ((v - min) / range) * 270 - 135;
+    };
+
+    const knobGroup = document.createElement('div');
+    knobGroup.classList.add('knob-group', 'modal-knob');
+
+    const knob = document.createElement('div');
+    knob.classList.add('knob');
+    const indicator = document.createElement('div');
+    indicator.classList.add('knob-indicator');
+    knob.appendChild(indicator);
+
+    const valLabel = document.createElement('span');
+    valLabel.classList.add('knob-value');
+
+    knobGroup.appendChild(knob);
+    knobGroup.appendChild(valLabel);
+
+    if (spec.label) {
+        const nameLabel = document.createElement('span');
+        nameLabel.classList.add('knob-name');
+        nameLabel.textContent = spec.label;
+        knobGroup.appendChild(nameLabel);
+    }
+
+    let currentValue = initialValue;
+    const onInput = spec.onInput;
+
+    const render = (v) => {
+        knob.style.setProperty('--knob-rotation', `${rotationFor(v)}deg`);
+        valLabel.textContent = formatter(v);
+    };
+    render(initialValue);
+
+    const setValue = (v, notify = false) => {
+        currentValue = v;
+        render(v);
+        if (notify && onInput) onInput(v);
+    };
+
+    knob.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        const startY = e.clientY;
+        const startVal = currentValue;
+        const onMove = (ev) => {
+            const delta = startY - ev.clientY;
+            let raw = startVal + delta / dragPixels * (max - min);
+            raw = Math.min(max, Math.max(min, raw));
+            const stepped = Math.round(raw / step) * step;
+            if (stepped !== currentValue) {
+                setValue(stepped, true);
+            }
+        };
+        const onUp = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+    });
+
+    knob.addEventListener('dblclick', () => {
+        setValue(defaultValue, true);
+    });
+
+    return {
+        element: knobGroup,
+        setValue,
+        getValue: () => currentValue
+    };
 }
 
 // --- General UI Updates ---

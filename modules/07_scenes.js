@@ -4,7 +4,7 @@ import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
-import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
+import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
@@ -337,7 +337,7 @@ export function renderFallbackUI(message) {
 
 export function disableAppControls() {
     const elementsToDisable = [
-        dom.addSoundBtn, dom.sceneSettingsBtn, dom.masterVolumeSlider,
+        dom.addSoundBtn, dom.sceneSettingsBtn, dom.masterVolumeControl,
         dom.modalImportBtn, dom.modalExportBtn, dom.modalAddSceneBtn
     ];
     elementsToDisable.forEach(el => { if(el) el.disabled = true; });
@@ -372,8 +372,7 @@ export async function loadSettings() {
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
         
-        if (dom.masterVolumeSlider) dom.masterVolumeSlider.value = state.masterVolume;
-        if (dom.masterVolumeValue) dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
+        updateMasterVolumeKnob(state.masterVolume);
         if (state.masterGainNode) state.masterGainNode.gain.setValueAtTime(state.masterVolume, state.audioContext.currentTime);
         setMasterLimiterThreshold(state.masterLimiter.threshold);
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
