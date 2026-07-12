@@ -13,6 +13,7 @@ export function initDom() {
         soundboard: 'soundboard',
         addSoundBtn: 'add-sound-btn',
         stopAllBtn: 'stop-all-btn',
+        showModeBtn: 'show-mode-btn',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
         masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正
