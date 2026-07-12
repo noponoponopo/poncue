@@ -63,7 +63,9 @@ export function initAudioContext() {
         masterPanNode.connect(outputLimiterNode.input);
         outputLimiterNode.connect(outputSafetyLimiterNode);
         outputSafetyLimiterNode.output.connect(audioContext.destination);
-        updateState({ masterEqNode, masterCompNode, masterDistortionNode, masterReverbNode, masterDelayNode, masterDelayReturn, masterPanNode, outputSafetyLimiterNode });
+        const recordingDestinationNode = audioContext.createMediaStreamDestination();
+        outputSafetyLimiterNode.output.connect(recordingDestinationNode);
+        updateState({ masterEqNode, masterCompNode, masterDistortionNode, masterReverbNode, masterDelayNode, masterDelayReturn, masterPanNode, outputSafetyLimiterNode, recordingDestinationNode });
 
         setAudioContext(audioContext, masterGainNode, outputLimiterNode, masterInputNode);
 

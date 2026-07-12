@@ -6,13 +6,14 @@ import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
-    selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
+    selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect, addAudioBlobToScene,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
     renderers, // renderers object
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
+import { downloadRecording, getMasterRecordingStatus, isMasterRecordingSupported, startMasterRecording, stopMasterRecording } from './11_recording.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -27,6 +28,8 @@ function debounce(func, delay) {
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
+let recordingTimerId = null;
+let recordingSceneId = null;
 
 // --- Event Listener Setup ---
 export function setupEventListeners() {
@@ -76,7 +79,12 @@ export function setupEventListeners() {
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
+    dom.recordBtn?.addEventListener('click', handleRecordingToggle);
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
+    if (dom.recordBtn && !isMasterRecordingSupported()) {
+        dom.recordBtn.disabled = true;
+        dom.recordBtn.title = 'このブラウザはマスター出力の録音に対応していません';
+    }
 
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
@@ -142,6 +150,77 @@ export function setupEventListeners() {
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 }
+
+function formatRecordingTime(milliseconds) {
+    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(totalSeconds % 3600 / 60);
+    const seconds = totalSeconds % 60;
+    return hours > 0
+        ? [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':')
+        : [minutes, seconds].map(value => String(value).padStart(2, '0')).join(':');
+}
+
+function updateRecordingButton() {
+    if (!dom.recordBtn) return;
+    const status = getMasterRecordingStatus();
+    dom.recordBtn.classList.toggle('is-recording', status.isRecording);
+    dom.recordBtn.setAttribute('aria-pressed', String(status.isRecording));
+    dom.recordBtn.setAttribute('aria-label', status.isRecording ? 'マスター出力の録音を停止' : 'マスター出力の録音を開始');
+    const label = dom.recordBtn.querySelector('.record-label');
+    if (label) label.textContent = status.isRecording ? formatRecordingTime(Date.now() - status.startedAt) : '録音';
+}
+
+async function handleRecordingToggle() {
+    if (dom.recordBtn?.disabled) return;
+    dom.recordBtn.disabled = true;
+    let completedBlob = null;
+    let completedName = null;
+    try {
+        if (!getMasterRecordingStatus().isRecording) {
+            if (!state.currentSceneId) throw new Error('録音を保存するシーンが選択されていません。');
+            await resumeAudioContext();
+            startMasterRecording();
+            recordingSceneId = state.currentSceneId;
+            updateRecordingButton();
+            recordingTimerId = window.setInterval(updateRecordingButton, 250);
+            return;
+        }
+
+        clearInterval(recordingTimerId);
+        recordingTimerId = null;
+        const blob = await stopMasterRecording();
+        const timestamp = new Date().toLocaleString('ja-JP', { hour12: false }).replace(/[/:]/g, '-').replace(/\s/g, '_');
+        const name = `録音_${timestamp}`;
+        completedBlob = blob;
+        completedName = name;
+        await addAudioBlobToScene(blob, name, recordingSceneId);
+        recordingSceneId = null;
+        updateRecordingButton();
+        if (await showConfirm(`「${name}」をシーンに保存しました。音声ファイルもダウンロードしますか？`, '録音完了')) {
+            downloadRecording(blob, name);
+        }
+    } catch (error) {
+        clearInterval(recordingTimerId);
+        recordingTimerId = null;
+        recordingSceneId = null;
+        updateRecordingButton();
+        if (completedBlob) {
+            downloadRecording(completedBlob, completedName || '録音');
+            await showAlert(`シーンへの保存に失敗したため、録音ファイルをダウンロードしました。\n${error.message || ''}`.trim(), '録音エラー');
+        } else {
+            await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
+        }
+    } finally {
+        if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
+    }
+}
+
+window.addEventListener('beforeunload', event => {
+    if (!getMasterRecordingStatus().isRecording) return;
+    event.preventDefault();
+    event.returnValue = '';
+});
 
 
 // --- Show Mode (Fullscreen) ---

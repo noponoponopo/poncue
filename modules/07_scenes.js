@@ -565,6 +565,61 @@ export async function handleAudioFileSelect(event) {
     }
 }
 
+export async function addAudioBlobToScene(blob, name, sceneId = state.currentSceneId) {
+    const scene = state.scenes[sceneId];
+    if (!scene) throw new Error('録音を保存するシーンが見つかりません。');
+    if (!(blob instanceof Blob) || blob.size === 0) throw new Error('録音データが空です。');
+    if (blob.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+        throw new Error(`録音データが${MAX_FILE_SIZE_MB}MBを超えています。`);
+    }
+
+    let audioBuffer;
+    try {
+        audioBuffer = await state.audioContext.decodeAudioData(await blob.arrayBuffer());
+    } catch (error) {
+        throw new Error('録音データを音声として読み込めませんでした。');
+    }
+
+    const audioId = generateUniqueId('aud');
+    const newSound = {
+        id: generateUniqueId('snd'),
+        name,
+        loop: false,
+        volume: 1.0,
+        pan: 0,
+        audioId,
+        triggerMode: DEFAULT_TRIGGER_MODE,
+        fadeInDuration: 0.0,
+        fadeOutDuration: 0.0,
+        fadeInEasing: DEFAULT_FADE_EASING,
+        fadeOutEasing: DEFAULT_FADE_EASING,
+        reverse: false,
+        playbackRate: 1.0,
+        preservePitch: false,
+        effects: { enabled: false },
+        duration: audioBuffer.duration
+    };
+
+    await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'put', { id: audioId, blob });
+    scene.sounds.push(newSound);
+    try {
+        await saveCurrentSceneSounds('addAudioBlobToScene', sceneId);
+    } catch (error) {
+        const soundIndex = scene.sounds.findIndex(sound => sound.id === newSound.id);
+        if (soundIndex !== -1) scene.sounds.splice(soundIndex, 1);
+        await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', audioId).catch(() => {});
+        throw error;
+    }
+
+    if (sceneId === state.currentSceneId) {
+        if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+            state.decodedAudioBuffers[newSound.id] = audioBuffer;
+        }
+        renderers.renderSoundboard();
+    }
+    return newSound;
+}
+
 export async function removeSound(soundId) {
     if (state.decodedAudioBuffers[soundId] && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
         delete state.decodedAudioBuffers[soundId];
