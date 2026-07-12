@@ -4,13 +4,20 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
-import { TRIGGER_MODES } from './01_config.js';
+import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
 
-// 起動モードの表示ラベル（type リストは 01_config.js の TRIGGER_MODES と同期）
 const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
 function triggerOptions(selected) {
     return TRIGGER_MODES
-        .map(m => `<option value="${m}"${m === selected ? ' selected' : ''}>${TRIGGER_LABELS[m] ?? m}</option>`)
+        .map(mode => `<option value="${mode}"${mode === selected ? ' selected' : ''}>${TRIGGER_LABELS[mode] ?? mode}</option>`)
+        .join('');
+}
+
+// フェードイージングの表示ラベル（type リストは 01_config.js の FADE_EASING_TYPES と同期）
+const EASING_LABELS = { linear: '直線', easeIn: 'イーズイン', easeOut: 'イーズアウト', sCurve: 'イーズインアウト' };
+function easingOptions(selected) {
+    return FADE_EASING_TYPES
+        .map(t => `<option value="${t}"${t === selected ? ' selected' : ''}>${EASING_LABELS[t] ?? t}</option>`)
         .join('');
 }
 
@@ -109,7 +116,13 @@ export async function showPrompt(message, title = '入力', defaultValue = '') {
     return await showModal(title, message, 'showPrompt', '', defaultValue);
 }
 
-export async function showSoundSettingsModal(soundId, currentShortcut = '') {
+export function formatPanValue(v) {
+    const pct = Math.round(Math.abs(v) * 100);
+    if (pct === 0) return 'C';
+    return v < 0 ? `L${pct}` : `R${pct}`;
+}
+
+export async function showSoundSettingsModal(soundId, currentShortcut = '', callbacks = {}) {
     return new Promise(resolve => {
         if (!dom.customModalOverlay) {
             showAlert("設定モーダルを表示できません。", "エラー");
@@ -127,6 +140,14 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalTitle.textContent = `${sound.name} の設定`;
         const effectSettings = normalizeEffectSettings(sound.effects);
         const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
+        const initialPan = Number.isFinite(sound.pan) ? sound.pan : 0;
+        const fadeInDuration = Number.isFinite(sound.fadeInDuration) ? sound.fadeInDuration : 0;
+        const fadeOutDuration = Number.isFinite(sound.fadeOutDuration) ? sound.fadeOutDuration : 0;
+        const fadeInEasing = FADE_EASING_TYPES.includes(sound.fadeInEasing) ? sound.fadeInEasing : 'linear';
+        const fadeOutEasing = FADE_EASING_TYPES.includes(sound.fadeOutEasing) ? sound.fadeOutEasing : 'linear';
+        const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
+        const reverse = !!sound.reverse;
+        const initialSpeed = Number.isFinite(sound.playbackRate) ? sound.playbackRate : 1;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -139,9 +160,56 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                     <select id="trigger-mode-input" class="modal-input effect-select">${triggerOptions(triggerMode)}</select>
                 </div>
                 <div class="effect-param-row">
-                    <label for="fade-duration-input" class="effect-param-label">フェード時間</label>
-                    <span class="effect-param-value"><span id="fade-duration-value">${(sound.fadeDuration ?? 0.0).toFixed(2)}</span>s</span>
-                    <input type="range" id="fade-duration-input" min="0" max="5" step="0.01" value="${sound.fadeDuration ?? 0.0}" class="modal-input effect-slider">
+                    <label for="pad-color-input" class="effect-param-label">カラー</label>
+                    <input type="color" id="pad-color-input" class="modal-input effect-color-input" value="${initialColor}">
+                    <button type="button" id="pad-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-in-duration-input" class="effect-param-label">フェードイン</label>
+                    <span class="effect-param-value"><span id="fade-in-duration-value">${fadeInDuration.toFixed(2)}</span>s</span>
+                    <input type="range" id="fade-in-duration-input" min="0" max="5" step="0.01" value="${fadeInDuration}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-in-easing-input" class="effect-param-label">イン カーブ</label>
+                    <select id="fade-in-easing-input" class="modal-input effect-select">${easingOptions(fadeInEasing)}</select>
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-out-duration-input" class="effect-param-label">フェードアウト</label>
+                    <span class="effect-param-value"><span id="fade-out-duration-value">${fadeOutDuration.toFixed(2)}</span>s</span>
+                    <input type="range" id="fade-out-duration-input" min="0" max="5" step="0.01" value="${fadeOutDuration}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row">
+                    <label for="fade-out-easing-input" class="effect-param-label">アウト カーブ</label>
+                    <select id="fade-out-easing-input" class="modal-input effect-select">${easingOptions(fadeOutEasing)}</select>
+                </div>
+                <div class="effect-param-row">
+                    <label for="pan-input" class="effect-param-label">Pan</label>
+                    <span class="effect-param-value"><span id="pan-value">${formatPanValue(initialPan)}</span></span>
+                    <div class="pan-slider-wrap">
+                        <span class="pan-marker">L</span>
+                        <input type="range" id="pan-input" min="-1" max="1" step="0.01" value="${initialPan}" class="modal-input effect-slider">
+                        <span class="pan-marker">R</span>
+                    </div>
+                </div>
+                <div class="effect-param-row">
+                    <label for="reverse-input" class="effect-param-label">逆再生</label>
+                    <input type="checkbox" id="reverse-input" ${reverse ? 'checked' : ''}>
+                </div>
+                <div class="effect-param-row">
+                    <label for="playback-speed-input" class="effect-param-label">速度</label>
+                    <span class="effect-param-value"><span id="playback-speed-value">${initialSpeed.toFixed(2)}</span>x</span>
+                    <input type="range" id="playback-speed-input" min="0.5" max="2" step="0.05" value="${initialSpeed}" class="modal-input effect-slider">
+                </div>
+                <div class="effect-param-row effect-checkbox-row">
+                    <span class="effect-param-label">ピッチ</span>
+                    <label><input type="checkbox" id="preserve-pitch-input" ${sound.preservePitch ? 'checked' : ''}> 速度変更時も保持</label>
+                </div>
+                <div class="effect-param-row effect-action-row">
+                    <label for="normalize-target-input" class="effect-param-label">目標ラウドネス</label>
+                    <span class="effect-param-value"><span id="normalize-target-value">-18</span> LUFS</span>
+                    <input type="range" id="normalize-target-input" min="-24" max="-9" step="1" value="-18" class="modal-input effect-slider">
+                    <button type="button" id="normalize-btn" class="modal-input effect-action-btn">LUFSノーマライズ</button>
+                    <span id="normalize-result" class="effect-param-value" role="status"></span>
                 </div>
             </div>
             <div class="effect-divider"></div>
@@ -203,13 +271,63 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                         <input type="range" id="compressor-ratio-input" min="1" max="20" step="0.1" value="${effectSettings.compressor.ratio}" class="modal-input effect-slider">
                     </div>
                 </fieldset>
+                <fieldset class="effect-group">
+                    <legend><label><input type="checkbox" id="distortion-enabled-input" ${effectSettings.distortion.enabled ? 'checked' : ''}> ディストーション</label></legend>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">Amount</span>
+                        <span class="effect-param-value"><span id="distortion-amount-value">${Math.round(effectSettings.distortion.amount * 100)}</span>%</span>
+                        <input type="range" id="distortion-amount-input" min="0" max="1" step="0.01" value="${effectSettings.distortion.amount}" class="modal-input effect-slider">
+                    </div>
+                </fieldset>
+                <fieldset class="effect-group">
+                    <legend><label><input type="checkbox" id="reverb-enabled-input" ${effectSettings.reverb.enabled ? 'checked' : ''}> リバーブ</label></legend>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">Decay</span>
+                        <span class="effect-param-value"><span id="reverb-decay-value">${effectSettings.reverb.decay.toFixed(1)}</span>s</span>
+                        <input type="range" id="reverb-decay-input" min="0.1" max="10" step="0.1" value="${effectSettings.reverb.decay}" class="modal-input effect-slider">
+                    </div>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">PreDelay</span>
+                        <span class="effect-param-value"><span id="reverb-preDelay-value">${(effectSettings.reverb.preDelay * 1000).toFixed(0)}</span>ms</span>
+                        <input type="range" id="reverb-preDelay-input" min="0" max="0.1" step="0.001" value="${effectSettings.reverb.preDelay}" class="modal-input effect-slider">
+                    </div>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">Wet</span>
+                        <span class="effect-param-value"><span id="reverb-wet-value">${Math.round(effectSettings.reverb.wet * 100)}</span>%</span>
+                        <input type="range" id="reverb-wet-input" min="0" max="1" step="0.01" value="${effectSettings.reverb.wet}" class="modal-input effect-slider">
+                    </div>
+                </fieldset>
+                <fieldset class="effect-group">
+                    <legend><label><input type="checkbox" id="limiter-enabled-input" ${effectSettings.limiter.enabled ? 'checked' : ''}> リミッター</label></legend>
+                    <div class="effect-param-row">
+                        <span class="effect-param-label">Ceiling</span>
+                        <span class="effect-param-value"><span id="limiter-threshold-value">${effectSettings.limiter.threshold}</span>dBFS</span>
+                        <input type="range" id="limiter-threshold-input" min="-12" max="0" step="0.5" value="${effectSettings.limiter.threshold}" class="modal-input effect-slider">
+                    </div>
+                </fieldset>
             </div>
         `;
 
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
-        const fadeDurationInput = dom.customModalMessage.querySelector('#fade-duration-input');
-        const fadeDurationValueSpan = dom.customModalMessage.querySelector('#fade-duration-value');
+        const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
+        const padColorClearBtn = dom.customModalMessage.querySelector('#pad-color-clear-btn');
+        const fadeInDurationInput = dom.customModalMessage.querySelector('#fade-in-duration-input');
+        const fadeInDurationValueSpan = dom.customModalMessage.querySelector('#fade-in-duration-value');
+        const fadeInEasingInput = dom.customModalMessage.querySelector('#fade-in-easing-input');
+        const fadeOutDurationInput = dom.customModalMessage.querySelector('#fade-out-duration-input');
+        const fadeOutDurationValueSpan = dom.customModalMessage.querySelector('#fade-out-duration-value');
+        const fadeOutEasingInput = dom.customModalMessage.querySelector('#fade-out-easing-input');
+        const panInput = dom.customModalMessage.querySelector('#pan-input');
+        const panValueSpan = dom.customModalMessage.querySelector('#pan-value');
+        const reverseInput = dom.customModalMessage.querySelector('#reverse-input');
+        const playbackSpeedInput = dom.customModalMessage.querySelector('#playback-speed-input');
+        const playbackSpeedValueSpan = dom.customModalMessage.querySelector('#playback-speed-value');
+        const preservePitchInput = dom.customModalMessage.querySelector('#preserve-pitch-input');
+        const normalizeTargetInput = dom.customModalMessage.querySelector('#normalize-target-input');
+        const normalizeTargetValue = dom.customModalMessage.querySelector('#normalize-target-value');
+        const normalizeBtn = dom.customModalMessage.querySelector('#normalize-btn');
+        const normalizeResult = dom.customModalMessage.querySelector('#normalize-result');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const effectWetInput = dom.customModalMessage.querySelector('#effect-wet-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
@@ -223,10 +341,25 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         const compressorEnabledInput = dom.customModalMessage.querySelector('#compressor-enabled-input');
         const compressorThresholdInput = dom.customModalMessage.querySelector('#compressor-threshold-input');
         const compressorRatioInput = dom.customModalMessage.querySelector('#compressor-ratio-input');
+        const distortionEnabledInput = dom.customModalMessage.querySelector('#distortion-enabled-input');
+        const distortionAmountInput = dom.customModalMessage.querySelector('#distortion-amount-input');
+        const reverbEnabledInput = dom.customModalMessage.querySelector('#reverb-enabled-input');
+        const reverbDecayInput = dom.customModalMessage.querySelector('#reverb-decay-input');
+        const reverbPreDelayInput = dom.customModalMessage.querySelector('#reverb-preDelay-input');
+        const reverbWetInput = dom.customModalMessage.querySelector('#reverb-wet-input');
+        const limiterEnabledInput = dom.customModalMessage.querySelector('#limiter-enabled-input');
+        const limiterThresholdInput = dom.customModalMessage.querySelector('#limiter-threshold-input');
 
         let newShortcut = currentShortcut;
         let newTriggerMode = triggerMode;
-        let newFadeDuration = sound.fadeDuration ?? 0.0;
+        let newColor = (typeof sound.color === 'string' && sound.color) ? sound.color : null;
+        let newFadeInDuration = fadeInDuration;
+        let newFadeOutDuration = fadeOutDuration;
+        let newFadeInEasing = fadeInEasing;
+        let newFadeOutEasing = fadeOutEasing;
+        let newPan = initialPan;
+        let newReverse = reverse;
+        let newPlaybackSpeed = initialSpeed;
         let newEffects = effectSettings;
 
         const handleKeydown = (e) => {
@@ -254,9 +387,52 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             shortcutInput.value = newShortcut;
         };
 
-        const handleFadeDurationInput = (e) => {
-            newFadeDuration = parseFloat(e.target.value);
-            fadeDurationValueSpan.textContent = newFadeDuration.toFixed(2);
+        const handlePadColorInput = (e) => { newColor = e.target.value; };
+        const handlePadColorClear = () => {
+            newColor = null;
+            padColorInput.value = '#808080';
+        };
+
+        const handlePlaybackSpeedInput = (e) => {
+            newPlaybackSpeed = parseFloat(e.target.value);
+            playbackSpeedValueSpan.textContent = newPlaybackSpeed.toFixed(2);
+        };
+
+        const handleFadeInDurationInput = (e) => {
+            newFadeInDuration = parseFloat(e.target.value);
+            fadeInDurationValueSpan.textContent = newFadeInDuration.toFixed(2);
+        };
+        const handleFadeOutDurationInput = (e) => {
+            newFadeOutDuration = parseFloat(e.target.value);
+            fadeOutDurationValueSpan.textContent = newFadeOutDuration.toFixed(2);
+        };
+        const handleFadeInEasingInput = (e) => { newFadeInEasing = e.target.value; };
+        const handleFadeOutEasingInput = (e) => { newFadeOutEasing = e.target.value; };
+
+        const handlePanInput = (e) => {
+            newPan = parseFloat(e.target.value);
+            panValueSpan.textContent = formatPanValue(newPan);
+        };
+
+        const handlePanDoubleClick = () => {
+            newPan = 0;
+            panInput.value = 0;
+            panValueSpan.textContent = formatPanValue(0);
+        };
+
+        const handleReverseInput = (e) => { newReverse = e.target.checked; };
+
+        const handleNormalize = async () => {
+            normalizeBtn.disabled = true;
+            normalizeResult.textContent = '解析中...';
+            try {
+                const result = await callbacks.onNormalize?.(parseFloat(normalizeTargetInput.value));
+                normalizeResult.textContent = result
+                    ? `検出 ${result.measuredLufs.toFixed(1)} LUFS / 適用 ${result.achievedLufs.toFixed(1)} LUFS${result.limitedByPeak ? '（ピーク制約）' : ''} / 音量 ${Math.round(result.recommendedVolume * 100)}%`
+                    : 'ノーマライズできませんでした';
+            } finally {
+                normalizeBtn.disabled = false;
+            }
         };
 
         const handleTriggerModeInput = (e) => { newTriggerMode = e.target.value; };
@@ -280,6 +456,20 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
                 enabled: compressorEnabledInput.checked,
                 threshold: parseFloat(compressorThresholdInput.value),
                 ratio: parseFloat(compressorRatioInput.value)
+            },
+            distortion: {
+                enabled: distortionEnabledInput.checked,
+                amount: parseFloat(distortionAmountInput.value)
+            },
+            reverb: {
+                enabled: reverbEnabledInput.checked,
+                decay: parseFloat(reverbDecayInput.value),
+                preDelay: parseFloat(reverbPreDelayInput.value),
+                wet: parseFloat(reverbWetInput.value)
+            },
+            limiter: {
+                enabled: limiterEnabledInput.checked,
+                threshold: parseFloat(limiterThresholdInput.value)
             }
         });
 
@@ -294,12 +484,32 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
             dom.customModalMessage.querySelector('#delay-level-value').textContent = Math.round(newEffects.delay.level * 100);
             dom.customModalMessage.querySelector('#compressor-threshold-value').textContent = newEffects.compressor.threshold;
             dom.customModalMessage.querySelector('#compressor-ratio-value').textContent = newEffects.compressor.ratio.toFixed(1);
+            dom.customModalMessage.querySelector('#distortion-amount-value').textContent = Math.round(newEffects.distortion.amount * 100);
+            dom.customModalMessage.querySelector('#reverb-decay-value').textContent = newEffects.reverb.decay.toFixed(1);
+            dom.customModalMessage.querySelector('#reverb-preDelay-value').textContent = (newEffects.reverb.preDelay * 1000).toFixed(0);
+            dom.customModalMessage.querySelector('#reverb-wet-value').textContent = Math.round(newEffects.reverb.wet * 100);
+            dom.customModalMessage.querySelector('#limiter-threshold-value').textContent = newEffects.limiter.threshold;
+        };
+
+        const handleNormalizeTargetInput = () => {
+            normalizeTargetValue.textContent = normalizeTargetInput.value;
         };
 
         shortcutInput.addEventListener('keydown', handleKeydown);
         triggerModeInput.addEventListener('change', handleTriggerModeInput);
-        fadeDurationInput.addEventListener('input', handleFadeDurationInput);
-        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+        padColorInput.addEventListener('input', handlePadColorInput);
+        padColorClearBtn.addEventListener('click', handlePadColorClear);
+        fadeInDurationInput.addEventListener('input', handleFadeInDurationInput);
+        fadeOutDurationInput.addEventListener('input', handleFadeOutDurationInput);
+        fadeInEasingInput.addEventListener('change', handleFadeInEasingInput);
+        fadeOutEasingInput.addEventListener('change', handleFadeOutEasingInput);
+        panInput.addEventListener('input', handlePanInput);
+        panInput.addEventListener('dblclick', handlePanDoubleClick);
+        reverseInput.addEventListener('change', handleReverseInput);
+        playbackSpeedInput.addEventListener('input', handlePlaybackSpeedInput);
+        normalizeBtn.addEventListener('click', handleNormalize);
+        normalizeTargetInput.addEventListener('input', handleNormalizeTargetInput);
+        [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
             .forEach(input => input.addEventListener('input', handleEffectInput));
 
         dom.customModalOkBtn.textContent = '保存';
@@ -309,18 +519,40 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '') {
         dom.customModalOkBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             triggerModeInput.removeEventListener('change', handleTriggerModeInput);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
+            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
+            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
+            fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
+            fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
+            panInput.removeEventListener('input', handlePanInput);
+            panInput.removeEventListener('dblclick', handlePanDoubleClick);
+            reverseInput.removeEventListener('change', handleReverseInput);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
+            normalizeBtn.removeEventListener('click', handleNormalize);
+            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
-            resolve({ newShortcut, newTriggerMode, newFadeDuration, newEffects: readEffects() });
+            resolve({ newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch: preservePitchInput.checked, newEffects: readEffects() });
         };
 
         dom.customModalCancelBtn.onclick = () => {
             shortcutInput.removeEventListener('keydown', handleKeydown);
             triggerModeInput.removeEventListener('change', handleTriggerModeInput);
-            fadeDurationInput.removeEventListener('input', handleFadeDurationInput);
-            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput]
+            padColorInput.removeEventListener('input', handlePadColorInput);
+            padColorClearBtn.removeEventListener('click', handlePadColorClear);
+            fadeInDurationInput.removeEventListener('input', handleFadeInDurationInput);
+            fadeOutDurationInput.removeEventListener('input', handleFadeOutDurationInput);
+            fadeInEasingInput.removeEventListener('change', handleFadeInEasingInput);
+            fadeOutEasingInput.removeEventListener('change', handleFadeOutEasingInput);
+            panInput.removeEventListener('input', handlePanInput);
+            panInput.removeEventListener('dblclick', handlePanDoubleClick);
+            reverseInput.removeEventListener('change', handleReverseInput);
+            playbackSpeedInput.removeEventListener('input', handlePlaybackSpeedInput);
+            normalizeBtn.removeEventListener('click', handleNormalize);
+            normalizeTargetInput.removeEventListener('input', handleNormalizeTargetInput);
+            [effectEnabledInput, effectWetInput, eqEnabledInput, eqLowInput, eqMidInput, eqHighInput, delayEnabledInput, delayTimeInput, delayFeedbackInput, delayLevelInput, compressorEnabledInput, compressorThresholdInput, compressorRatioInput, distortionEnabledInput, distortionAmountInput, reverbEnabledInput, reverbDecayInput, reverbPreDelayInput, reverbWetInput, limiterEnabledInput, limiterThresholdInput]
                 .forEach(input => input.removeEventListener('input', handleEffectInput));
             dom.customModalOverlay.classList.remove('active');
             resolve(null); // User cancelled
@@ -458,6 +690,46 @@ export function createMasterMeterElement() {
     dom.levelMeterArea.insertBefore(meterPair, dom.levelMeterArea.firstChild);
 }
 
+export function createMasterLimiterKnob(value, onChange) {
+    if (!dom.masterLimiterControl) return;
+    const min = -12;
+    const max = 0;
+    const step = 0.5;
+    dom.masterLimiterControl.innerHTML = `
+        <div class="knob-group header-limiter-knob" title="マスター出力の上限">
+            <div class="knob"><div class="knob-indicator"></div></div>
+            <span class="knob-value"></span>
+            <span class="knob-name">LIMIT</span>
+        </div>
+    `;
+    const knob = dom.masterLimiterControl.querySelector('.knob');
+    const valueLabel = dom.masterLimiterControl.querySelector('.knob-value');
+    const render = next => {
+        knob.style.setProperty('--knob-rotation', `${((next - min) / (max - min)) * 270 - 135}deg`);
+        valueLabel.textContent = `${next} dB`;
+    };
+    render(value);
+
+    knob.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        const startY = event.clientY;
+        const startValue = state.masterLimiter.threshold;
+        const handleMove = moveEvent => {
+            const raw = startValue + (startY - moveEvent.clientY) / 120 * (max - min);
+            const next = Math.min(max, Math.max(min, Math.round(raw / step) * step));
+            render(next);
+            onChange(next, false);
+        };
+        const handleUp = () => {
+            window.removeEventListener('pointermove', handleMove);
+            window.removeEventListener('pointerup', handleUp);
+            onChange(state.masterLimiter.threshold, true);
+        };
+        window.addEventListener('pointermove', handleMove);
+        window.addEventListener('pointerup', handleUp, { once: true });
+    });
+}
+
 export function removeMeterElement(soundId) {
     const meterElement = dom.levelMeterArea?.querySelector(`.meter-pair[data-sound-id="${soundId}"]`);
     if (meterElement) {
@@ -473,28 +745,48 @@ export function createMasterEffectKnobs(allValues, onChange) {
         {
             name: 'EQ',
             params: [
-                { key: 'eq.low',  label: 'LOW',  min: -12, max: 12, step: 0.5, unit: 'dB' },
-                { key: 'eq.mid',  label: 'MID',  min: -12, max: 12, step: 0.5, unit: 'dB' },
-                { key: 'eq.high', label: 'HIGH', min: -12, max: 12, step: 0.5, unit: 'dB' }
+                { key: 'eq.low',  label: 'LOW',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
+                { key: 'eq.mid',  label: 'MID',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
+                { key: 'eq.high', label: 'HIGH', min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 }
             ]
         },
         {
             name: 'COMP',
             params: [
-                { key: 'comp.threshold', label: 'THRESH', min: -60, max: 0, step: 1, unit: 'dB' },
-                { key: 'comp.ratio',     label: 'RATIO',  min: 1,   max: 20, step: 0.5, unit: ':1' }
+                { key: 'comp.threshold', label: 'THRESH', min: -60, max: 0, step: 1, unit: 'dB', default: 0 },
+                { key: 'comp.ratio',     label: 'RATIO',  min: 1,   max: 20, step: 0.5, unit: ':1', default: 1 }
             ]
         },
         {
             name: 'DELAY',
             params: [
-                { key: 'delay.time',  label: 'TIME', min: 0, max: 2,    step: 0.01, unit: 's', dragPixels: 600 },
-                { key: 'delay.level', label: 'MIX',  min: 0, max: 1,    step: 0.01, unit: '%' }
+                { key: 'delay.time',  label: 'TIME', min: 0, max: 2, step: 0.01, unit: 's', dragPixels: 600, default: 0.18 },
+                { key: 'delay.level', label: 'MIX',  min: 0, max: 1, step: 0.01, unit: '%', default: 0 }
+            ]
+        },
+        {
+            name: 'PAN',
+            params: [
+                { key: 'pan.value', label: 'PAN', min: -1, max: 1, step: 0.01, unit: 'pan', dragPixels: 300, default: 0 }
+            ]
+        },
+        {
+            name: 'DIST',
+            params: [
+                { key: 'distortion.amount', label: 'AMOUNT', min: 0, max: 1, step: 0.01, unit: '%' }
+            ]
+        },
+        {
+            name: 'REVERB',
+            params: [
+                { key: 'reverb.decay', label: 'DECAY', min: 0.1, max: 10, step: 0.1,  unit: 's', dragPixels: 600 },
+                { key: 'reverb.wet',   label: 'MIX',   min: 0,   max: 1,  step: 0.01, unit: '%' }
             ]
         }
     ];
 
     const formatVal = (v, spec) => {
+        if (spec.unit === 'pan') return formatPanValue(v);
         if (spec.unit === '%') return `${Math.round(v * 100)}%`;
         if (spec.unit === ':1') return `${v.toFixed(1)}:1`;
         if (spec.unit === 'dB') return `${v > 0 ? '+' : ''}${v} dB`;
@@ -508,18 +800,20 @@ export function createMasterEffectKnobs(allValues, onChange) {
     };
 
     for (const group of groups) {
+        const cluster = document.createElement('div');
+        cluster.classList.add('knob-cluster');
+
         const sep = document.createElement('div');
         sep.classList.add('knob-separator');
         const groupName = document.createElement('span');
         groupName.classList.add('knob-group-name');
         groupName.textContent = group.name;
         sep.appendChild(groupName);
-        dom.masterEffectBar.appendChild(sep);
+        cluster.appendChild(sep);
 
         for (const spec of group.params) {
             const parts = spec.key.split('.');
             const value = allValues[parts[0]]?.[parts[1]] ?? 0;
-            const pctValue = spec.unit === '%' ? value : value;
 
             const knobGroup = document.createElement('div');
             knobGroup.classList.add('knob-group');
@@ -569,9 +863,20 @@ export function createMasterEffectKnobs(allValues, onChange) {
                 window.addEventListener('pointerup', onWindowUp);
             };
 
+            // Double-click to reset to default value
+            const onDoubleClick = () => {
+                const def = spec.default ?? 0;
+                knob.style.setProperty('--knob-rotation', `${rotationFor(def, spec)}deg`);
+                valLabel.textContent = formatVal(def, spec);
+                onChange(spec.key, def);
+            };
+
             knobGroup.addEventListener('pointerdown', onPointerDown);
-            dom.masterEffectBar.appendChild(knobGroup);
+            knobGroup.addEventListener('dblclick', onDoubleClick);
+            cluster.appendChild(knobGroup);
         }
+
+        dom.masterEffectBar.appendChild(cluster);
     }
 }
 

@@ -3,9 +3,9 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -42,11 +42,30 @@ function dataURLtoBlob(dataurl) {
 }
 
 /**
- * sound オブジェクトの起動モードを正規化する。
+ * sound オブジェクトのフェード関連フィールドを正規化する。
+ * 旧スキーマ (fadeDuration 単体) を新スキーマ (fadeInDuration/fadeOutDuration + 各 easing) に寄せる。
+ * DB保存時に呼ばれるため、安全に冪等に動作する。
  */
+export function normalizeSoundFade(sound) {
+    if (!sound || typeof sound !== 'object') return sound;
+    const legacyFadeDuration = Number.isFinite(sound.fadeDuration) ? sound.fadeDuration : 0;
+    if (!Number.isFinite(sound.fadeInDuration)) {
+        sound.fadeInDuration = Math.max(0, legacyFadeDuration);
+    }
+    if (!Number.isFinite(sound.fadeOutDuration)) {
+        sound.fadeOutDuration = Math.max(0, legacyFadeDuration);
+    }
+    if (!FADE_EASING_TYPES.includes(sound.fadeInEasing)) sound.fadeInEasing = DEFAULT_FADE_EASING;
+    if (!FADE_EASING_TYPES.includes(sound.fadeOutEasing)) sound.fadeOutEasing = DEFAULT_FADE_EASING;
+    return sound;
+}
+
 export function normalizeSoundTriggerMode(sound) {
     if (!sound || typeof sound !== 'object') return sound;
-    if (!TRIGGER_MODES.includes(sound.triggerMode)) sound.triggerMode = DEFAULT_TRIGGER_MODE;
+    if (!TRIGGER_MODES.includes(sound.triggerMode)) {
+        sound.triggerMode = sound.holdToPlay ? 'momentary' : DEFAULT_TRIGGER_MODE;
+    }
+    delete sound.holdToPlay;
     return sound;
 }
 
@@ -139,6 +158,40 @@ export async function initializeApp() {
 
     await Promise.all([loadSettings(), loadScenesFromDB()]);
 
+    // --- Audio integrity check: verify each referenced audio record is usable ---
+    const missingSounds = [];
+    try {
+        const referencedAudioIds = new Set();
+        for (const sceneId in state.scenes) {
+            for (const sound of state.scenes[sceneId].sounds) {
+                if (sound.audioId) referencedAudioIds.add(sound.audioId);
+            }
+        }
+
+        const validAudioIds = new Set();
+        for (const audioId of referencedAudioIds) {
+            const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
+            if (audioRecord?.blob instanceof Blob && audioRecord.blob.size > 0) {
+                validAudioIds.add(audioId);
+            }
+        }
+
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            for (const sound of scene.sounds) {
+                if (!sound.audioId || !validAudioIds.has(sound.audioId)) {
+                    if (!sound.error) sound.error = 'Audio data missing';
+                    missingSounds.push(`${scene.name} / ${sound.name}`);
+                } else if (sound.error === 'Audio data missing') {
+                    delete sound.error;
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Audio integrity check failed:', e);
+    }
+    // --- End of audio integrity check ---
+
     // --- Data Migration for missing durations ---
     let migrationNeeded = false;
     for (const sceneId in state.scenes) {
@@ -182,11 +235,64 @@ export async function initializeApp() {
                 }
             }
             if (sceneUpdated) {
-                await saveCurrentSceneSounds(`migration-duration-${sceneId}`);
+                await saveCurrentSceneSounds(`migration-duration-${sceneId}`, sceneId);
             }
         }
         console.log("Duration migration finished.");
         hideModal(); // Hide the "Updating..." message
+    }
+
+    // --- Data Migration: fadeDuration → fadeInDuration/fadeOutDuration + easing ---
+    let fadeMigrationNeeded = false;
+    for (const sceneId in state.scenes) {
+        for (const sound of state.scenes[sceneId].sounds) {
+            if ('fadeDuration' in sound) { fadeMigrationNeeded = true; break; }
+        }
+        if (fadeMigrationNeeded) break;
+    }
+    if (fadeMigrationNeeded) {
+        console.log("Fade schema migration needed. Starting...");
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            let sceneUpdated = false;
+            for (const sound of scene.sounds) {
+                if ('fadeDuration' in sound) {
+                    normalizeSoundFade(sound);
+                    delete sound.fadeDuration;
+                    sceneUpdated = true;
+                }
+            }
+            if (sceneUpdated) {
+                await saveCurrentSceneSounds(`migration-fade-${sceneId}`, sceneId);
+            }
+        }
+        console.log("Fade schema migration finished.");
+    }
+
+    let triggerMigrationNeeded = false;
+    for (const sceneId in state.scenes) {
+        for (const sound of state.scenes[sceneId].sounds) {
+            if (!TRIGGER_MODES.includes(sound.triggerMode) || 'holdToPlay' in sound) {
+                triggerMigrationNeeded = true;
+                break;
+            }
+        }
+        if (triggerMigrationNeeded) break;
+    }
+    if (triggerMigrationNeeded) {
+        for (const sceneId in state.scenes) {
+            const scene = state.scenes[sceneId];
+            let sceneUpdated = false;
+            for (const sound of scene.sounds) {
+                if (!TRIGGER_MODES.includes(sound.triggerMode) || 'holdToPlay' in sound) {
+                    normalizeSoundTriggerMode(sound);
+                    sceneUpdated = true;
+                }
+            }
+            if (sceneUpdated) {
+                await saveCurrentSceneSounds(`migration-trigger-${sceneId}`, sceneId);
+            }
+        }
     }
     // --- End of Data Migration ---
 
@@ -214,6 +320,14 @@ export async function initializeApp() {
     }
     
     updateDraggableState();
+
+    if (missingSounds.length > 0) {
+        const list = missingSounds.map(s => `・${s}`).join('\n');
+        await showAlert(
+            `以下のサウンドの音源が見つかりません。ファイルが削除されたかデータが破損しています。\n\n${list}`,
+            '音源チェック'
+        );
+    }
 }
 
 export function renderFallbackUI(message) {
@@ -232,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -249,13 +363,19 @@ export async function loadSettings() {
             padSize: settings.padSize ?? 160,
             masterEq: settings.masterEq ?? { low: 0, mid: 0, high: 0 },
             masterComp: settings.masterComp ?? { threshold: 0, ratio: 1 },
-            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 }
+            masterDelay: settings.masterDelay ?? { time: 0.18, feedback: 0, level: 0 },
+            masterPan: settings.masterPan ?? { value: 0 },
+            masterDistortion: settings.masterDistortion ?? { amount: 0 },
+            masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 },
+            masterLimiter: settings.masterLimiter ?? { threshold: -1 }
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
         
         if (dom.masterVolumeSlider) dom.masterVolumeSlider.value = state.masterVolume;
+        if (dom.masterVolumeValue) dom.masterVolumeValue.textContent = `${Math.round(state.masterVolume * 100)}%`;
         if (state.masterGainNode) state.masterGainNode.gain.setValueAtTime(state.masterVolume, state.audioContext.currentTime);
+        setMasterLimiterThreshold(state.masterLimiter.threshold);
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
         if (dom.interactionDragRadio) dom.interactionDragRadio.checked = state.isSortableEnabled;
         if (dom.perfHighRadio) dom.perfHighRadio.checked = (state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE);
@@ -325,7 +445,7 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
 
 export async function selectScene(sceneId) {
     stopAllSounds(false);
-    updateState({ decodedAudioBuffers: {} });
+    updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {} });
     triggerWaveformUpdate();
 
     if (!state.scenes[sceneId]) {
@@ -353,8 +473,10 @@ export async function selectScene(sceneId) {
         }
     }
 
+    const sceneColor = state.scenes[sceneId]?.color;
+    const iconStyle = sceneColor ? ` style="color: ${sceneColor};"` : '';
     const h1 = document.querySelector('header h1');
-    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
+    if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"${iconStyle}></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
     
     renderers.renderSoundboard();
     
@@ -411,9 +533,16 @@ export async function handleAudioFileSelect(event) {
                 name: file.name.replace(/\.[^/.]+$/, ""),
                 loop: false,
                 volume: 1.0,
+                pan: 0,
                 audioId: audioId,
                 triggerMode: DEFAULT_TRIGGER_MODE,
-                fadeDuration: 0.0,
+                fadeInDuration: 0.0,
+                fadeOutDuration: 0.0,
+                fadeInEasing: DEFAULT_FADE_EASING,
+                fadeOutEasing: DEFAULT_FADE_EASING,
+                reverse: false,
+                playbackRate: 1.0,
+                preservePitch: false,
                 effects: { enabled: false },
                 duration: duration, // Add duration to sound object
             };
@@ -462,9 +591,9 @@ export async function removeSound(soundId) {
     }
 }
 
-export async function saveCurrentSceneSounds(triggeredBy = "unknown") {
-    if (!state.currentSceneId) return;
-    const scene = state.scenes[state.currentSceneId];
+export async function saveCurrentSceneSounds(triggeredBy = "unknown", sceneId = state.currentSceneId) {
+    if (!sceneId) return;
+    const scene = state.scenes[sceneId];
     if (!scene) return;
 
     const sceneToSave = JSON.parse(JSON.stringify(scene));
@@ -581,6 +710,8 @@ async function handleZipImport(file) {
         importedScene.id = generateUniqueId('scn');
 
         for (const sound of importedScene.sounds) {
+            normalizeSoundFade(sound);
+            if ('fadeDuration' in sound) delete sound.fadeDuration;
             normalizeSoundTriggerMode(sound);
             if (sound.fileName) {
                 const audioFileInZip = zip.file(sound.fileName);
@@ -643,6 +774,8 @@ async function handleLegacyJsonImport(file) {
             existingNames.push(newName);
 
             for (const sound of importedScene.sounds) {
+                normalizeSoundFade(sound);
+                if ('fadeDuration' in sound) delete sound.fadeDuration;
                 normalizeSoundTriggerMode(sound);
                 if (sound.dataUrl) {
                     const blob = dataURLtoBlob(sound.dataUrl);
@@ -692,11 +825,14 @@ export function populateSceneModalList() {
         li.dataset.sceneId = scene.id;
         li.title = `${scene.name} (${scene.sounds.length} サウンド)`;
         if (scene.id === state.currentSceneId) li.classList.add('active');
+        const sceneColor = scene.color || '';
+        li.style.setProperty('--scene-color', sceneColor || 'transparent');
         li.innerHTML = `
             <span class="modal-scene-name">${escapeHtml(scene.name)}</span>
             <div class="modal-scene-actions">
                 <button title="名前を変更" data-action="rename"><i class="fas fa-pencil-alt"></i></button>
                 <button title="このシーンをエクスポート (.zip)" data-action="export"><i class="fas fa-file-archive"></i></button>
+                <button title="色を変更" data-action="color"><i class="fas fa-palette"></i></button>
                 <button title="削除" class="danger" data-action="delete" ${sceneIds.length <= 1 ? 'disabled' : ''}><i class="fas fa-trash-alt"></i></button>
             </div>
         `;

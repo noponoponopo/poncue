@@ -20,6 +20,10 @@ export const WAVEFORM_DOWNSAMPLE = 10;
 export const AUDIO_PARAM_RAMP_SECONDS = 0.01;
 export const MIN_GAIN_RAMP_SECONDS = 0.005;
 export const MIN_STOP_FADE_SECONDS = 0.015;
+
+// フェードカーブの種別。applyFadeCurve (06_audio.js) の FADE_EASING_FUNCTIONS と対応。
+export const FADE_EASING_TYPES = ['linear', 'easeIn', 'easeOut', 'sCurve'];
+export const DEFAULT_FADE_EASING = 'linear';
 export const WAVEFORM_COLORS_LIGHT = ['rgba(0, 123, 255, 0.6)', 'rgba(23, 162, 184, 0.6)', 'rgba(40, 167, 69, 0.6)', 'rgba(255, 193, 7, 0.6)', 'rgba(220, 53, 69, 0.6)', 'rgba(108, 117, 125, 0.6)'];
 export const WAVEFORM_COLORS_DARK = ['rgba(77, 171, 247, 0.6)', 'rgba(32, 201, 151, 0.6)', 'rgba(52, 199, 89, 0.6)', 'rgba(255, 204, 0, 0.6)', 'rgba(233, 69, 96, 0.6)', 'rgba(173, 181, 189, 0.6)'];
 
@@ -50,5 +54,19 @@ export const DEFAULT_EFFECT_SETTINGS = {
         enabled: false,
         threshold: -18,
         ratio: 3
+    },
+    distortion: {
+        enabled: false,
+        amount: 0.4
+    },
+    reverb: {
+        enabled: false,
+        decay: 2.0,
+        preDelay: 0.01,
+        wet: 0.35
+    },
+    limiter: {
+        enabled: false,
+        threshold: -1
     }
 };

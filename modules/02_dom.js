@@ -12,9 +12,13 @@ export function initDom() {
         // --- JS側で使うキー名 : HTMLのid属性 ---
         soundboard: 'soundboard',
         addSoundBtn: 'add-sound-btn',
+        stopAllBtn: 'stop-all-btn',
+        showModeBtn: 'show-mode-btn',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
         masterVolumeSlider: 'master-volume', // ★★★ HTMLのid="master-volume"に対応するよう修正
+        masterVolumeValue: 'master-volume-value',
+        masterLimiterControl: 'master-limiter-control',
         sceneSettingsBtn: 'scene-settings-btn',
         sceneSettingsModal: 'scene-settings-modal',
         modalCloseBtn: 'modal-close-btn',

@@ -10,8 +10,10 @@ export const state = {
     
     // Audio related state
     audioContext: null,
+    masterInputNode: null,
     masterGainNode: null,
     outputLimiterNode: null,
+    outputSafetyLimiterNode: null,
     masterAnalyserL: null,
     masterAnalyserR: null,
     masterMeterDataL: null,
@@ -26,8 +28,16 @@ export const state = {
     masterDelayNode: null,
     masterDelayReturn: null,
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
+    masterPanNode: null,
+    masterPan: { value: 0 },
+    masterDistortionNode: null,
+    masterDistortion: { amount: 0 },
+    masterReverbNode: null,
+    masterReverb: { decay: 2.0, wet: 0 },
+    masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
+    reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
     audioStartMetrics: [],
     
     // UI and Settings State
@@ -38,6 +48,7 @@ export const state = {
     showWaveform: true,
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
+    showMode: false,
     
     // DB instance
     db: null,
@@ -71,8 +82,9 @@ export const state = {
 // It's good practice to use functions to modify state
 // to easily track changes in the future.
 
-export function setAudioContext(context, gainNode, limiterNode = null) {
+export function setAudioContext(context, gainNode, limiterNode = null, inputNode = null) {
     state.audioContext = context;
+    state.masterInputNode = inputNode;
     state.masterGainNode = gainNode;
     state.outputLimiterNode = limiterNode;
 }

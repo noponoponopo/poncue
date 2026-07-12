@@ -224,6 +224,36 @@
       accent-color: var(--primary-color);
     }
 
+    .master-volume-value {
+      font-size: 0.8em;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      min-width: 3em;
+      text-align: right;
+      color: var(--text-color);
+    }
+
+    .header-limiter-control {
+      display: flex;
+      align-items: center;
+      min-width: 52px;
+    }
+
+    .header-limiter-knob {
+      gap: 1px;
+    }
+
+    .header-limiter-knob .knob {
+      width: 30px;
+      height: 30px;
+    }
+
+    .header-limiter-knob .knob-value,
+    .header-limiter-knob .knob-name {
+      font-size: 0.58rem;
+      line-height: 1;
+    }
+
     /* When volume control is inside master-effect-bar */
     #master-effect-bar .master-volume-control {
       margin-left: auto;
@@ -303,6 +333,29 @@
     }
 
     button#add-sound-btn:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    button#stop-all-btn {
+      background-color: var(--danger-color);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 500;
+      transition: background-color var(--transition-speed), transform 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button#stop-all-btn:hover {
+      background-color: var(--danger-hover);
+    }
+
+    button#stop-all-btn:active {
       transform: scale(0.98);
     }
 
@@ -601,6 +654,12 @@
       grid-template-columns: 64px 56px 1fr;
     }
 
+    .effect-checkbox-row label {
+      grid-column: 2 / -1;
+      font-size: 0.8em;
+      cursor: pointer;
+    }
+
     .effect-param-label {
       font-size: 0.8em;
       color: var(--secondary-color);
@@ -617,6 +676,23 @@
 
     .effect-slider {
       width: 100%;
+    }
+
+    .pan-slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pan-slider-wrap .effect-slider {
+      flex: 1;
+    }
+
+    .pan-marker {
+      font-size: 0.7em;
+      font-weight: 700;
+      color: var(--secondary-color);
+      flex-shrink: 0;
     }
 
     .effect-text-input {
@@ -641,6 +717,28 @@
       cursor: pointer;
     }
 
+    .effect-color-input {
+      width: 42px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+      justify-self: start;
+    }
+
+    .effect-color-clear-btn {
+      justify-self: end;
+      padding: 4px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.75em;
+      cursor: pointer;
+    }
+
     .modal-scene-list {
       list-style: none;
       padding: 0;
@@ -653,6 +751,7 @@
       align-items: center;
       padding: 10px 12px;
       border-bottom: 1px solid var(--border-color);
+      background-color: color-mix(in srgb, var(--card-bg) 90%, var(--scene-color, transparent) 10%);
       cursor: pointer;
       border-radius: var(--border-radius);
       transition: background-color var(--transition-speed);
@@ -663,11 +762,11 @@
     }
 
     .modal-scene-list li:hover {
-      background-color: var(--control-hover-bg);
+      background-color: color-mix(in srgb, var(--card-bg) 80%, var(--scene-color, transparent) 20%);
     }
 
     .modal-scene-list li.active {
-      background-color: color-mix(in srgb, var(--primary-color) 15%, transparent);
+      background-color: color-mix(in srgb, var(--card-bg) 75%, var(--scene-color, var(--primary-color)) 25%);
       font-weight: 500;
     }
 
@@ -917,6 +1016,16 @@
       background-color: color-mix(in srgb, var(--card-bg) 85%, var(--primary-color) 15%);
     }
 
+    .sound-button.has-color {
+      background-color: color-mix(in srgb, var(--pad-color) 35%, var(--card-bg));
+    }
+
+    .sound-button.has-color.playing,
+    body.dark-mode .sound-button.has-color.playing {
+      border-color: var(--pad-color);
+      background-color: color-mix(in srgb, var(--pad-color) 55%, var(--card-bg));
+    }
+
     .loop-indicator {
       position: absolute;
       top: 8px;
@@ -1016,8 +1125,7 @@
 
     /* --- 並び替えが無効な時のパッドのスタイル --- */
     .sound-button:not([draggable="true"]) {
-      cursor: default !important;
-      background-color: var(--card-bg);
+      cursor: pointer !important;
     }
 
     .sound-button:not([draggable="true"]):hover {
@@ -1231,6 +1339,19 @@
         font-size: 1.1em; /* Adjust icon size */
     }
 
+    /* --- Show Mode: hide editing UI, keep playback & volume --- */
+    body.show-mode #add-sound-btn,
+    body.show-mode #scene-settings-btn,
+    body.show-mode .sound-button .delete-button,
+    body.show-mode .sound-button .settings-button,
+    body.show-mode .sound-button .loop-button {
+        display: none !important;
+    }
+
+    body.show-mode .sound-button .volume-control {
+        transform: translateY(-5px);
+    }
+
     /* --- START: Master Effect Knob Bar --- */
     #master-effect-bar {
       display: flex;
@@ -1246,12 +1367,20 @@
       bottom: calc(var(--waveform-area-height) + var(--meter-area-height));
       left: 0;
       width: 100%;
+      overflow-x: auto;
+      flex-wrap: nowrap;
     }
 
     .knob-separator {
       display: flex;
       align-items: center;
       padding: 0 4px;
+    }
+
+    .knob-cluster {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
     }
 
     .knob-group-name {
