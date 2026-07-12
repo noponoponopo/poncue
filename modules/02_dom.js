@@ -14,6 +14,8 @@ export function initDom() {
         addSoundBtn: 'add-sound-btn',
         stopAllBtn: 'stop-all-btn',
         showModeBtn: 'show-mode-btn',
+        keyboardViewBtn: 'keyboard-view-btn',
+        keyboardView: 'keyboard-view',
         fileInput: 'file-input',
         importFileInput: 'import-file-input',
         masterVolumeControl: 'master-volume-control',

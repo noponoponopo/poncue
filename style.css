@@ -536,6 +536,88 @@
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 30%, transparent);
     }
 
+    #keyboard-view-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--secondary-color);
+      font-size: 0.9em;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    #keyboard-view-btn:hover,
+    #keyboard-view-btn.active {
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+      background-color: var(--control-hover-bg);
+    }
+
+    .keyboard-view[hidden] { display: none; }
+
+    .keyboard-view {
+      flex-shrink: 0;
+      padding: 14px 20px 16px;
+      border-bottom: 1px solid var(--border-color);
+      background: color-mix(in srgb, var(--card-bg) 92%, var(--primary-color) 8%);
+      overflow-x: auto;
+    }
+
+    .keyboard-view-heading {
+      max-width: 980px;
+      margin: 0 auto 10px;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .keyboard-view-heading span { color: var(--secondary-color); font-size: 0.78em; }
+    .keyboard-layout { min-width: 850px; max-width: 980px; margin: auto; display: grid; gap: 5px; }
+    .keyboard-row { display: flex; gap: 5px; }
+
+    .keyboard-key {
+      flex: var(--key-width) var(--key-width) 0;
+      min-width: calc(38px * var(--key-width));
+      height: 52px;
+      padding: 5px;
+      border: 1px solid var(--border-color);
+      border-bottom-width: 3px;
+      border-radius: 7px;
+      background: var(--card-bg);
+      color: var(--text-color);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+      overflow: hidden;
+      cursor: pointer;
+      touch-action: none;
+    }
+
+    .keyboard-key:disabled { cursor: default; opacity: 0.42; }
+    .keyboard-key:not(:disabled) { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); }
+    .keyboard-key:not(:disabled):hover { background: var(--control-hover-bg); }
+    .keyboard-key.is-pressed { transform: translateY(2px); border-bottom-width: 1px; background: var(--primary-color); color: white; }
+    .keyboard-key-label { font-size: 0.7em; font-weight: 700; }
+    .keyboard-sound-label { width: 100%; font-size: 0.62em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+
+    .keyboard-combinations {
+      min-width: 850px;
+      max-width: 980px;
+      margin: 10px auto 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .keyboard-combinations button { border: 1px solid var(--primary-color); border-radius: 999px; padding: 5px 9px; background: var(--card-bg); color: var(--text-color); cursor: pointer; touch-action: none; }
+    .keyboard-combinations kbd { color: var(--primary-color); font-weight: 700; margin-right: 6px; }
+
     /* Scene Settings Modal */
     .modal-overlay {
       position: fixed;
@@ -1913,7 +1995,8 @@
         width: 100%;
         flex-direction: row;
         justify-content: space-between;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        gap: 4px;
       }
 
 
@@ -1922,16 +2005,32 @@
         padding: 10px;
       }
 
-      button#add-sound-btn span {
+      button#add-sound-btn span,
+      button#stop-all-btn span,
+      #show-mode-btn span,
+      #keyboard-view-btn span {
         display: none;
+      }
+
+      button#add-sound-btn,
+      button#stop-all-btn,
+      #show-mode-btn,
+      #keyboard-view-btn,
+      #scene-settings-btn {
+        flex: 0 0 38px;
+        width: 38px;
+        height: 38px;
+        padding: 0;
       }
 
       #scene-settings-btn {
         order: 2;
-        width: 38px;
-        height: 38px;
         font-size: 1.2em;
+        margin-left: 0;
       }
+
+      .keyboard-view { padding: 10px; }
+      .keyboard-view-heading { min-width: 850px; }
 
       .switch {
         order: 3;

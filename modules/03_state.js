@@ -49,6 +49,7 @@ export const state = {
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
     showMode: false,
+    keyboardViewVisible: false,
     
     // DB instance
     db: null,

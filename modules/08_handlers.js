@@ -13,6 +13,7 @@ import {
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
+import { renderKeyboardView, setKeyboardKeyPressed } from './11_keyboard_view.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -76,7 +77,12 @@ export function setupEventListeners() {
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
+    dom.keyboardViewBtn?.addEventListener('click', toggleKeyboardView);
+    dom.keyboardView?.addEventListener('pointerdown', handleVirtualKeyDown);
+    dom.keyboardView?.addEventListener('pointerup', handleVirtualKeyUp);
+    dom.keyboardView?.addEventListener('pointercancel', handleVirtualKeyUp);
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
+    updateKeyboardViewVisibility();
 
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
@@ -141,6 +147,55 @@ export function setupEventListeners() {
     dom.showModeBtn?.addEventListener('click', toggleShowMode);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+}
+
+function updateKeyboardViewVisibility() {
+    if (!dom.keyboardView || !dom.keyboardViewBtn) return;
+    dom.keyboardView.hidden = !state.keyboardViewVisible;
+    dom.keyboardViewBtn.classList.toggle('active', state.keyboardViewVisible);
+    dom.keyboardViewBtn.setAttribute('aria-pressed', String(state.keyboardViewVisible));
+    dom.keyboardViewBtn.setAttribute('aria-label', state.keyboardViewVisible ? 'キーボードビューを閉じる' : 'キーボードビューを表示');
+    if (state.keyboardViewVisible) renderKeyboardView();
+}
+
+function toggleKeyboardView() {
+    updateState({ keyboardViewVisible: !state.keyboardViewVisible });
+    saveSetting('keyboardViewVisible', state.keyboardViewVisible);
+    updateKeyboardViewVisibility();
+}
+
+function handleVirtualKeyDown(event) {
+    const key = event.target.closest('button[data-shortcut]');
+    if (!key || key.disabled || event.button !== 0) return;
+    event.preventDefault();
+    key.setPointerCapture?.(event.pointerId);
+    setKeyboardKeyPressed(key.dataset.shortcut, true);
+    triggerShortcutDown(key.dataset.shortcut, `virtual:${event.pointerId}`);
+}
+
+function handleVirtualKeyUp(event) {
+    const key = event.target.closest('button[data-shortcut]')
+        || dom.keyboardView?.querySelector(`button[data-shortcut].is-pressed`);
+    if (!key) return;
+    setKeyboardKeyPressed(key.dataset.shortcut, false);
+    triggerShortcutUp(key.dataset.shortcut, `virtual:${event.pointerId}`);
+}
+
+function triggerShortcutDown(shortcut, inputId) {
+    const soundId = state.shortcuts[shortcut];
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+    const button = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
+    if (!sound || !button) return;
+    const mode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
+    if (mode === 'momentary') startHoldPlayback(soundId, button, inputId);
+    else if (mode === 'retrigger') startRetriggerPlayback(soundId, button);
+    else handleSoundButtonClick(soundId, button);
+}
+
+function triggerShortcutUp(shortcut, inputId) {
+    const soundId = state.shortcuts[shortcut];
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
+    if (sound?.triggerMode === 'momentary') endHoldPlayback(soundId, inputId);
 }
 
 
@@ -435,13 +490,15 @@ async function handleKeyDown(event) {
         return;
     }
 
+    const normalizedKey = normalizeKey(event);
+    setKeyboardKeyPressed(normalizedKey, true);
+
     if (event.key === 'Escape') {
         event.preventDefault();
         stopAllSounds(true);
         return;
     }
 
-    const normalizedKey = normalizeKey(event);
     const soundId = state.shortcuts[normalizedKey];
 
     if (soundId) {
@@ -468,6 +525,7 @@ function handleKeyUp(event) {
     }
 
     const normalizedKey = normalizeKey(event);
+    setKeyboardKeyPressed(normalizedKey, false);
     const soundId = state.shortcuts[normalizedKey];
 
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
@@ -770,6 +828,7 @@ function renderSoundboard() {
     }
     checkEmptyState(sounds.length);
     updateDraggableState();
+    if (state.keyboardViewVisible) renderKeyboardView();
 }
 
 // Assign the renderer function to the exported object

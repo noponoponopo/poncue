@@ -346,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'keyboardViewVisible'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -367,7 +367,8 @@ export async function loadSettings() {
             masterPan: settings.masterPan ?? { value: 0 },
             masterDistortion: settings.masterDistortion ?? { amount: 0 },
             masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 },
-            masterLimiter: settings.masterLimiter ?? { threshold: -1 }
+            masterLimiter: settings.masterLimiter ?? { threshold: -1 },
+            keyboardViewVisible: settings.keyboardViewVisible ?? false
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
