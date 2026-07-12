@@ -27,6 +27,7 @@ function debounce(func, delay) {
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
+let freeLayoutDrag = null;
 
 // --- Event Listener Setup ---
 export function setupEventListeners() {
@@ -77,6 +78,7 @@ export function setupEventListeners() {
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
+    updateFreeLayoutControls();
 
     // Scene Settings Modal
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
@@ -109,6 +111,9 @@ export function setupEventListeners() {
     dom.perfLowRadio?.addEventListener('change', handlePerformanceModeChange);
     dom.interactionClickRadio?.addEventListener('change', handleInteractionModeChange);
     dom.interactionDragRadio?.addEventListener('change', handleInteractionModeChange);
+    dom.layoutGridRadio?.addEventListener('change', handleLayoutModeChange);
+    dom.layoutFreeRadio?.addEventListener('change', handleLayoutModeChange);
+    dom.resetFreeLayoutBtn?.addEventListener('click', resetFreeLayout);
     dom.waveformToggleCheckbox?.addEventListener('change', handleWaveformToggleChange);
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
@@ -123,6 +128,11 @@ export function setupEventListeners() {
     dom.soundboard.addEventListener('touchmove', handleTouchMove, { passive: false });
     dom.soundboard.addEventListener('touchend', handleTouchEnd);
     dom.soundboard.addEventListener('touchcancel', handleTouchCancel);
+    dom.soundboard.addEventListener('pointerdown', handleFreeLayoutPointerDown);
+    dom.soundboard.addEventListener('pointermove', handleFreeLayoutPointerMove);
+    dom.soundboard.addEventListener('pointerup', handleFreeLayoutPointerUp);
+    dom.soundboard.addEventListener('pointercancel', handleFreeLayoutPointerUp);
+    dom.soundboard.addEventListener('keydown', handleFreeLayoutKeyDown);
     
     window.addEventListener('resize', () => {
         if (resizeFrameId !== null) return;
@@ -130,6 +140,7 @@ export function setupEventListeners() {
             resizeFrameId = null;
             setupCanvasResize();
             triggerWaveformUpdate();
+            if (state.layoutMode === 'free') positionFreeLayoutPads();
         });
     });
 
@@ -188,6 +199,26 @@ function handleInteractionModeChange(event) {
     updateState({ isSortableEnabled: isDragMode });
     saveSetting('isSortableEnabled', state.isSortableEnabled);
     updateDraggableState();
+    updateFreeLayoutEditState();
+}
+
+function handleLayoutModeChange(event) {
+    const layoutMode = event.target.value === 'free' ? 'free' : 'grid';
+    updateState({ layoutMode });
+    saveSetting('layoutMode', layoutMode);
+    renderers.renderSoundboard();
+    updateFreeLayoutControls();
+}
+
+async function resetFreeLayout() {
+    const sounds = state.scenes[state.currentSceneId]?.sounds || [];
+    sounds.forEach(sound => { delete sound.freePosition; });
+    await saveCurrentSceneSounds('resetFreeLayout');
+    positionFreeLayoutPads();
+}
+
+function updateFreeLayoutControls() {
+    if (dom.resetFreeLayoutBtn) dom.resetFreeLayoutBtn.disabled = state.layoutMode !== 'free';
 }
 
 function handleWaveformToggleChange(event) {
@@ -201,6 +232,7 @@ function handlePadSizeChange(event) {
     updateState({ padSize: newSize });
     dom.padSizeValue.textContent = newSize;
     updatePadSizeCSS(newSize);
+    if (state.layoutMode === 'free') positionFreeLayoutPads();
 }
 
 function handlePerformanceModeChange(event) {
@@ -599,9 +631,129 @@ function handleProgressBarClick(event, soundId, soundButtonElement) {
     }
 }
 
+function getDefaultFreePosition(index) {
+    const padSize = state.padSize;
+    const gap = 20;
+    const inset = 20;
+    const width = Math.max(padSize + inset * 2, dom.soundboard.clientWidth);
+    const columns = Math.max(1, Math.floor((width - inset * 2 + gap) / (padSize + gap)));
+    return {
+        x: inset + (index % columns) * (padSize + gap),
+        y: inset + Math.floor(index / columns) * (padSize + gap)
+    };
+}
+
+function positionFreeLayoutPads() {
+    if (!dom.soundboard || state.layoutMode !== 'free') return;
+    const scene = state.scenes[state.currentSceneId];
+    if (!scene) return;
+    const padSize = state.padSize;
+    const maxX = Math.max(0, dom.soundboard.clientWidth - padSize);
+    let maxBottom = Math.max(420, padSize + 40);
+
+    scene.sounds.forEach((sound, index) => {
+        const button = dom.soundboard.querySelector(`.sound-button[data-id="${sound.id}"]`);
+        if (!button) return;
+        const fallback = getDefaultFreePosition(index);
+        const saved = sound.freePosition;
+        const rawX = Number.isFinite(saved?.x) ? saved.x : fallback.x;
+        const rawY = Number.isFinite(saved?.y) ? saved.y : fallback.y;
+        const x = Math.max(0, Math.min(maxX, rawX));
+        const y = Math.max(0, rawY);
+        button.style.left = `${x}px`;
+        button.style.top = `${y}px`;
+        maxBottom = Math.max(maxBottom, y + padSize + 20);
+    });
+    dom.soundboard.style.minHeight = `${maxBottom}px`;
+    updateFreeLayoutEditState();
+}
+
+function updateFreeLayoutEditState() {
+    if (!dom.soundboard) return;
+    const editable = state.layoutMode === 'free' && state.isSortableEnabled;
+    dom.soundboard.classList.toggle('free-layout-editing', editable);
+    dom.soundboard.querySelectorAll('.sound-button').forEach(button => {
+        button.tabIndex = editable ? 0 : -1;
+        if (editable) button.setAttribute('aria-label', `${button.title}を移動`);
+        else button.removeAttribute('aria-label');
+    });
+}
+
+function handleFreeLayoutPointerDown(event) {
+    if (state.layoutMode !== 'free' || !state.isSortableEnabled || event.button !== 0) return;
+    if (event.target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button')) return;
+    const button = event.target.closest('.sound-button');
+    if (!button) return;
+    event.preventDefault();
+    const rect = button.getBoundingClientRect();
+    freeLayoutDrag = {
+        pointerId: event.pointerId,
+        button,
+        soundId: button.dataset.id,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false
+    };
+    try { button.setPointerCapture?.(event.pointerId); } catch (_) { /* pointer may already be cancelled */ }
+    button.classList.add('free-dragging');
+}
+
+function handleFreeLayoutPointerMove(event) {
+    if (!freeLayoutDrag || event.pointerId !== freeLayoutDrag.pointerId) return;
+    event.preventDefault();
+    const boardRect = dom.soundboard.getBoundingClientRect();
+    const maxX = Math.max(0, dom.soundboard.clientWidth - state.padSize);
+    const x = Math.max(0, Math.min(maxX, event.clientX - boardRect.left - freeLayoutDrag.offsetX));
+    const y = Math.max(0, Math.min(10000, event.clientY - boardRect.top - freeLayoutDrag.offsetY));
+    if (Math.abs(event.clientX - freeLayoutDrag.startX) > 3 || Math.abs(event.clientY - freeLayoutDrag.startY) > 3) freeLayoutDrag.moved = true;
+    freeLayoutDrag.button.style.left = `${Math.round(x)}px`;
+    freeLayoutDrag.button.style.top = `${Math.round(y)}px`;
+    dom.soundboard.style.minHeight = `${Math.max(420, y + state.padSize + 20)}px`;
+}
+
+function handleFreeLayoutPointerUp(event) {
+    if (!freeLayoutDrag || event.pointerId !== freeLayoutDrag.pointerId) return;
+    const drag = freeLayoutDrag;
+    freeLayoutDrag = null;
+    drag.button.classList.remove('free-dragging');
+    if (!drag.moved) return;
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === drag.soundId);
+    if (!sound) return;
+    sound.freePosition = {
+        x: Math.max(0, Math.round(parseFloat(drag.button.style.left) || 0)),
+        y: Math.max(0, Math.round(parseFloat(drag.button.style.top) || 0))
+    };
+    debouncedSaveCurrentSceneSounds(`freeLayout-${drag.soundId}`);
+    positionFreeLayoutPads();
+}
+
+function handleFreeLayoutKeyDown(event) {
+    if (state.layoutMode !== 'free' || !state.isSortableEnabled) return;
+    const button = event.target.closest('.sound-button');
+    if (!button || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 20 : 5;
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === button.dataset.id);
+    if (!sound) return;
+    const current = { x: parseFloat(button.style.left) || 0, y: parseFloat(button.style.top) || 0 };
+    if (event.key === 'ArrowLeft') current.x -= step;
+    if (event.key === 'ArrowRight') current.x += step;
+    if (event.key === 'ArrowUp') current.y -= step;
+    if (event.key === 'ArrowDown') current.y += step;
+    sound.freePosition = {
+        x: Math.max(0, Math.min(dom.soundboard.clientWidth - state.padSize, Math.round(current.x))),
+        y: Math.max(0, Math.round(current.y))
+    };
+    debouncedSaveCurrentSceneSounds(`freeLayoutKey-${sound.id}`);
+    positionFreeLayoutPads();
+}
+
 // --- Drag & Drop Handlers ---
 function handleDragStart(event) {
-    if (!state.isSortableEnabled) { event.preventDefault(); return; }
+    if (!state.isSortableEnabled || state.layoutMode === 'free') { event.preventDefault(); return; }
     const target = event.target.closest('.sound-button');
     if (target?.draggable) {
         updateState({ draggedElement: target, draggedSoundId: target.dataset.id });
@@ -611,7 +763,7 @@ function handleDragStart(event) {
     }
 }
 function handleDragOver(event) {
-    if (!state.isSortableEnabled || !state.draggedElement) return;
+    if (!state.isSortableEnabled || state.layoutMode === 'free' || !state.draggedElement) return;
     event.preventDefault();
     const targetElement = event.target.closest('.sound-button');
     if (targetElement && targetElement !== state.draggedElement) {
@@ -625,7 +777,7 @@ function handleDragLeave(event) {
     }
 }
 async function handleDrop(event) {
-    if (!state.isSortableEnabled || !state.draggedElement) return;
+    if (!state.isSortableEnabled || state.layoutMode === 'free' || !state.draggedElement) return;
     event.preventDefault();
     const dropTarget = event.target.closest('.sound-button');
     if (dropTarget && dropTarget !== state.draggedElement) {
@@ -657,7 +809,7 @@ let touchStartY = 0;
 let touchMoveOccurred = false;
 
 function handleTouchStart(event) {
-    if (!state.isSortableEnabled) return;
+    if (!state.isSortableEnabled || state.layoutMode === 'free') return;
     const targetButton = event.target.closest('.sound-button');
     if (!targetButton || isDraggingViaTouch || event.target.closest('.volume-control')) return;
     touchMoveOccurred = false;
@@ -751,6 +903,11 @@ import { updateButtonUI } from './05_ui.js';
 function renderSoundboard() {
     if (!dom.soundboard) return;
     dom.soundboard.innerHTML = '';
+    dom.soundboard.classList.toggle('free-layout', state.layoutMode === 'free');
+    if (state.layoutMode !== 'free') {
+        dom.soundboard.classList.remove('free-layout-editing');
+        dom.soundboard.style.minHeight = '';
+    }
     
     const currentScene = state.scenes[state.currentSceneId];
     if (!currentScene) {
@@ -770,6 +927,7 @@ function renderSoundboard() {
     }
     checkEmptyState(sounds.length);
     updateDraggableState();
+    if (state.layoutMode === 'free') positionFreeLayoutPads();
 }
 
 // Assign the renderer function to the exported object

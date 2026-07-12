@@ -346,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'layoutMode'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -357,6 +357,7 @@ export async function loadSettings() {
             currentSceneId: settings.currentSceneId ?? null,
             masterVolume: settings.masterVolume ?? 1.0,
             isSortableEnabled: settings.isSortableEnabled ?? false,
+            layoutMode: settings.layoutMode === 'free' ? 'free' : 'grid',
             shortcuts: settings.shortcuts ?? {},
             performanceMode: settings.performanceMode ?? DEFAULT_PERFORMANCE_MODE,
             showWaveform: settings.showWaveform ?? true,
@@ -377,6 +378,8 @@ export async function loadSettings() {
         setMasterLimiterThreshold(state.masterLimiter.threshold);
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
         if (dom.interactionDragRadio) dom.interactionDragRadio.checked = state.isSortableEnabled;
+        if (dom.layoutGridRadio) dom.layoutGridRadio.checked = state.layoutMode === 'grid';
+        if (dom.layoutFreeRadio) dom.layoutFreeRadio.checked = state.layoutMode === 'free';
         if (dom.perfHighRadio) dom.perfHighRadio.checked = (state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE);
         if (dom.perfLowRadio) dom.perfLowRadio.checked = (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY);
         if (dom.waveformToggleCheckbox) dom.waveformToggleCheckbox.checked = state.showWaveform;

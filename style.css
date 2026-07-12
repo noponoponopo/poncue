@@ -999,13 +999,26 @@
       /* モバイルでの表示順序 */
     }
 
-    .performance-mode-setting {
+    .performance-mode-setting,
+    .layout-mode-setting {
       display: flex;
       flex-direction: column;
       gap: 5px;
       font-size: 0.9em;
       color: var(--secondary-color);
     }
+
+    .reset-free-layout-btn {
+      margin-top: 4px;
+      padding: 6px 9px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      background: var(--card-bg);
+      color: var(--text-color);
+      cursor: pointer;
+    }
+
+    .reset-free-layout-btn:disabled { opacity: 0.45; cursor: default; }
 
     .popup-setting,
     .sortable-setting,
@@ -1116,6 +1129,45 @@
       flex-grow: 1;
       /* main が利用可能なスペースを埋めるように */
       width: 100%;
+    }
+
+    main.free-layout {
+      display: block;
+      position: relative;
+      padding: 0;
+      background-image: radial-gradient(circle, color-mix(in srgb, var(--border-color) 75%, transparent) 1px, transparent 1px);
+      background-size: 20px 20px;
+      overflow: hidden;
+    }
+
+    main.free-layout.free-layout-editing {
+      outline: 2px dashed color-mix(in srgb, var(--primary-color) 55%, transparent);
+      outline-offset: -6px;
+    }
+
+    main.free-layout .sound-button {
+      position: absolute;
+      width: var(--button-min-size);
+      height: var(--button-min-size);
+      min-height: var(--button-min-size);
+    }
+
+    main.free-layout.free-layout-editing .sound-button {
+      cursor: move;
+      touch-action: none;
+    }
+
+    main.free-layout .sound-button.free-dragging {
+      z-index: 20;
+      transform: scale(1.02);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+      transition: none;
+    }
+
+    main.free-layout .empty-state-message,
+    main.free-layout .fallback-message {
+      position: relative;
+      margin: 20px;
     }
 
     .fallback-message {
@@ -1913,7 +1965,8 @@
         width: 100%;
         flex-direction: row;
         justify-content: space-between;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        gap: 4px;
       }
 
 
@@ -1922,15 +1975,26 @@
         padding: 10px;
       }
 
-      button#add-sound-btn span {
+      button#add-sound-btn span,
+      button#stop-all-btn span,
+      #show-mode-btn span {
         display: none;
+      }
+
+      button#add-sound-btn,
+      button#stop-all-btn,
+      #show-mode-btn,
+      #scene-settings-btn {
+        flex: 0 0 38px;
+        width: 38px;
+        height: 38px;
+        padding: 0;
       }
 
       #scene-settings-btn {
         order: 2;
-        width: 38px;
-        height: 38px;
         font-size: 1.2em;
+        margin-left: 0;
       }
 
       .switch {

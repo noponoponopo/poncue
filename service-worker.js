@@ -1,4 +1,4 @@
-const VERSION = '3.12.2';
+const VERSION = '3.13.0';
 const CACHE_NAME = `ponndashi-cache-v${VERSION}`;
 
 const urlsToCache = [

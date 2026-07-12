@@ -45,6 +45,7 @@ export const state = {
     modalSelectedSceneId: null,
     showErrorPopups: true,
     isSortableEnabled: false,
+    layoutMode: 'grid',
     showWaveform: true,
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
