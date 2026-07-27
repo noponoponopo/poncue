@@ -8,6 +8,7 @@ import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORM
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
+import { setKeyboardKeyProgress } from './11_keyboard_view.js';
 import * as Tone from 'tone';
 
 // --- AudioContext Management ---
@@ -385,6 +386,9 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
+            progressPercent: 0,
+            stopAfterLoop: false,
+            loopStopTime: null,
             playbackPosition: Math.max(0, startOffset),
             playbackPositionContextTime: state.audioContext.currentTime,
             playbackRate: Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1)),
@@ -531,6 +535,56 @@ export function seekSound(soundId, seekTime) {
             const soundButton = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
             playSound(soundId, soundButton, performance.now(), seekTime);
         }, MIN_STOP_FADE_SECONDS * 1000);
+    }
+}
+
+export function updateActiveSoundLoop(soundId, loop) {
+    const audioInfo = state.activeAudios[soundId];
+    if (!audioInfo || !state.audioContext) return;
+
+    const now = state.audioContext.currentTime;
+    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
+    let position = getCurrentSourcePosition(audioInfo);
+    const isGrainPlayer = audioInfo.sourceNode instanceof Tone.GrainPlayer;
+
+    if (isGrainPlayer && !loop && Number.isFinite(duration) && duration > 0) {
+        // GrainPlayer は loop=false への変更時に累積位置を見て即時停止するため、
+        // 現在の周回の終端まで再生してから停止する。
+        const loopPosition = Math.max(0, position % duration);
+        const remaining = (duration - loopPosition) / Math.max(0.001, audioInfo.playbackRate);
+        audioInfo.stopAfterLoop = true;
+        audioInfo.loopStopTime = now + remaining;
+        audioInfo.sourceNode.stop(audioInfo.loopStopTime);
+        position = loopPosition;
+    } else if (isGrainPlayer && loop && audioInfo.stopAfterLoop) {
+        // 解除直後に再度ONにした場合は、終端停止の予約をリスタートで打ち消す。
+        const loopPosition = Number.isFinite(duration) && duration > 0
+            ? Math.max(0, position % duration)
+            : 0;
+        audioInfo.sourceNode.restart(now, loopPosition);
+        audioInfo.stopAfterLoop = false;
+        audioInfo.loopStopTime = null;
+        audioInfo.playbackPosition = loopPosition;
+        audioInfo.playbackPositionContextTime = now;
+        position = loopPosition;
+    } else if (!loop && !isGrainPlayer) {
+        if (Number.isFinite(duration) && duration > 0) {
+            position = Math.max(0, Math.min(duration, position));
+        }
+    }
+
+    if (audioInfo.audioElement) {
+        audioInfo.audioElement.loop = loop;
+    }
+
+    if (Number.isFinite(duration) && duration > 0) {
+        const progressPercent = Math.min(100, Math.max(0, (position / duration) * 100));
+        audioInfo.progressPercent = progressPercent;
+        const soundButton = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+        soundButton?.style.setProperty('--progress', `${progressPercent}%`);
+        const progressBarValue = soundButton?.querySelector('.progress-bar-value');
+        if (progressBarValue) progressBarValue.style.width = `${progressPercent}%`;
+        setKeyboardKeyProgress(soundId, progressPercent);
     }
 }
 
@@ -798,14 +852,20 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
         if (!soundButtonElement?.isConnected) {
             soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
         }
-        const progressBarValue = soundButtonElement?.querySelector('.progress-bar-value');
         const timeDisplay = soundButtonElement?.querySelector('.time-display');
-        if (!progressBarValue || !timeDisplay) return;
+        if (!soundButtonElement || !timeDisplay) return;
 
         const sourcePosition = getCurrentSourcePosition(audioInfo);
-        const currentTime = soundData?.loop ? sourcePosition % duration : Math.min(duration, sourcePosition);
+        const currentTime = soundData?.loop || audioInfo.stopAfterLoop
+            ? sourcePosition % duration
+            : Math.min(duration, sourcePosition);
 
-        progressBarValue.style.width = `${Math.min(100, (currentTime / duration) * 100)}%`;
+        const progressPercent = Math.min(100, (currentTime / duration) * 100);
+        audioInfo.progressPercent = progressPercent;
+        soundButtonElement.style.setProperty('--progress', `${progressPercent}%`);
+        setKeyboardKeyProgress(soundId, progressPercent);
+        const progressBarValue = soundButtonElement?.querySelector('.progress-bar-value');
+        if (progressBarValue) progressBarValue.style.width = `${progressPercent}%`;
         timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
     };
 

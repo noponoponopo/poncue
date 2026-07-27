@@ -14,6 +14,14 @@ export const LONG_PRESS_DURATION = 300;
 export const TRIGGER_MODES = ['toggle', 'momentary', 'retrigger'];
 export const DEFAULT_TRIGGER_MODE = 'toggle';
 
+// キーボードビューの配列。state.keyboardLayout と 11_keyboard_view.js の LAYOUTS のキーと対応。
+export const KEYBOARD_LAYOUTS = ['us', 'jis', 'mac-jis', 'mac-us', 'dvorak'];
+export const DEFAULT_KEYBOARD_LAYOUT = 'us';
+
+// ショートカット操作時にブラウザ既定動作（ページスクロール、フォーカス中ボタンの活性クリック等）
+// を一律で抑制するキー。Space はサウンド未割当でもスクロールを防ぐためここに含める。
+export const SCROLL_PREVENT_KEYS = new Set(['Space', 'PageUp', 'PageDown', 'Home', 'End', 'Left', 'Down', 'Up', 'Right']);
+
 export const ANALYSER_FFT_SIZE = 256;
 export const WAVEFORM_SECONDS_AHEAD = 5;
 export const WAVEFORM_DOWNSAMPLE = 10;

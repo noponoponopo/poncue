@@ -5,7 +5,7 @@ import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
 import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -346,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'keyboardViewVisible'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'keyboardViewVisible', 'keyboardLayout'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -368,7 +368,8 @@ export async function loadSettings() {
             masterDistortion: settings.masterDistortion ?? { amount: 0 },
             masterReverb: settings.masterReverb ?? { decay: 2.0, wet: 0 },
             masterLimiter: settings.masterLimiter ?? { threshold: -1 },
-            keyboardViewVisible: settings.keyboardViewVisible ?? false
+            keyboardViewVisible: settings.keyboardViewVisible ?? false,
+            keyboardLayout: KEYBOARD_LAYOUTS.includes(settings.keyboardLayout) ? settings.keyboardLayout : DEFAULT_KEYBOARD_LAYOUT
         });
         
         localStorage.setItem('darkModePref', settings.darkMode ?? 'system');
@@ -384,6 +385,7 @@ export async function loadSettings() {
         if (dom.padSizeSlider) dom.padSizeSlider.value = state.padSize;
         if (dom.padSizeValue) dom.padSizeValue.textContent = state.padSize;
         updatePadSizeCSS(state.padSize);
+        if (dom.keyboardLayoutSelect) dom.keyboardLayoutSelect.value = state.keyboardLayout;
     } catch (err) {
         if (state.showErrorPopups) showAlert("設定の読み込みに失敗しました。");
     }

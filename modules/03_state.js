@@ -1,6 +1,6 @@
 // modules/03_state.js
 
-import { DEFAULT_PERFORMANCE_MODE } from './01_config.js';
+import { DEFAULT_PERFORMANCE_MODE, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
 
 // --- Application State ---
 export const state = {
@@ -50,6 +50,7 @@ export const state = {
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
     showMode: false,
     keyboardViewVisible: false,
+    keyboardLayout: DEFAULT_KEYBOARD_LAYOUT, // 'us' or 'jis' (11_keyboard_view.js の LAYOUTS と対応)
     
     // DB instance
     db: null,

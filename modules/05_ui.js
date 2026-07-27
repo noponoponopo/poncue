@@ -4,6 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
+import { setKeyboardKeyPlaying } from './11_keyboard_view.js';
 import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
 
 const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
@@ -1009,10 +1010,12 @@ export function updateButtonUI(soundId, soundButtonElement, isPlaying) {
         iconElement.classList.toggle('fa-play', !isPlaying);
         iconElement.classList.toggle('fa-stop', isPlaying);
     }
+    setKeyboardKeyPlaying(soundId, isPlaying);
 }
 
 export function resetProgressBar(soundButtonElement) {
     if (!soundButtonElement) return;
+    soundButtonElement.style.setProperty('--progress', '0%');
     const progressBarValueElement = soundButtonElement.querySelector('.progress-bar-value');
     if (progressBarValueElement) { progressBarValueElement.style.width = '0%'; }
     const timeDisplayElement = soundButtonElement.querySelector('.time-display');

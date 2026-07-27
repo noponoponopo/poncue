@@ -33,6 +33,7 @@ export function initDom() {
         waveformToggleCheckbox: 'waveform-toggle-checkbox',
         padSizeSlider: 'pad-size-slider',
         padSizeValue: 'pad-size-value',
+        keyboardLayoutSelect: 'keyboard-layout-select',
         masterEffectBar: 'master-effect-bar',
         levelMeterArea: 'level-meter-area',
         waveformDisplayArea: 'waveform-display-area',

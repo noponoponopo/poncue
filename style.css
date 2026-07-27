@@ -578,7 +578,27 @@
 
     .keyboard-view-heading span { color: var(--secondary-color); font-size: 0.78em; }
     .keyboard-layout { min-width: 850px; max-width: 980px; margin: auto; display: grid; gap: 5px; }
-    .keyboard-row { display: flex; gap: 5px; }
+    .keyboard-fn-row { display: flex; gap: 5px; }
+    .keyboard-fn-row .keyboard-key { flex: var(--key-width) var(--key-width) 0; min-width: 0; }
+    .keyboard-main { display: grid; grid-template-columns: repeat(60, 1fr); gap: 5px; }
+    .keyboard-main .keyboard-key { flex: initial; min-width: 0; width: auto; }
+    .keyboard-main { position: relative; }
+    .keyboard-arrow-cluster {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 20%;
+      height: calc((100% - 20px) / 5);
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 5px;
+    }
+    .keyboard-arrow-cluster .keyboard-key { width: auto; min-width: 0; min-height: 0; height: auto; }
+    .keyboard-arrow-left { grid-row: 1 / span 2; }
+    .keyboard-arrow-right { grid-column: 3; grid-row: 1 / span 2; }
+    .keyboard-arrow-down,
+    .keyboard-arrow-up { grid-column: 2; }
 
     .keyboard-key {
       flex: var(--key-width) var(--key-width) 0;
@@ -588,7 +608,15 @@
       border: 1px solid var(--border-color);
       border-bottom-width: 3px;
       border-radius: 7px;
-      background: var(--card-bg);
+      background-color: var(--card-bg);
+      /* 進捗塗り。--progress(0-100%) まで --progress-fill 色で左から右に塗る */
+      --progress: 0%;
+      --progress-fill: transparent;
+      background-image: linear-gradient(to right,
+          var(--progress-fill) 0%,
+          var(--progress-fill) var(--progress),
+          transparent var(--progress),
+          transparent 100%);
       color: var(--text-color);
       display: flex;
       flex-direction: column;
@@ -601,7 +629,11 @@
 
     .keyboard-key:disabled { cursor: default; opacity: 0.42; }
     .keyboard-key:not(:disabled) { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); }
-    .keyboard-key:not(:disabled):hover { background: var(--control-hover-bg); }
+    .keyboard-key:not(:disabled):hover { background-color: var(--control-hover-bg); }
+    /* 再生中: ボーダーを primary 系にして進捗塗りを有効化 */
+    .keyboard-key.is-playing { border-color: var(--primary-color); --progress-fill: color-mix(in srgb, var(--primary-color) 38%, transparent); }
+    body.dark-mode .keyboard-key.is-playing { --progress-fill: color-mix(in srgb, var(--primary-color) 48%, transparent); }
+    /* 押下中は全体を primary 色で塗りつぶす（進捗塗りより優先） */
     .keyboard-key.is-pressed { transform: translateY(2px); border-bottom-width: 1px; background: var(--primary-color); color: white; }
     .keyboard-key-label { font-size: 0.7em; font-weight: 700; }
     .keyboard-sound-label { width: 100%; font-size: 0.62em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
@@ -615,7 +647,25 @@
       gap: 6px;
     }
 
-    .keyboard-combinations button { border: 1px solid var(--primary-color); border-radius: 999px; padding: 5px 9px; background: var(--card-bg); color: var(--text-color); cursor: pointer; touch-action: none; }
+    .keyboard-combinations button {
+      border: 1px solid var(--primary-color);
+      border-radius: 999px;
+      padding: 5px 9px;
+      background-color: var(--card-bg);
+      --progress: 0%;
+      --progress-fill: transparent;
+      background-image: linear-gradient(to right,
+          var(--progress-fill) 0%,
+          var(--progress-fill) var(--progress),
+          transparent var(--progress),
+          transparent 100%);
+      color: var(--text-color);
+      cursor: pointer;
+      touch-action: none;
+      overflow: hidden;
+    }
+    .keyboard-combinations button.is-playing { --progress-fill: color-mix(in srgb, var(--primary-color) 38%, transparent); }
+    body.dark-mode .keyboard-combinations button.is-playing { --progress-fill: color-mix(in srgb, var(--primary-color) 48%, transparent); }
     .keyboard-combinations kbd { color: var(--primary-color); font-weight: 700; margin-right: 6px; }
 
     /* Scene Settings Modal */
@@ -1089,6 +1139,26 @@
       color: var(--secondary-color);
     }
 
+    .keyboard-layout-setting {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 0.9em;
+      color: var(--secondary-color);
+    }
+
+    .keyboard-layout-setting select {
+      width: 100%;
+      max-width: 220px;
+      padding: 5px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.95em;
+      cursor: pointer;
+    }
+
     .popup-setting,
     .sortable-setting,
     .theme-setting,
@@ -1226,6 +1296,14 @@
     .sound-button {
       position: relative;
       background-color: var(--card-bg);
+      /* 進捗塗り。--progress(0-100%) まで --progress-fill 色で左から右に塗る。 */
+      --progress: 0%;
+      --progress-fill: transparent;
+      background-image: linear-gradient(to right,
+          var(--progress-fill) 0%,
+          var(--progress-fill) var(--progress),
+          transparent var(--progress),
+          transparent 100%);
       border: 1px solid var(--border-color);
       border-radius: var(--border-radius) var(--border-radius) 0 0;
       box-shadow: var(--shadow);
@@ -1236,7 +1314,7 @@
       align-items: center;
       padding: calc(var(--button-min-size) * var(--sound-button-padding-ratio));
       overflow: hidden;
-      transition: transform 0.2s ease-out, box-shadow var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed);
+      transition: transform 0.2s ease-out, box-shadow var(--transition-speed), border-color var(--transition-speed);
       aspect-ratio: 1 / 1;
       min-height: var(--button-min-size);
       container-type: size; /* Add container type for container queries */
@@ -1252,13 +1330,14 @@
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     }
 
+    /* 再生中: ボーダーを primary にし、進捗塗りを有効化 */
     .sound-button.playing {
       border-color: var(--primary-color);
-      background-color: color-mix(in srgb, var(--card-bg) 90%, var(--primary-color) 10%);
+      --progress-fill: color-mix(in srgb, var(--primary-color) 32%, transparent);
     }
 
     body.dark-mode .sound-button.playing {
-      background-color: color-mix(in srgb, var(--card-bg) 85%, var(--primary-color) 15%);
+      --progress-fill: color-mix(in srgb, var(--primary-color) 42%, transparent);
     }
 
     .sound-button.has-color {
@@ -1268,7 +1347,7 @@
     .sound-button.has-color.playing,
     body.dark-mode .sound-button.has-color.playing {
       border-color: var(--pad-color);
-      background-color: color-mix(in srgb, var(--pad-color) 55%, var(--card-bg));
+      --progress-fill: color-mix(in srgb, var(--pad-color) 60%, transparent);
     }
 
     .loop-indicator {
@@ -1414,6 +1493,7 @@
       border-radius: 0;
       overflow: hidden;
       cursor: pointer;
+      z-index: 2;
     }
 
     .progress-bar-value {
@@ -1888,7 +1968,8 @@
       .theme-setting,
       .waveform-setting,
       .pad-size-setting,
-      .performance-mode-setting {
+      .performance-mode-setting,
+      .keyboard-layout-setting {
         flex-basis: calc(50% - 10px); /* 2列にするために幅を調整 (gapを考慮) */
       }
 

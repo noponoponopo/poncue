@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -12,8 +12,8 @@ import {
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
 } from './07_scenes.js';
-import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
-import { renderKeyboardView, setKeyboardKeyPressed } from './11_keyboard_view.js';
+import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, SCROLL_PREVENT_KEYS, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
+import { renderKeyboardView, setKeyboardKeyPressed, getLayoutOptions, clearAllKeyboardKeyPressed } from './11_keyboard_view.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -118,6 +118,8 @@ export function setupEventListeners() {
     dom.waveformToggleCheckbox?.addEventListener('change', handleWaveformToggleChange);
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
+    populateKeyboardLayoutOptions();
+    dom.keyboardLayoutSelect?.addEventListener('change', handleKeyboardLayoutChange);
 
     // Soundboard Drag & Drop
     dom.soundboard.addEventListener('dragstart', handleDragStart);
@@ -142,6 +144,11 @@ export function setupEventListeners() {
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
+    // ウィンドウ離脱やタブ切り替えで keyup が発火しなかった場合の押下残留を防ぐ
+    window.addEventListener('blur', clearAllKeyboardKeyPressed);
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) clearAllKeyboardKeyPressed();
+    });
 
     // Show Mode (fullscreen)
     dom.showModeBtn?.addEventListener('click', toggleShowMode);
@@ -271,6 +278,26 @@ function handlePerformanceModeChange(event) {
     showAlert(message, 'パフォーマンスモード変更');
     // ここでモードに応じた追加の処理を呼び出す
     // 例: オーディオバッファの再読み込み、波形表示の精度変更など
+}
+
+function populateKeyboardLayoutOptions() {
+    if (!dom.keyboardLayoutSelect) return;
+    const current = state.keyboardLayout || DEFAULT_KEYBOARD_LAYOUT;
+    dom.keyboardLayoutSelect.replaceChildren();
+    for (const { id, label } of getLayoutOptions()) {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = label;
+        if (id === current) option.selected = true;
+        dom.keyboardLayoutSelect.appendChild(option);
+    }
+}
+
+function handleKeyboardLayoutChange(event) {
+    const newLayout = event.target.value;
+    updateState({ keyboardLayout: newLayout });
+    saveSetting('keyboardLayout', newLayout);
+    if (state.keyboardViewVisible) renderKeyboardView();
 }
 
 // --- Scene Modal Handlers ---
@@ -475,11 +502,22 @@ function normalizeKey(e) {
 
     let key = e.key;
     if (key === ' ') key = 'Space';
+    if (key === '¥') key = 'Yen';
+    // Mac/Win で英数・かなの event.key が割れるため代表名に正規化
+    if (['English', 'Alphanumeric', 'Lang2', 'Eisu', 'RomanCharacters'].includes(key)) key = 'English';
+    if (['Kana', 'KanaMode', 'JapaneseKana', 'Lang1', 'Hiragana'].includes(key)) key = 'Kana';
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) key = key.replace('Arrow', '');
-    if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) key = '';
+    // 修飾キー単体の押下はショートカットとして扱わず、pressed 表示にも関与させない
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return '';
     if (key.length === 1 && key.match(/[a-z]/i)) key = key.toUpperCase();
 
     return [...modifiers, key].filter(Boolean).join('+');
+}
+
+// ショートカット操作でブラウザ既定動作（ページスクロールやフォーカス中ボタンの活性クリック）
+// を抑制すべきキーか。INPUT/TEXTAREA/モーダル表示中は呼び出し元でガード済み。
+function shouldPreventDefaultKey(normalizedKey) {
+    return Boolean(state.shortcuts[normalizedKey]) || SCROLL_PREVENT_KEYS.has(normalizedKey);
 }
 
 async function handleKeyDown(event) {
@@ -491,10 +529,17 @@ async function handleKeyDown(event) {
     }
 
     const normalizedKey = normalizeKey(event);
-    setKeyboardKeyPressed(normalizedKey, true);
+
+    // サウンド割当の有無にかかわらず、スペースや矢印などのスクロール系キーは
+    // ページスクロールとフォーカス中ボタンのクリックを起こさないようにする。
+    // 二重発火（ショートカット＋ボタンクリック）もこれで防がれる。
+    if (shouldPreventDefaultKey(normalizedKey)) {
+        event.preventDefault();
+    }
+
+    if (normalizedKey) setKeyboardKeyPressed(normalizedKey, true);
 
     if (event.key === 'Escape') {
-        event.preventDefault();
         stopAllSounds(true);
         return;
     }
@@ -502,7 +547,6 @@ async function handleKeyDown(event) {
     const soundId = state.shortcuts[normalizedKey];
 
     if (soundId) {
-        event.preventDefault();
         const soundButtonElement = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
         if (!soundButtonElement) return;
         const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
@@ -517,6 +561,12 @@ async function handleKeyDown(event) {
 }
 
 function handleKeyUp(event) {
+    const normalizedKey = normalizeKey(event);
+
+    // pressed のリセットはガードより優先。フォーカス移動やモーダル表示で
+    // keyup がガードされても押下状態を残留させない。
+    if (normalizedKey) setKeyboardKeyPressed(normalizedKey, false);
+
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -524,13 +574,14 @@ function handleKeyUp(event) {
         return;
     }
 
-    const normalizedKey = normalizeKey(event);
-    setKeyboardKeyPressed(normalizedKey, false);
+    if (shouldPreventDefaultKey(normalizedKey)) {
+        event.preventDefault();
+    }
+
     const soundId = state.shortcuts[normalizedKey];
 
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
     if (sound?.triggerMode !== 'momentary') return;
-    event.preventDefault();
     endHoldPlayback(soundId, `key:${normalizedKey}`);
 }
 
@@ -611,10 +662,7 @@ async function toggleLoop(soundId, loopBtnElement, soundBtnElement) {
     loopBtnElement.classList.toggle('active', soundData.loop);
     soundBtnElement.classList.toggle('loop-on', soundData.loop);
 
-    const activeAudio = state.activeAudios[soundId];
-    if (activeAudio?.audioElement) {
-        activeAudio.audioElement.loop = soundData.loop;
-    }
+    updateActiveSoundLoop(soundId, soundData.loop);
     debouncedSaveCurrentSceneSounds(`toggleLoop-${soundId}`);
 }
 
@@ -887,7 +935,7 @@ function createSoundButton(sound) {
         <button class="delete-button" title="削除"><i class="fas fa-times"></i></button>
         <button class="settings-button" title="設定">${settingsButtonContent}</button>
     `;
-    
+
     let touchFlag = false;
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
 
@@ -947,7 +995,7 @@ function createSoundButton(sound) {
     volumeSlider.addEventListener('input', e => { e.stopPropagation(); handleIndividualVolumeChange(sound.id, parseFloat(e.target.value)); e.target.title = `音量: ${Math.round(parseFloat(e.target.value) * 100)}%`; });
     volumeSlider.addEventListener('click', e => e.stopPropagation());
     volumeSlider.addEventListener('touchstart', e => { e.stopPropagation(); clearTimeout(longPressTimeoutId); }, { passive: true });
-    
+
     const progressBar = buttonWrapper.querySelector('.progress-bar');
     progressBar.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); handleProgressBarClick(e.changedTouches[0], sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
     progressBar.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) handleProgressBarClick(e, sound.id, buttonWrapper); });
