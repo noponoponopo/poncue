@@ -15,6 +15,7 @@
       --danger-color-light: #dc3545;
       --danger-hover-light: #c82333;
       --success-color-light: #28a745;
+      --warning-color-light: #d99000;
       --info-color-light: #17a2b8;
       --info-hover-light: #117a8b;
       --control-bg-light: rgba(0, 0, 0, 0.03);
@@ -41,6 +42,7 @@
       --danger-color-dark: #e94560;
       --danger-hover-dark: #d8314f;
       --success-color-dark: #34c759;
+      --warning-color-dark: #ffb020;
       --info-color-dark: #20c997;
       --info-hover-dark: #1ba97c;
       --control-bg-dark: rgba(255, 255, 255, 0.08);
@@ -66,6 +68,7 @@
       --danger-color: var(--danger-color-light);
       --danger-hover: var(--danger-hover-light);
       --success-color: var(--success-color-light);
+      --warning-color: var(--warning-color-light);
       --info-color: var(--info-color-light);
       --info-hover: var(--info-hover-light);
       --control-bg: var(--control-bg-light);
@@ -128,6 +131,7 @@
       --danger-color: var(--danger-color-dark);
       --danger-hover: var(--danger-hover-dark);
       --success-color: var(--success-color-dark);
+      --warning-color: var(--warning-color-dark);
       --info-color: var(--info-color-dark);
       --info-hover: var(--info-hover-dark);
       --control-bg: var(--control-bg-dark);
@@ -320,6 +324,31 @@
 
     button#add-sound-btn:active:not(:disabled) {
       transform: scale(0.98);
+    }
+
+    #pause-all-btn {
+      background: none;
+      border: 1px solid var(--warning-color);
+      color: var(--warning-color);
+      padding: 7px 14px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: color var(--transition-speed), background-color var(--transition-speed), opacity var(--transition-speed);
+    }
+
+    #pause-all-btn:hover:not(:disabled) {
+      background-color: color-mix(in srgb, var(--warning-color) 15%, transparent);
+    }
+
+    #pause-all-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
 
     button#stop-all-btn {
@@ -1350,6 +1379,17 @@
       --progress-fill: color-mix(in srgb, var(--pad-color) 60%, transparent);
     }
 
+    .sound-button.paused {
+      border-color: var(--warning-color);
+      background-color: color-mix(in srgb, var(--card-bg) 88%, var(--warning-color) 12%);
+    }
+
+    .sound-button.has-color.paused,
+    body.dark-mode .sound-button.has-color.paused {
+      border-color: var(--warning-color);
+      background-color: color-mix(in srgb, var(--pad-color) 35%, var(--warning-color) 15%, var(--card-bg));
+    }
+
     .loop-indicator {
       position: absolute;
       top: 8px;
@@ -2082,11 +2122,16 @@
 
 
 
-      button#add-sound-btn {
+      button#add-sound-btn,
+      #pause-all-btn,
+      button#stop-all-btn,
+      #show-mode-btn {
         padding: 10px;
+        min-width: 38px;
       }
 
       button#add-sound-btn span,
+      #pause-all-btn span,
       button#stop-all-btn span,
       #show-mode-btn span,
       #keyboard-view-btn span {

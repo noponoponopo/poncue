@@ -3,8 +3,8 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, refreshOptAffordance } from './05_ui.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -50,6 +50,7 @@ export function setupEventListeners() {
         saveSetting(stateKey, state[stateKey]);
     });
     startMasterMeter();
+    updatePauseAllButton();
 
     // Custom Modal — only close on genuine click, not drag-end on overlay
     let modalMouseDownPos = null;
@@ -76,6 +77,10 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
+    dom.pauseAllBtn?.addEventListener('click', async () => {
+        await resumeAudioContext();
+        await togglePauseAllSounds();
+    });
     dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
     dom.keyboardViewBtn?.addEventListener('click', toggleKeyboardView);
     dom.keyboardView?.addEventListener('pointerdown', handleVirtualKeyDown);
@@ -145,9 +150,15 @@ export function setupEventListeners() {
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
     // ウィンドウ離脱やタブ切り替えで keyup が発火しなかった場合の押下残留を防ぐ
-    window.addEventListener('blur', clearAllKeyboardKeyPressed);
+    window.addEventListener('blur', () => {
+        clearAllKeyboardKeyPressed();
+        if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+    });
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden) clearAllKeyboardKeyPressed();
+        if (document.hidden) {
+            clearAllKeyboardKeyPressed();
+            if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+        }
     });
 
     // Show Mode (fullscreen)
@@ -521,6 +532,10 @@ function shouldPreventDefaultKey(normalizedKey) {
 }
 
 async function handleKeyDown(event) {
+    if (event.key === 'Alt') {
+        if (!state.isOptHeld) { state.isOptHeld = true; refreshOptAffordance(); }
+        return;
+    }
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -567,6 +582,10 @@ function handleKeyUp(event) {
     // keyup がガードされても押下状態を残留させない。
     if (normalizedKey) setKeyboardKeyPressed(normalizedKey, false);
 
+    if (event.key === 'Alt') {
+        if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+        return;
+    }
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -633,7 +652,15 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
     }
 
     if (state.activeAudios[soundId]) {
-        stopSound(soundId, soundButtonElement);
+        const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+        const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
+        if (triggerMode === 'toggle' && state.isOptHeld) {
+            pauseSound(soundId, soundButtonElement);
+        } else {
+            stopSound(soundId, soundButtonElement);
+        }
+    } else if (isSoundPaused(soundId)) {
+        resumeSound(soundId, soundButtonElement);
     } else {
         playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
     }
@@ -852,7 +879,6 @@ function resetTouchDragState() {
 
 
 // --- THE BIG RENDERER ---
-import { updateButtonUI } from './05_ui.js';
 
 function renderSoundboard() {
     if (!dom.soundboard) return;
@@ -871,6 +897,8 @@ function renderSoundboard() {
             dom.soundboard.appendChild(buttonElement);
             if (state.activeAudios[sound.id]) {
                 updateButtonUI(sound.id, buttonElement, true);
+            } else if (isSoundPaused(sound.id)) {
+                updateButtonUI(sound.id, buttonElement, false, true);
             }
         });
     }

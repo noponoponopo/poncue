@@ -36,6 +36,7 @@ export const state = {
     masterReverb: { decay: 2.0, wet: 0 },
     masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
+    pausedSounds: {}, // { [soundId]: { position, pausedAt } }
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
     audioStartMetrics: [],
@@ -51,7 +52,8 @@ export const state = {
     showMode: false,
     keyboardViewVisible: false,
     keyboardLayout: DEFAULT_KEYBOARD_LAYOUT, // 'us' or 'jis' (11_keyboard_view.js の LAYOUTS と対応)
-    
+    isOptHeld: false, // Option キー押下中: トグル再生カードの停止を一時停止に切替
+
     // DB instance
     db: null,
 
