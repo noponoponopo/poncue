@@ -345,7 +345,7 @@ async function handleModalRenameScene(sceneId) {
             if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"${iconStyle}></i> ${escapeHtml(scene.name)}`;
         }
         populateSceneModalList();
-        debouncedSaveCurrentSceneSounds("modalRename");
+        await saveCurrentSceneSounds("modalRename");
     }
 }
 async function handleModalDeleteScene(sceneId) {
@@ -437,7 +437,9 @@ async function handleSoundSettings(soundId) {
         onNormalize: async (targetLufs) => {
             const result = await normalizeSoundVolume(soundId, targetLufs);
             if (result) {
-                debouncedSaveCurrentSceneSounds(`normalize-${soundId}`);
+                // 即時保存: ノーマライズは明示的操作なのでデバウンスせず保存する。
+                // デバウンス中のリロードで音量設定が消えるのを防ぐ。
+                await saveCurrentSceneSounds(`normalize-${soundId}`);
                 renderers.renderSoundboard();
             }
             return result;
@@ -497,7 +499,9 @@ async function handleSoundSettings(soundId) {
             updateActiveSoundPan(soundId);
         }
         updateActiveSoundEffects(soundId);
-        debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
+        // 即時保存: 「保存」は明示的操作なのでデバウンスせず保存する。
+        // デバウンス中(300ms)のリロードでエフェクト設定が消えるのを防ぐ。
+        await saveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
 
         showAlert(`サウンド「${sound.name}」の設定を更新しました。`, '通知');
         renderers.renderSoundboard();
@@ -690,7 +694,7 @@ async function toggleLoop(soundId, loopBtnElement, soundBtnElement) {
     soundBtnElement.classList.toggle('loop-on', soundData.loop);
 
     updateActiveSoundLoop(soundId, soundData.loop);
-    debouncedSaveCurrentSceneSounds(`toggleLoop-${soundId}`);
+    await saveCurrentSceneSounds(`toggleLoop-${soundId}`);
 }
 
 function handleIndividualVolumeChange(soundId, volume) {
@@ -768,7 +772,7 @@ async function handleDrop(event) {
         if (fromIndex !== -1 && toIndex !== -1) {
             const [movedItem] = sounds.splice(fromIndex, 1);
             sounds.splice(toIndex, 0, movedItem);
-            debouncedSaveCurrentSceneSounds('dragDrop');
+            await saveCurrentSceneSounds('dragDrop');
             renderers.renderSoundboard();
         }
     }
@@ -853,7 +857,7 @@ async function handleTouchEnd(event) {
         if (fromIndex !== -1 && toIndex !== -1) {
             const [movedItem] = sounds.splice(fromIndex, 1);
             sounds.splice(toIndex, 0, movedItem);
-            debouncedSaveCurrentSceneSounds('touchDrop');
+            await saveCurrentSceneSounds('touchDrop');
             renderers.renderSoundboard();
         }
     }

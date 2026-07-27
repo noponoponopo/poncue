@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS } from './01_config.js';
 
@@ -377,6 +377,10 @@ export async function loadSettings() {
         updateMasterVolumeKnob(state.masterVolume);
         if (state.masterGainNode) state.masterGainNode.gain.setValueAtTime(state.masterVolume, state.audioContext.currentTime);
         setMasterLimiterThreshold(state.masterLimiter.threshold);
+        // マスターEQ/Comp/Delay/Pan/Distortion/Reverb を state の値でノードへ反映。
+        // initAudioContext() がデフォルト値でノードを生成したまま loadSettings() が
+        // state を更新するため、ここでノードへ再反映しないとリロード後に効かない。
+        applyMasterEffectNodesFromState();
         if (dom.interactionClickRadio) dom.interactionClickRadio.checked = !state.isSortableEnabled;
         if (dom.interactionDragRadio) dom.interactionDragRadio.checked = state.isSortableEnabled;
         if (dom.perfHighRadio) dom.perfHighRadio.checked = (state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE);
