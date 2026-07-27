@@ -50,7 +50,8 @@ export const state = {
     padSize: 160, // New setting for pad size
     performanceMode: DEFAULT_PERFORMANCE_MODE, // 'ultra-high-performance', 'high-performance' or 'low-memory'
     showMode: false,
-    
+    isOptHeld: false, // Option キー押下中: トグル再生カードの停止を一時停止に切替
+
     // DB instance
     db: null,
 

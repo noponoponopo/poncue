@@ -3,7 +3,7 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize } from './05_ui.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, refreshOptAffordance } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
@@ -141,6 +141,7 @@ export function setupEventListeners() {
     // Keyboard Shortcuts
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', () => { if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); } });
 
     // Show Mode (fullscreen)
     dom.showModeBtn?.addEventListener('click', toggleShowMode);
@@ -433,6 +434,10 @@ function normalizeKey(e) {
 }
 
 async function handleKeyDown(event) {
+    if (event.key === 'Alt') {
+        if (!state.isOptHeld) { state.isOptHeld = true; refreshOptAffordance(); }
+        return;
+    }
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -465,6 +470,10 @@ async function handleKeyDown(event) {
 }
 
 function handleKeyUp(event) {
+    if (event.key === 'Alt') {
+        if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+        return;
+    }
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -529,7 +538,13 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
     }
 
     if (state.activeAudios[soundId]) {
-        stopSound(soundId, soundButtonElement);
+        const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+        const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
+        if (triggerMode === 'toggle' && state.isOptHeld) {
+            pauseSound(soundId, soundButtonElement);
+        } else {
+            stopSound(soundId, soundButtonElement);
+        }
     } else if (isSoundPaused(soundId)) {
         resumeSound(soundId, soundButtonElement);
     } else {
@@ -753,7 +768,6 @@ function resetTouchDragState() {
 
 
 // --- THE BIG RENDERER ---
-import { updateButtonUI } from './05_ui.js';
 
 function renderSoundboard() {
     if (!dom.soundboard) return;
@@ -828,7 +842,6 @@ function createSoundButton(sound) {
             <div class="time-display">${durationText}</div>
         </div>
         <div class="button-controls">
-            <button class="pause-button fas fa-pause" title="一時停止" aria-label="一時停止" disabled></button>
             <button class="loop-button fas fa-sync-alt ${sound.loop ? 'active' : ''}" title="ループ切り替え"></button>
             <div class="volume-control">
                 <input type="range" min="0" max="${Math.max(2, Math.ceil(sound.volume ?? 1))}" step="0.01" value="${sound.volume ?? 1.0}" title="音量: ${Math.round((sound.volume ?? 1.0) * 100)}%">
@@ -842,7 +855,7 @@ function createSoundButton(sound) {
     let touchFlag = false;
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
 
-    const isControlTarget = target => target instanceof Element && target.closest('.pause-button, .loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
+    const isControlTarget = target => target instanceof Element && target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
@@ -889,18 +902,6 @@ function createSoundButton(sound) {
             else if (triggerMode !== 'momentary') handleSoundButtonClick(sound.id, buttonWrapper);
         }
     });
-
-    const pauseButton = buttonWrapper.querySelector('.pause-button');
-    const togglePause = async () => {
-        if (state.activeAudios[sound.id]) {
-            pauseSound(sound.id, buttonWrapper);
-        } else if (isSoundPaused(sound.id)) {
-            await resumeAudioContext();
-            resumeSound(sound.id, buttonWrapper);
-        }
-    };
-    pauseButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); togglePause(); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
-    pauseButton.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) togglePause(); });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
     loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });

@@ -1400,8 +1400,7 @@
       bottom: 1%;
     }
 
-    .loop-button,
-    .pause-button {
+    .loop-button {
       background: none;
       border: none;
       color: var(--secondary-color);
@@ -1416,24 +1415,13 @@
       justify-content: center;
     }
 
-    .loop-button:hover,
-    .pause-button:hover:not(:disabled) {
+    .loop-button:hover {
       background-color: var(--control-hover-bg);
     }
 
     .loop-button.active {
       color: var(--success-color);
       background-color: color-mix(in srgb, var(--success-color) 15%, transparent);
-    }
-
-    .pause-button:disabled {
-      color: color-mix(in srgb, var(--secondary-color) 45%, transparent);
-      cursor: default;
-    }
-
-    .sound-button.paused .pause-button {
-      color: var(--warning-color);
-      background-color: color-mix(in srgb, var(--warning-color) 15%, transparent);
     }
 
     .volume-control {
@@ -2120,8 +2108,7 @@
     gap: 5px;
   }
 
-  .sound-button .loop-button,
-  .sound-button .pause-button {
+  .sound-button .loop-button {
     font-size: 0.7em; /* Match time display font size */
     min-width: auto;
     min-height: auto;

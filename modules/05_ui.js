@@ -1004,19 +1004,14 @@ export function createKnob(spec) {
 export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused = false) {
     if (!soundButtonElement) return;
     const iconElement = soundButtonElement.querySelector('.sound-icon');
-    const pauseButton = soundButtonElement.querySelector('.pause-button');
     soundButtonElement.classList.toggle('playing', isPlaying);
     soundButtonElement.classList.toggle('paused', isPaused);
     if (iconElement) {
+        const isToggle = !soundButtonElement.classList.contains('trigger-momentary') && !soundButtonElement.classList.contains('trigger-retrigger');
+        const showAsPause = isPlaying && isToggle && state.isOptHeld;
         iconElement.classList.toggle('fa-play', !isPlaying);
-        iconElement.classList.toggle('fa-stop', isPlaying);
-    }
-    if (pauseButton) {
-        pauseButton.disabled = !isPlaying && !isPaused;
-        pauseButton.setAttribute('aria-label', isPaused ? '再開' : '一時停止');
-        pauseButton.title = isPaused ? '再開' : '一時停止';
-        pauseButton.classList.toggle('fa-pause', isPlaying);
-        pauseButton.classList.toggle('fa-play', isPaused);
+        iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause);
+        iconElement.classList.toggle('fa-pause', showAsPause);
     }
     if (isPaused) {
         const position = state.pausedSounds[soundId]?.position;
@@ -1030,6 +1025,16 @@ export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused 
             if (timeDisplay) timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
         }
     }
+}
+
+export function refreshOptAffordance() {
+    document.querySelectorAll('.sound-button.playing').forEach(btn => {
+        if (btn.classList.contains('trigger-momentary') || btn.classList.contains('trigger-retrigger')) return;
+        const icon = btn.querySelector('.sound-icon');
+        if (!icon) return;
+        icon.classList.toggle('fa-stop', !state.isOptHeld);
+        icon.classList.toggle('fa-pause', state.isOptHeld);
+    });
 }
 
 export function resetProgressBar(soundButtonElement) {
