@@ -153,6 +153,36 @@ export function setMasterLimiterThreshold(value) {
     }
 }
 
+/**
+ * state に保持されているマスター効果の値を、実際のオーディオノードへ反映する。
+ *
+ * 初期化順序の問題を補うための関数:
+ *   initializeApp() は initAudioContext() → loadSettings() の順に呼ぶ。
+ *   initAudioContext() はノード生成時に state.masterEq などを参照するが、
+ *   この時点では設定未読み込みのためデフォルト値(フラット)でノードが作られる。
+ *   その後 loadSettings() が state を復元するが、ノードへの再反映が漏れていたため、
+ *   リロード後にマスターEQ等が効かない現象が起きていた。
+ *
+ * この関数は loadSettings() の state 復元後に呼ぶことで、
+ * 保存済みの全マスター効果をノードへ確実に適用する。
+ * setMasterParam は state の再代入(冪等)も行うが、値は既に正しいので無害。
+ */
+export function applyMasterEffectNodesFromState() {
+    if (!state.audioContext) return;
+    setMasterParam('eq.low', state.masterEq?.low ?? 0);
+    setMasterParam('eq.mid', state.masterEq?.mid ?? 0);
+    setMasterParam('eq.high', state.masterEq?.high ?? 0);
+    setMasterParam('comp.threshold', state.masterComp?.threshold ?? 0);
+    setMasterParam('comp.ratio', state.masterComp?.ratio ?? 1);
+    setMasterParam('delay.time', state.masterDelay?.time ?? 0.18);
+    setMasterParam('delay.feedback', state.masterDelay?.feedback ?? 0);
+    setMasterParam('delay.level', state.masterDelay?.level ?? 0);
+    setMasterParam('pan.value', state.masterPan?.value ?? 0);
+    setMasterParam('distortion.amount', state.masterDistortion?.amount ?? 0);
+    setMasterParam('reverb.decay', state.masterReverb?.decay ?? 2.0);
+    setMasterParam('reverb.wet', state.masterReverb?.wet ?? 0);
+}
+
 export function resumeAudioContext() {
     if (state.audioContext && state.audioContext.state === 'suspended') {
         return state.audioContext.resume().then(() => resumeToneAudio()).then(() => {
