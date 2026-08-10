@@ -445,6 +445,7 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
 }
 
 export async function selectScene(sceneId) {
+    window.dispatchEvent(new CustomEvent('poncue:scene-changing'));
     stopAllSounds(false);
     updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {} });
     triggerWaveformUpdate();

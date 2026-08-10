@@ -276,21 +276,35 @@ function scheduleNaturalFadeOut(soundId) {
     audioInfo.naturalFadeStartTime = fadeStartTime;
 }
 
-export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
-    if (!state.audioContext || state.audioContext.state !== 'running') { return; }
+export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0, signal = null) {
+    if (signal?.aborted || !state.audioContext || state.audioContext.state !== 'running') return false;
 
     if (state.activeAudios[soundId]) {
         // If it's already playing, we do nothing. The stop button should handle it.
-        return;
+        return false;
     }
 
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return; }
+    if (!soundData?.audioId) {
+        if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。");
+        return false;
+    }
 
     let sourceNode;
     let audioElement = null;
     let objectUrl = null;
     let audioBuffer = null;
+    let pannerNode = null;
+    let individualGain = null;
+    let effectRack = null;
+    let splitter = null;
+    let analyserL = null;
+    let analyserR = null;
+    let audioInfo = null;
+    const cleanupPreparedAudio = () => disposeAudioInfo({
+        audioElement, sourceNode, pannerNode, individualGain, effectRack,
+        splitter, objectUrl, meterAnimationFrameId: null, progressBarInterval: null
+    });
 
     try {
         const wantsReverse = !!soundData.reverse;
@@ -299,11 +313,15 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
         if (!useBufferSource) {
             const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+            if (signal?.aborted) {
+                cleanupPreparedAudio();
+                return false;
+            }
             const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
 
             if (!blob) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                return;
+                return false;
             }
             objectUrl = URL.createObjectURL(blob);
             audioElement = new Audio(objectUrl);
@@ -317,8 +335,20 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             // For waveform, we still need the buffer
             try {
                 const arrayBuffer = await blob.arrayBuffer();
+                if (signal?.aborted) {
+                    cleanupPreparedAudio();
+                    return false;
+                }
                 audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+                if (signal?.aborted) {
+                    cleanupPreparedAudio();
+                    return false;
+                }
             } catch (decodeError) {
+                if (signal?.aborted) {
+                    cleanupPreparedAudio();
+                    return false;
+                }
                 console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
             }
 
@@ -327,16 +357,32 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             if (!baseBuffer && wantsReverse) {
                 // LOW_MEMORY + reverse: blob からデコードしてキャッシュ
                 const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+                if (signal?.aborted) {
+                    cleanupPreparedAudio();
+                    return false;
+                }
                 const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
                 if (!blob) {
                     if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                    return;
+                    return false;
                 }
                 try {
                     const arrayBuffer = await blob.arrayBuffer();
+                    if (signal?.aborted) {
+                        cleanupPreparedAudio();
+                        return false;
+                    }
                     baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+                    if (signal?.aborted) {
+                        cleanupPreparedAudio();
+                        return false;
+                    }
                     state.decodedAudioBuffers[soundId] = baseBuffer;
                 } catch (decodeError) {
+                    if (signal?.aborted) {
+                        cleanupPreparedAudio();
+                        return false;
+                    }
                     console.error("Error decoding audio for reverse:", decodeError);
                 }
             }
@@ -347,7 +393,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
             if (!audioBuffer) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データがキャッシュされていません。`);
-                return;
+                return false;
             }
             const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
             sourceNode = new Tone.GrainPlayer({
@@ -358,13 +404,13 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             });
         }
 
-        const pannerNode = state.audioContext.createStereoPanner();
+        pannerNode = state.audioContext.createStereoPanner();
         pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
-        const individualGain = state.audioContext.createGain();
-        const effectRack = createEffectRack(soundData.effects);
-        const splitter = state.audioContext.createChannelSplitter(2);
-        const analyserL = state.audioContext.createAnalyser();
-        const analyserR = state.audioContext.createAnalyser();
+        individualGain = state.audioContext.createGain();
+        effectRack = createEffectRack(soundData.effects);
+        splitter = state.audioContext.createChannelSplitter(2);
+        analyserL = state.audioContext.createAnalyser();
+        analyserR = state.audioContext.createAnalyser();
 
         let fftSizeMeter = state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE ? ANALYSER_FFT_SIZE : 32;
         Object.assign(analyserL, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
@@ -380,7 +426,12 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
         individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
 
-        state.activeAudios[soundId] = {
+        if (signal?.aborted || state.activeAudios[soundId]) {
+            cleanupPreparedAudio();
+            return false;
+        }
+
+        audioInfo = {
             audioElement, sourceNode, pannerNode, individualGain, effectRack,
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
@@ -392,10 +443,11 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             soundId: soundId,
             peakL: 0, peakR: 0
         };
+        state.activeAudios[soundId] = audioInfo;
 
         const onEnd = () => {
             const currentAudioInfo = state.activeAudios[soundId];
-            if (currentAudioInfo && !currentAudioInfo.isFadingOut && !currentAudioInfo.endHandled && !soundData.loop) {
+            if (currentAudioInfo === audioInfo && !currentAudioInfo.isFadingOut && !currentAudioInfo.endHandled && !soundData.loop) {
                 currentAudioInfo.endHandled = true;
                 queueMicrotask(() => {
                     window.dispatchEvent(new CustomEvent('poncue:sound-ended', { detail: { soundId } }));
@@ -411,19 +463,37 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の再生中にエラー(${error?.code || 'unknown'})が発生しました。`);
                 stopSound(soundId, soundButtonElement, false);
             };
-            audioElement.play().then(() => {
-                updateButtonUI(soundId, soundButtonElement, true);
-                createMeterElement(soundId, soundData.name);
-                triggerWaveformUpdate();
-                fadeInSound(soundId, soundData.volume);
-                scheduleNaturalFadeOut(soundId);
-                startProgressBarUpdate(soundId, soundButtonElement);
-                startMeterUpdate(soundId);
-            }).catch(err => {
-                if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の再生開始に失敗しました:
+            const stopOnAbort = () => {
+                if (state.activeAudios[soundId] === audioInfo) {
+                    forceStopSound(soundId, soundButtonElement);
+                }
+            };
+            signal?.addEventListener('abort', stopOnAbort, { once: true });
+            try {
+                await audioElement.play();
+            } catch (err) {
+                signal?.removeEventListener('abort', stopOnAbort);
+                if (state.activeAudios[soundId] === audioInfo) {
+                    cleanupAfterStop(soundId, soundButtonElement);
+                }
+                if (!signal?.aborted && state.showErrorPopups) {
+                    showAlert(`サウンド「${soundData.name}」の再生開始に失敗しました:
 ${err.message}`);
-                cleanupAfterStop(soundId, soundButtonElement);
-            });
+                }
+                return false;
+            }
+            signal?.removeEventListener('abort', stopOnAbort);
+            if (signal?.aborted || state.activeAudios[soundId] !== audioInfo) {
+                if (state.activeAudios[soundId] === audioInfo) forceStopSound(soundId, soundButtonElement);
+                return false;
+            }
+            updateButtonUI(soundId, soundButtonElement, true);
+            createMeterElement(soundId, soundData.name);
+            triggerWaveformUpdate();
+            fadeInSound(soundId, soundData.volume);
+            scheduleNaturalFadeOut(soundId);
+            startProgressBarUpdate(soundId, soundButtonElement);
+            startMeterUpdate(soundId);
         } else { // HIGH_PERFORMANCE
             if ('onended' in sourceNode) sourceNode.onended = onEnd;
             else sourceNode.onstop = onEnd;
@@ -438,10 +508,18 @@ ${err.message}`);
             startProgressBarUpdate(soundId, soundButtonElement);
             startMeterUpdate(soundId);
         }
+        return true;
     } catch (err) {
-        console.error("Error in playSound:", err);
-        if (state.showErrorPopups) showAlert('サウンドの再生準備中に予期せぬエラーが発生しました。');
-        cleanupAfterStop(soundId, soundButtonElement);
+        if (!signal?.aborted) {
+            console.error("Error in playSound:", err);
+            if (state.showErrorPopups) showAlert('サウンドの再生準備中に予期せぬエラーが発生しました。');
+        }
+        if (audioInfo && state.activeAudios[soundId] === audioInfo) {
+            cleanupAfterStop(soundId, soundButtonElement);
+        } else if (!audioInfo) {
+            cleanupPreparedAudio();
+        }
+        return false;
     }
 }
 
@@ -597,30 +675,35 @@ export function updateActiveSoundSpeed(soundId) {
     scheduleNaturalFadeOut(soundId);
 }
 
+function disposeAudioInfo(audioInfo) {
+    if (!audioInfo) return;
+    cancelAnimationFrame(audioInfo.meterAnimationFrameId);
+    clearInterval(audioInfo.progressBarInterval);
+    if (audioInfo.sourceNode) {
+        audioInfo.sourceNode.onended = null;
+        if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = () => {};
+        try { audioInfo.sourceNode.disconnect(); } catch (e) { /* ignore */ }
+        if (audioInfo.sourceNode instanceof Tone.GrainPlayer) audioInfo.sourceNode.dispose();
+    }
+    if (audioInfo.audioElement) {
+        audioInfo.audioElement.onended = null;
+        audioInfo.audioElement.onerror = null;
+        try { audioInfo.audioElement.pause(); } catch (e) { /* ignore */ }
+        audioInfo.audioElement.src = '';
+        audioInfo.audioElement.load();
+        if (audioInfo.objectUrl) URL.revokeObjectURL(audioInfo.objectUrl);
+    }
+    try { audioInfo.individualGain?.disconnect(); } catch (e) { /* ignore */ }
+    try { audioInfo.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
+    disposeEffectRack(audioInfo.effectRack);
+    try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
+}
+
 function cleanupAfterStop(soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
-        if (audioInfo.sourceNode) {
-            audioInfo.sourceNode.onended = null;
-            if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = () => {};
-            try { audioInfo.sourceNode.disconnect(); } catch (e) { /* ignore */ }
-            if (audioInfo.sourceNode instanceof Tone.GrainPlayer) audioInfo.sourceNode.dispose();
-        }
-        if (audioInfo.audioElement) {
-            audioInfo.audioElement.onended = null;
-            audioInfo.audioElement.onerror = null;
-            audioInfo.audioElement.src = '';
-            audioInfo.audioElement.load();
-            if (audioInfo.objectUrl) {
-                URL.revokeObjectURL(audioInfo.objectUrl);
-            }
-        }
-        try { audioInfo.individualGain?.disconnect(); } catch (e) { /* ignore */ }
-        try { audioInfo.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
-        disposeEffectRack(audioInfo.effectRack);
-        try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
-
+        disposeAudioInfo(audioInfo);
         delete state.activeAudios[soundId];
     }
 

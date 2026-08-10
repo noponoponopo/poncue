@@ -28,6 +28,13 @@ function debounce(func, delay) {
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
+let playlistPlayController = null;
+
+function cancelPendingPlaylistPlay() {
+    const controller = playlistPlayController;
+    playlistPlayController = null;
+    controller?.abort();
+}
 
 // --- Event Listener Setup ---
 export function setupEventListeners() {
@@ -76,7 +83,7 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
-    dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
+    dom.stopAllBtn?.addEventListener('click', () => stopAllPlayback(true));
     dom.playlistBtn?.addEventListener('click', togglePlaylist);
     dom.playlistAddBtn?.addEventListener('click', handlePlaylistAdd);
     dom.playlistList?.addEventListener('click', handlePlaylistListClick);
@@ -89,6 +96,7 @@ export function setupEventListeners() {
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
     window.addEventListener('poncue:sound-ended', handlePlaylistSoundEnded);
     window.addEventListener('poncue:sound-stopped', handlePlaylistSoundStopped);
+    window.addEventListener('poncue:scene-changing', stopPlaylistPlayback);
     updatePlaylistVisibility();
 
     // Scene Settings Modal
@@ -194,8 +202,9 @@ async function handlePlaylistListClick(event) {
         return;
     }
     if (button.dataset.action === 'remove') {
+        const hadPendingPlay = Boolean(playlistPlayController);
         const [removedId] = playlist.soundIds.splice(index, 1);
-        if (state.playlistPlayback.soundId === removedId) stopPlaylistPlayback();
+        if (hadPendingPlay || state.playlistPlayback.soundId === removedId) stopPlaylistPlayback();
     } else {
         const target = button.dataset.action === 'up' ? index - 1 : index + 1;
         if (target < 0 || target >= playlist.soundIds.length) return;
@@ -231,15 +240,20 @@ async function playPlaylistIndex(index) {
     if (!soundId) return;
 
     const previousId = state.playlistPlayback.soundId;
+    cancelPendingPlaylistPlay();
     if (previousId && state.activeAudios[previousId]) forceStopSound(previousId);
     if (state.activeAudios[soundId]) forceStopSound(soundId);
     const soundButton = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
     if (!soundButton) return;
 
+    const controller = new AbortController();
+    playlistPlayController = controller;
     updateState({ playlistPlayback: { sceneId, index, soundId, isPlaying: true } });
     renderPlaylist();
-    await handleSoundButtonClick(soundId, soundButton);
-    if (!state.activeAudios[soundId]) {
+    const started = await handleSoundButtonClick(soundId, soundButton, controller.signal);
+    if (playlistPlayController !== controller) return;
+    playlistPlayController = null;
+    if (!started) {
         updateState({ playlistPlayback: { sceneId, index, soundId, isPlaying: false } });
         renderPlaylist();
     }
@@ -247,9 +261,20 @@ async function playPlaylistIndex(index) {
 
 function stopPlaylistPlayback() {
     const playback = state.playlistPlayback;
+    cancelPendingPlaylistPlay();
     if (playback.soundId && state.activeAudios[playback.soundId]) forceStopSound(playback.soundId);
     updateState({ playlistPlayback: { sceneId: state.currentSceneId, index: -1, soundId: null, isPlaying: false } });
     renderPlaylist();
+}
+
+function stopAllPlayback(fadeOut = true) {
+    const hadPendingPlay = Boolean(playlistPlayController);
+    cancelPendingPlaylistPlay();
+    stopAllSounds(fadeOut);
+    if (hadPendingPlay && state.playlistPlayback.isPlaying) {
+        updateState({ playlistPlayback: { ...state.playlistPlayback, isPlaying: false } });
+        renderPlaylist();
+    }
 }
 
 async function advancePlaylist(direction, manual = false) {
@@ -580,7 +605,7 @@ async function handleKeyDown(event) {
 
     if (event.key === 'Escape') {
         event.preventDefault();
-        stopAllSounds(true);
+        stopAllPlayback(true);
         return;
     }
 
@@ -654,23 +679,33 @@ function endHoldPlayback(soundId, inputId, soundButtonElement = null) {
     if (state.activeAudios[soundId]) stopSound(soundId, soundButtonElement);
 }
 
-async function handleSoundButtonClick(soundId, soundButtonElement) {
+async function handleSoundButtonClick(soundId, soundButtonElement, signal = null) {
+    if (signal?.aborted) return false;
     const clickTime = performance.now(); // Capture timestamp at click
-    if (!state.audioContext) { if (!initAudioContext()) { showAlert("オーディオ機能の初期化に失敗。", "エラー"); return; } }
+    if (!state.audioContext) {
+        if (!initAudioContext()) {
+            showAlert("オーディオ機能の初期化に失敗。", "エラー");
+            return false;
+        }
+    }
     await resumeAudioContext();
-    if (state.audioContext.state !== 'running') { showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知"); return; }
+    if (signal?.aborted) return false;
+    if (state.audioContext.state !== 'running') {
+        showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知");
+        return false;
+    }
 
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (soundData?.error) {
         showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');
-        return;
+        return false;
     }
 
     if (state.activeAudios[soundId]) {
         stopSound(soundId, soundButtonElement);
-    } else {
-        playSound(soundId, soundButtonElement, clickTime); // Pass clickTime
+        return false;
     }
+    return playSound(soundId, soundButtonElement, clickTime, 0, signal);
 }
 
 // リトリガーモード用の再生開始。再生中なら即時停止（フェードなし）して頭出し再生。
@@ -1043,7 +1078,12 @@ function createSoundButton(sound) {
     progressBar.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) handleProgressBarClick(e, sound.id, buttonWrapper); });
 
     const deleteButton = buttonWrapper.querySelector('.delete-button');
-    const handleDelete = async () => { if (await showConfirm(`サウンド「${sound.name}」を削除しますか？`, '削除確認')) { stopSound(sound.id, buttonWrapper, false); removeSound(sound.id); }};
+    const handleDelete = async () => {
+        if (!await showConfirm(`サウンド「${sound.name}」を削除しますか？`, '削除確認')) return;
+        if (playlistPlayController || state.playlistPlayback.soundId === sound.id) stopPlaylistPlayback();
+        stopSound(sound.id, buttonWrapper, false);
+        removeSound(sound.id);
+    };
     deleteButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); handleDelete(); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
     deleteButton.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) handleDelete(); });
 
