@@ -390,6 +390,7 @@ export async function loadSettings() {
         } catch (error) {
             console.warn('Saved audio output is unavailable; using system default.', error);
             await setAudioOutputDevice('default', 'システム既定');
+            await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
         }
     } catch (err) {
         if (state.showErrorPopups) showAlert("設定の読み込みに失敗しました。");
@@ -405,6 +406,19 @@ export async function saveSetting(key, value) {
     } catch (err) {
         if (state.showErrorPopups) showAlert(`設定「${key}」の保存に失敗しました。`);
     }
+}
+
+export async function saveAudioOutputSettings(deviceId, deviceLabel) {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+        const transaction = db.transaction(SETTINGS_STORE_NAME, 'readwrite');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Audio output settings transaction failed'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Audio output settings transaction aborted'));
+        const store = transaction.objectStore(SETTINGS_STORE_NAME);
+        store.put({ key: 'audioOutputDeviceId', value: deviceId });
+        store.put({ key: 'audioOutputDeviceLabel', value: deviceLabel });
+    });
 }
 
 // --- シーン管理 ---

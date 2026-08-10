@@ -10,7 +10,7 @@ import {
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
     renderers, // renderers object
     exportSceneAsZip, // New export function
-    updatePadSizeCSS // Import updatePadSizeCSS
+    updatePadSizeCSS, saveAudioOutputSettings // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
 
@@ -262,10 +262,7 @@ async function applyAudioOutputSelection(deviceId, label) {
     if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = '出力を切り替えています...';
     try {
         await setAudioOutputDevice(deviceId, label);
-        await Promise.all([
-            saveSetting('audioOutputDeviceId', state.audioOutputDeviceId),
-            saveSetting('audioOutputDeviceLabel', state.audioOutputDeviceLabel)
-        ]);
+        await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
         await refreshAudioOutputControls(`現在: ${state.audioOutputDeviceLabel}`);
         return true;
     } catch (error) {
@@ -297,8 +294,10 @@ async function handleAudioDeviceChange() {
     const selectedStillAvailable = state.audioOutputDeviceId === 'default'
         || devices.some(device => device.deviceId === state.audioOutputDeviceId);
     if (!selectedStillAvailable) {
-        await applyAudioOutputSelection('default', 'システム既定');
-        await refreshAudioOutputControls('選択していた出力が切断されたため、システム既定へ戻しました。');
+        const changed = await applyAudioOutputSelection('default', 'システム既定');
+        if (changed) {
+            await refreshAudioOutputControls('選択していた出力が切断されたため、システム既定へ戻しました。');
+        }
         return;
     }
     await refreshAudioOutputControls();
