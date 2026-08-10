@@ -153,16 +153,21 @@ export function setMasterLimiterThreshold(value) {
     }
 }
 
-export function resumeAudioContext() {
-    if (state.audioContext && state.audioContext.state === 'suspended') {
-        return state.audioContext.resume().then(() => resumeToneAudio()).then(() => {
-            document.body.removeEventListener('click', resumeAudioContext, { capture: true });
-            document.body.removeEventListener('touchend', resumeAudioContext, { capture: true });
-        }).catch(e => { /* Error resuming AudioContext */ });
-    } else {
+export async function resumeAudioContext() {
+    const audioContext = state.audioContext;
+    if (!audioContext || audioContext.state === 'closed') return false;
+
+    try {
+        if (audioContext.state !== 'running') await audioContext.resume();
+        if (audioContext.state !== 'running') return false;
+        await resumeToneAudio();
+        if (audioContext.state !== 'running') return false;
+
         document.body.removeEventListener('click', resumeAudioContext, { capture: true });
         document.body.removeEventListener('touchend', resumeAudioContext, { capture: true });
-        return Promise.resolve();
+        return true;
+    } catch (_) {
+        return false;
     }
 }
 
@@ -291,15 +296,15 @@ function scheduleNaturalFadeOut(soundId) {
 }
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
-    if (!state.audioContext || state.audioContext.state !== 'running') { return; }
+    if (!state.audioContext || state.audioContext.state !== 'running') { return false; }
 
     if (state.activeAudios[soundId]) {
         // If it's already playing, we do nothing. The stop button should handle it.
-        return;
+        return false;
     }
 
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return; }
+    if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return false; }
 
     let sourceNode;
     let audioElement = null;
@@ -317,7 +322,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
             if (!blob) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                return;
+                return false;
             }
             objectUrl = URL.createObjectURL(blob);
             audioElement = new Audio(objectUrl);
@@ -344,7 +349,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
                 if (!blob) {
                     if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                    return;
+                    return false;
                 }
                 try {
                     const arrayBuffer = await blob.arrayBuffer();
@@ -361,7 +366,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
             if (!audioBuffer) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データがキャッシュされていません。`);
-                return;
+                return false;
             }
             const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
             sourceNode = new Tone.GrainPlayer({
@@ -422,19 +427,21 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の再生中にエラー(${error?.code || 'unknown'})が発生しました。`);
                 stopSound(soundId, soundButtonElement, false);
             };
-            audioElement.play().then(() => {
-                updateButtonUI(soundId, soundButtonElement, true);
-                createMeterElement(soundId, soundData.name);
-                triggerWaveformUpdate();
-                fadeInSound(soundId, soundData.volume);
-                scheduleNaturalFadeOut(soundId);
-                startProgressBarUpdate(soundId, soundButtonElement);
-                startMeterUpdate(soundId);
-            }).catch(err => {
+            try {
+                await audioElement.play();
+            } catch (err) {
                 if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の再生開始に失敗しました:
 ${err.message}`);
                 cleanupAfterStop(soundId, soundButtonElement);
-            });
+                return false;
+            }
+            updateButtonUI(soundId, soundButtonElement, true);
+            createMeterElement(soundId, soundData.name);
+            triggerWaveformUpdate();
+            fadeInSound(soundId, soundData.volume);
+            scheduleNaturalFadeOut(soundId);
+            startProgressBarUpdate(soundId, soundButtonElement);
+            startMeterUpdate(soundId);
         } else { // HIGH_PERFORMANCE
             if ('onended' in sourceNode) sourceNode.onended = onEnd;
             else sourceNode.onstop = onEnd;
@@ -449,10 +456,12 @@ ${err.message}`);
             startProgressBarUpdate(soundId, soundButtonElement);
             startMeterUpdate(soundId);
         }
+        return true;
     } catch (err) {
         console.error("Error in playSound:", err);
         if (state.showErrorPopups) showAlert('サウンドの再生準備中に予期せぬエラーが発生しました。');
         cleanupAfterStop(soundId, soundButtonElement);
+        return false;
     }
 }
 

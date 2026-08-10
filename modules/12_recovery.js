@@ -1,6 +1,6 @@
 import { state } from './03_state.js';
 import { dom } from './02_dom.js';
-import { getActivePlaybackSnapshot, playSound, resumeAudioContext } from './06_audio.js';
+import { forceStopSound, getActivePlaybackSnapshot, playSound, resumeAudioContext } from './06_audio.js';
 import { selectScene } from './07_scenes.js';
 import { showConfirm } from './05_ui.js';
 
@@ -38,6 +38,7 @@ export function readPlaybackCheckpoint() {
 }
 
 export async function offerPlaybackRecovery() {
+    const originalCheckpoint = localStorage.getItem(RECOVERY_KEY);
     const checkpoint = readPlaybackCheckpoint();
     if (!checkpoint) {
         clearPlaybackCheckpoint();
@@ -45,9 +46,14 @@ export async function offerPlaybackRecovery() {
     }
 
     const scene = state.scenes[checkpoint.sceneId];
-    const validSounds = checkpoint.sounds.filter(entry => {
+    const validSounds = checkpoint.sounds.flatMap(entry => {
         const sound = scene?.sounds.find(item => item.id === entry.soundId);
-        return sound && Number.isFinite(entry.position) && entry.position >= 0;
+        if (!sound || !Number.isFinite(entry.position) || entry.position < 0) return [];
+
+        const duration = Number(sound.duration) || 0;
+        const position = sound.loop && duration > 0 ? entry.position % duration : entry.position;
+        if (!sound.loop && duration > 0 && position >= duration) return [];
+        return [{ soundId: entry.soundId, position }];
     });
     if (!scene || validSounds.length === 0) {
         clearPlaybackCheckpoint();
@@ -64,17 +70,33 @@ export async function offerPlaybackRecovery() {
         return false;
     }
 
-    await resumeAudioContext();
-    await selectScene(checkpoint.sceneId);
-    for (const entry of validSounds) {
-        const sound = state.scenes[checkpoint.sceneId]?.sounds.find(item => item.id === entry.soundId);
-        if (!sound) continue;
-        const duration = Number(sound.duration) || 0;
-        const position = sound.loop && duration > 0 ? entry.position % duration : entry.position;
-        if (!sound.loop && duration > 0 && position >= duration) continue;
-        const button = dom.soundboard?.querySelector(`.sound-button[data-id="${entry.soundId}"]`);
-        await playSound(entry.soundId, button, performance.now(), position);
+    const startedSoundIds = [];
+    const rollback = () => {
+        startedSoundIds.forEach(soundId => {
+            try { forceStopSound(soundId); } catch (_) { /* Continue cleanup */ }
+        });
+        localStorage.setItem(RECOVERY_KEY, originalCheckpoint);
+    };
+
+    try {
+        if (!await resumeAudioContext()) {
+            rollback();
+            return false;
+        }
+        await selectScene(checkpoint.sceneId);
+        for (const entry of validSounds) {
+            const button = dom.soundboard?.querySelector(`.sound-button[data-id="${entry.soundId}"]`);
+            startedSoundIds.push(entry.soundId);
+            if (!await playSound(entry.soundId, button, performance.now(), entry.position)) {
+                rollback();
+                return false;
+            }
+        }
+    } catch (error) {
+        rollback();
+        throw error;
     }
+
     savePlaybackCheckpoint();
     return true;
 }
