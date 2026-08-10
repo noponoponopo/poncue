@@ -7,7 +7,7 @@ import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, 
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, triggerWaveformUpdate, seekSound, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect, addAudioBlobToScene,
-    removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
+    removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId, markSceneDeleted,
     renderers, // renderers object
     exportSceneAsZip, // New export function
     updatePadSizeCSS // Import updatePadSizeCSS
@@ -30,6 +30,7 @@ const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
 let recordingTimerId = null;
 let recordingSceneId = null;
+let recordingFinalization = null;
 
 // --- Event Listener Setup ---
 export function setupEventListeners() {
@@ -170,48 +171,74 @@ function updateRecordingButton() {
     const label = dom.recordBtn.querySelector('.record-label');
     if (label) label.textContent = status.isRecording ? formatRecordingTime(Date.now() - status.startedAt) : '録音';
 }
+async function finalizeRecording(completion, sceneId) {
+    let completedBlob = null;
+    let completedName = null;
+    let recordingError = null;
+    let uiFinalized = false;
+    const beginFinalization = () => {
+        if (uiFinalized) return;
+        uiFinalized = true;
+        clearInterval(recordingTimerId);
+        recordingTimerId = null;
+        if (dom.recordBtn) dom.recordBtn.disabled = true;
+        updateRecordingButton();
+    };
+
+    try {
+        const result = await completion;
+        completedBlob = result.blob.size > 0 ? result.blob : null;
+        recordingError = result.error;
+        beginFinalization();
+        const timestamp = new Date().toLocaleString('ja-JP', { hour12: false }).replace(/[/:]/g, '-').replace(/\s/g, '_');
+        completedName = `録音_${timestamp}`;
+        if (recordingError) throw recordingError;
+        await addAudioBlobToScene(completedBlob, completedName, sceneId);
+        if (await showConfirm(`「${completedName}」をシーンに保存しました。音声ファイルもダウンロードしますか？`, '録音完了')) {
+            downloadRecording(completedBlob, completedName);
+        }
+    } catch (error) {
+        beginFinalization();
+        if (completedBlob) {
+            downloadRecording(completedBlob, completedName || '録音');
+            const message = recordingError
+                ? `録音中にエラーが発生したため、取得できた録音データをダウンロードしました。\n${error.message || ''}`
+                : `シーンへの保存に失敗したため、録音ファイルをダウンロードしました。\n${error.message || ''}`;
+            await showAlert(message.trim(), '録音エラー');
+        } else {
+            await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
+        }
+    } finally {
+        if (recordingSceneId === sceneId) recordingSceneId = null;
+        if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
+    }
+}
 
 async function handleRecordingToggle() {
     if (dom.recordBtn?.disabled) return;
     dom.recordBtn.disabled = true;
-    let completedBlob = null;
-    let completedName = null;
     try {
         if (!getMasterRecordingStatus().isRecording) {
-            if (!state.currentSceneId) throw new Error('録音を保存するシーンが選択されていません。');
+            const sceneId = state.currentSceneId;
+            if (!sceneId) throw new Error('録音を保存するシーンが選択されていません。');
             await resumeAudioContext();
-            startMasterRecording();
-            recordingSceneId = state.currentSceneId;
+            const completion = startMasterRecording();
+            recordingSceneId = sceneId;
             updateRecordingButton();
             recordingTimerId = window.setInterval(updateRecordingButton, 250);
+            recordingFinalization = finalizeRecording(completion, sceneId);
+            if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
             return;
         }
 
-        clearInterval(recordingTimerId);
-        recordingTimerId = null;
-        const blob = await stopMasterRecording();
-        const timestamp = new Date().toLocaleString('ja-JP', { hour12: false }).replace(/[/:]/g, '-').replace(/\s/g, '_');
-        const name = `録音_${timestamp}`;
-        completedBlob = blob;
-        completedName = name;
-        await addAudioBlobToScene(blob, name, recordingSceneId);
-        recordingSceneId = null;
-        updateRecordingButton();
-        if (await showConfirm(`「${name}」をシーンに保存しました。音声ファイルもダウンロードしますか？`, '録音完了')) {
-            downloadRecording(blob, name);
-        }
+        stopMasterRecording();
+        if (recordingFinalization) await recordingFinalization;
     } catch (error) {
         clearInterval(recordingTimerId);
         recordingTimerId = null;
         recordingSceneId = null;
         updateRecordingButton();
-        if (completedBlob) {
-            downloadRecording(completedBlob, completedName || '録音');
-            await showAlert(`シーンへの保存に失敗したため、録音ファイルをダウンロードしました。\n${error.message || ''}`.trim(), '録音エラー');
-        } else {
-            await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
-        }
-    } finally {
+        await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
         if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
     }
 }
@@ -340,7 +367,13 @@ async function handleModalDeleteScene(sceneId) {
     const confirmed = await showConfirm(`シーン「${sceneName}」を削除しますか？この操作は取り消せません。`, 'シーンの削除');
     if (confirmed) {
         const sceneToDelete = state.scenes[sceneId];
-        for (const sound of sceneToDelete.sounds) {
+        if (!sceneToDelete) return;
+        const soundsToDelete = [...sceneToDelete.sounds];
+        markSceneDeleted(sceneId);
+        delete state.scenes[sceneId];
+        await dbRequest('scenes', 'readwrite', 'delete', sceneId);
+
+        for (const sound of soundsToDelete) {
             if (sound.audioId) {
                 try {
                     await dbRequest('audio_files', 'readwrite', 'delete', sound.audioId);
@@ -349,9 +382,6 @@ async function handleModalDeleteScene(sceneId) {
                 }
             }
         }
-
-        delete state.scenes[sceneId];
-        await dbRequest('scenes', 'readwrite', 'delete', sceneId);
         
         populateSceneModalList();
         

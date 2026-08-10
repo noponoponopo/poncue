@@ -38,48 +38,52 @@ export function startMasterRecording() {
 
     const chunks = [];
     const recorder = new MediaRecorder(state.recordingDestinationNode.stream, options);
-    recorder.addEventListener('dataavailable', event => {
-        if (event.data.size > 0) chunks.push(event.data);
+    let resolveCompletion;
+    const completion = new Promise(resolve => {
+        resolveCompletion = resolve;
     });
     const session = {
         recorder,
         chunks,
         startedAt: Date.now(),
-        mimeType: recorder.mimeType || mimeType || 'audio/webm'
+        mimeType: recorder.mimeType || mimeType || 'audio/webm',
+        completion,
+        failureReason: null,
+        settled: false
     };
-    recorder.start(1000);
+
+    recorder.addEventListener('dataavailable', event => {
+        if (event.data.size > 0) chunks.push(event.data);
+    });
+    recorder.addEventListener('error', event => {
+        session.failureReason = event.error || new Error('録音中にエラーが発生しました。');
+    }, { once: true });
+    recorder.addEventListener('stop', () => {
+        if (session.settled) return;
+        session.settled = true;
+        if (recordingSession === session) recordingSession = null;
+        const blob = new Blob(session.chunks, { type: session.mimeType });
+        const error = session.failureReason
+            || (blob.size === 0 ? new Error('録音データを作成できませんでした。') : null);
+        resolveCompletion({ blob, error });
+    }, { once: true });
+
     recordingSession = session;
-    return getMasterRecordingStatus();
+    try {
+        recorder.start(1000);
+    } catch (error) {
+        recordingSession = null;
+        session.settled = true;
+        throw error;
+    }
+    return completion;
 }
 
 export function stopMasterRecording() {
     if (!recordingSession) return Promise.reject(new Error('録音は開始されていません。'));
     const session = recordingSession;
-
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        const finish = () => {
-            if (settled) return;
-            settled = true;
-            recordingSession = null;
-            const blob = new Blob(session.chunks, { type: session.mimeType });
-            if (blob.size === 0) {
-                reject(new Error('録音データを作成できませんでした。'));
-                return;
-            }
-            resolve(blob);
-        };
-        session.recorder.addEventListener('stop', finish, { once: true });
-        session.recorder.addEventListener('error', event => {
-            if (settled) return;
-            settled = true;
-            recordingSession = null;
-            reject(event.error || new Error('録音中にエラーが発生しました。'));
-        }, { once: true });
-
-        if (session.recorder.state === 'inactive') finish();
-        else session.recorder.stop();
-    });
+    if (session.recorder.state !== 'inactive') session.recorder.stop();
+    return session.completion;
 }
 
 export function downloadRecording(blob, name) {
