@@ -245,6 +245,7 @@ function scheduleTrimBoundary(soundId) {
     if (!audioInfo || !soundData) return;
 
     clearTimeout(audioInfo.trimBoundaryTimeoutId);
+    audioInfo.trimBoundaryTimeoutId = null;
     if (soundData.loop && !audioInfo.audioElement) return;
     const remaining = audioInfo.trimEnd - getCurrentSourcePosition(audioInfo);
     const rate = Math.max(0.25, getCurrentPlaybackRate(audioInfo) || 1);
@@ -265,7 +266,12 @@ function scheduleTrimBoundary(soundId) {
         handleBoundary();
         return;
     }
-    audioInfo.trimBoundaryTimeoutId = setTimeout(handleBoundary, remaining / rate * 1000);
+    const timeoutId = setTimeout(() => {
+        if (audioInfo.trimBoundaryTimeoutId !== timeoutId) return;
+        audioInfo.trimBoundaryTimeoutId = null;
+        handleBoundary();
+    }, remaining / rate * 1000);
+    audioInfo.trimBoundaryTimeoutId = timeoutId;
 }
 
 function cancelNaturalFadeOut(audioInfo, now) {
@@ -651,6 +657,7 @@ export function updateActiveSoundSpeed(soundId) {
     } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
         audioInfo.sourceNode.playbackRate = rate;
         audioInfo.sourceNode.detune = soundData.preservePitch ? 0 : 1200 * Math.log2(rate);
+        scheduleTrimBoundary(soundId);
     } else if (audioInfo.sourceNode?.playbackRate) {
         try {
             audioInfo.sourceNode.playbackRate.setTargetAtTime(rate, state.audioContext.currentTime, 0.05);
@@ -669,9 +676,25 @@ export function updateActiveSoundLoop(soundId) {
         audioInfo.audioElement.loop = false;
         scheduleTrimBoundary(soundId);
     } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
+        const now = state.audioContext.currentTime;
+        const currentPosition = getCurrentSourcePosition(audioInfo);
+        audioInfo.playbackPosition = currentPosition;
+        audioInfo.playbackPositionContextTime = now;
+        if (!soundData.loop) {
+            const duration = audioInfo.trimEnd - audioInfo.trimStart;
+            audioInfo.playbackPosition = duration > 0
+                ? audioInfo.trimStart + (((currentPosition - audioInfo.trimStart) % duration) + duration) % duration
+                : audioInfo.trimStart;
+        }
         audioInfo.sourceNode.loopStart = audioInfo.trimStart;
         audioInfo.sourceNode.loopEnd = audioInfo.trimEnd;
         audioInfo.sourceNode.loop = soundData.loop;
+        if (!soundData.loop) {
+            const onstop = audioInfo.sourceNode.onstop;
+            audioInfo.sourceNode.onstop = () => { audioInfo.sourceNode.onstop = onstop; };
+            audioInfo.sourceNode.restart(now, audioInfo.playbackPosition);
+        }
+        scheduleTrimBoundary(soundId);
     }
     scheduleNaturalFadeOut(soundId);
 }
@@ -680,6 +703,8 @@ function cleanupAfterStop(soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
+        clearTimeout(audioInfo.trimBoundaryTimeoutId);
+        audioInfo.trimBoundaryTimeoutId = null;
         if (audioInfo.sourceNode) {
             audioInfo.sourceNode.onended = null;
             if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = () => {};
@@ -687,7 +712,6 @@ function cleanupAfterStop(soundId, soundButtonElement) {
             if (audioInfo.sourceNode instanceof Tone.GrainPlayer) audioInfo.sourceNode.dispose();
         }
         if (audioInfo.audioElement) {
-            clearTimeout(audioInfo.trimBoundaryTimeoutId);
             audioInfo.audioElement.removeEventListener('timeupdate', audioInfo.trimTimeUpdateHandler);
             audioInfo.audioElement.onended = null;
             audioInfo.audioElement.onerror = null;
