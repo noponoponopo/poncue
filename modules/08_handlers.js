@@ -14,18 +14,17 @@ import {
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES } from './01_config.js';
 
-// --- Debounce Utility ---
-function debounce(func, delay) {
-    let timeout;
-    return function(...args) {
-        const context = this;
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(context, args), delay);
-    };
+// --- Debounced Scene Save ---
+const sceneSaveTimeouts = new Map();
+function debouncedSaveCurrentSceneSounds(triggeredBy, sceneId = state.currentSceneId) {
+    if (!sceneId) return;
+    clearTimeout(sceneSaveTimeouts.get(sceneId));
+    const timeout = setTimeout(() => {
+        sceneSaveTimeouts.delete(sceneId);
+        saveCurrentSceneSounds(triggeredBy, sceneId);
+    }, 300);
+    sceneSaveTimeouts.set(sceneId, timeout);
 }
-
-// Debounced version of saveCurrentSceneSounds
-const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
 let freeLayoutDrag = null;
 
@@ -131,7 +130,7 @@ export function setupEventListeners() {
     dom.soundboard.addEventListener('pointerdown', handleFreeLayoutPointerDown);
     dom.soundboard.addEventListener('pointermove', handleFreeLayoutPointerMove);
     dom.soundboard.addEventListener('pointerup', handleFreeLayoutPointerUp);
-    dom.soundboard.addEventListener('pointercancel', handleFreeLayoutPointerUp);
+    dom.soundboard.addEventListener('pointercancel', handleFreeLayoutPointerCancel);
     dom.soundboard.addEventListener('keydown', handleFreeLayoutKeyDown);
     
     window.addEventListener('resize', () => {
@@ -516,6 +515,23 @@ function handleKeyUp(event) {
 const _toggleHandled = new Set();
 const _holdInputs = new Map();
 const _longPressHandled = new Set();
+const _freeLayoutMoved = new Set();
+const _freeLayoutSyntheticClicks = new Map();
+
+function armFreeLayoutSyntheticClick(soundId) {
+    clearTimeout(_freeLayoutSyntheticClicks.get(soundId));
+    _freeLayoutSyntheticClicks.set(soundId, setTimeout(() => {
+        _freeLayoutSyntheticClicks.delete(soundId);
+    }, 150));
+}
+
+function consumeFreeLayoutSyntheticClick(soundId) {
+    const timeout = _freeLayoutSyntheticClicks.get(soundId);
+    if (timeout === undefined) return false;
+    clearTimeout(timeout);
+    _freeLayoutSyntheticClicks.delete(soundId);
+    return true;
+}
 
 async function startHoldPlayback(soundId, soundButtonElement, inputId) {
     let inputs = _holdInputs.get(soundId);
@@ -681,6 +697,7 @@ function updateFreeLayoutEditState() {
 
 function handleFreeLayoutPointerDown(event) {
     if (state.layoutMode !== 'free' || !state.isSortableEnabled || event.button !== 0) return;
+    if (freeLayoutDrag || event.isPrimary === false) return;
     if (event.target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button')) return;
     const button = event.target.closest('.sound-button');
     if (!button) return;
@@ -689,6 +706,7 @@ function handleFreeLayoutPointerDown(event) {
     freeLayoutDrag = {
         pointerId: event.pointerId,
         button,
+        sceneId: state.currentSceneId,
         soundId: button.dataset.id,
         offsetX: event.clientX - rect.left,
         offsetY: event.clientY - rect.top,
@@ -713,20 +731,37 @@ function handleFreeLayoutPointerMove(event) {
     dom.soundboard.style.minHeight = `${Math.max(420, y + state.padSize + 20)}px`;
 }
 
-function handleFreeLayoutPointerUp(event) {
-    if (!freeLayoutDrag || event.pointerId !== freeLayoutDrag.pointerId) return;
+function finalizeFreeLayoutDrag(event) {
+    if (!freeLayoutDrag || event.pointerId !== freeLayoutDrag.pointerId) return null;
     const drag = freeLayoutDrag;
     freeLayoutDrag = null;
     drag.button.classList.remove('free-dragging');
-    if (!drag.moved) return;
-    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === drag.soundId);
+    try {
+        if (drag.button.hasPointerCapture?.(drag.pointerId)) drag.button.releasePointerCapture?.(drag.pointerId);
+    } catch (_) { /* pointer capture may already be released */ }
+    return drag;
+}
+
+function handleFreeLayoutPointerUp(event) {
+    const drag = finalizeFreeLayoutDrag(event);
+    if (!drag || !drag.moved) return;
+    const sound = state.scenes[drag.sceneId]?.sounds.find(item => item.id === drag.soundId);
     if (!sound) return;
     sound.freePosition = {
         x: Math.max(0, Math.round(parseFloat(drag.button.style.left) || 0)),
         y: Math.max(0, Math.round(parseFloat(drag.button.style.top) || 0))
     };
-    debouncedSaveCurrentSceneSounds(`freeLayout-${drag.soundId}`);
-    positionFreeLayoutPads();
+    _freeLayoutMoved.add(drag.soundId);
+    debouncedSaveCurrentSceneSounds(`freeLayout-${drag.soundId}`, drag.sceneId);
+    if (drag.sceneId === state.currentSceneId) positionFreeLayoutPads();
+}
+
+function handleFreeLayoutPointerCancel(event) {
+    const drag = finalizeFreeLayoutDrag(event);
+    if (!drag) return;
+    _freeLayoutMoved.delete(drag.soundId);
+    consumeFreeLayoutSyntheticClick(drag.soundId);
+    if (drag.sceneId === state.currentSceneId) positionFreeLayoutPads();
 }
 
 function handleFreeLayoutKeyDown(event) {
@@ -736,7 +771,8 @@ function handleFreeLayoutKeyDown(event) {
     event.preventDefault();
     event.stopPropagation();
     const step = event.shiftKey ? 20 : 5;
-    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === button.dataset.id);
+    const sceneId = state.currentSceneId;
+    const sound = state.scenes[sceneId]?.sounds.find(item => item.id === button.dataset.id);
     if (!sound) return;
     const current = { x: parseFloat(button.style.left) || 0, y: parseFloat(button.style.top) || 0 };
     if (event.key === 'ArrowLeft') current.x -= step;
@@ -747,7 +783,7 @@ function handleFreeLayoutKeyDown(event) {
         x: Math.max(0, Math.min(dom.soundboard.clientWidth - state.padSize, Math.round(current.x))),
         y: Math.max(0, Math.round(current.y))
     };
-    debouncedSaveCurrentSceneSounds(`freeLayoutKey-${sound.id}`);
+    debouncedSaveCurrentSceneSounds(`freeLayoutKey-${sound.id}`, sceneId);
     positionFreeLayoutPads();
 }
 
@@ -1016,6 +1052,13 @@ function createSoundButton(sound) {
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
+        if (_freeLayoutMoved.delete(sound.id)) {
+            e.preventDefault();
+            armFreeLayoutSyntheticClick(sound.id);
+            _toggleHandled.delete(sound.id);
+            clearTimeout(longPressTimeoutId);
+            return;
+        }
         if ((triggerMode === 'momentary' && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
@@ -1031,6 +1074,12 @@ function createSoundButton(sound) {
     }, { passive: false });
     buttonWrapper.addEventListener('click', e => {
         if (isControlTarget(e.target)) return;
+        const moved = _freeLayoutMoved.delete(sound.id);
+        const syntheticClick = consumeFreeLayoutSyntheticClick(sound.id);
+        if (moved || syntheticClick) {
+            _toggleHandled.delete(sound.id);
+            return;
+        }
         if (_toggleHandled.delete(sound.id)) return;
         if (!touchFlag && !isDraggingViaTouch) {
             if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
