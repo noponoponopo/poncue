@@ -260,7 +260,8 @@ function handleModalSceneListClick(event) {
 }
 
 async function handleSoundSettings(soundId) {
-    const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const sceneId = state.currentSceneId;
+    const sound = state.scenes[sceneId]?.sounds.find(s => s.id === soundId);
     if (!sound) return;
 
     let currentShortcut = '';
@@ -274,6 +275,8 @@ async function handleSoundSettings(soundId) {
     const newSettings = await showSoundSettingsModal(soundId, currentShortcut);
 
     if (newSettings !== null) { // User clicked Save or cleared
+        if (state.currentSceneId !== sceneId || !state.scenes[sceneId]?.sounds.includes(sound)) return;
+
         const { newShortcut, newFadeDuration, newCueIn, newCueOut, newEffects } = newSettings;
 
         // Update shortcut
@@ -291,7 +294,6 @@ async function handleSoundSettings(soundId) {
             }
             state.shortcuts[newShortcut] = soundId;
         }
-        await saveSetting('shortcuts', state.shortcuts);
 
         // Update fade duration
         sound.fadeDuration = newFadeDuration;
@@ -304,7 +306,10 @@ async function handleSoundSettings(soundId) {
         }
         sound.effects = newEffects;
         updateActiveSoundEffects(soundId);
-        debouncedSaveCurrentSceneSounds(`soundSettingsChange-${soundId}`);
+        await Promise.all([
+            saveSetting('shortcuts', state.shortcuts),
+            saveCurrentSceneSounds(`soundSettingsChange-${soundId}`)
+        ]);
 
         showAlert(`サウンド「${sound.name}」の設定を更新しました。`, '通知');
         renderers.renderSoundboard();

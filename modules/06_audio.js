@@ -144,8 +144,9 @@ function recordStartMetric(soundId, requestedAt, startedAt) {
 }
 
 // --- Audio Playback ---
+const pendingSeekRequests = new Map();
 
-export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
+export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = null) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
 
     if (state.activeAudios[soundId]) {
@@ -163,8 +164,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
 
     try {
         // cueIn 適用: 通常再生時は cueIn を開始位置に、seek 時は startOffset を優先
-        const effectiveStartOffset = startOffset > 0
-            ? startOffset
+        const effectiveStartOffset = Number.isFinite(startOffset)
+            ? Math.max(0, startOffset)
             : Math.max(0, soundData.cueIn ?? 0);
 
         if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) {
@@ -275,16 +276,23 @@ ${err.message}`);
     }
 }
 
-export function stopSound(soundId, soundButtonElement = null, useFadeOut = true) {
+export function stopSound(soundId, soundButtonElement = null, useFadeOut = true, keepSeekRequest = false) {
+    if (!keepSeekRequest) pendingSeekRequests.delete(soundId);
+
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || audioInfo.isFadingOut) return;
+    if (!audioInfo) return Promise.resolve();
+    if (audioInfo.stopPromise) return audioInfo.stopPromise;
+
+    let resolveStop;
+    const stopPromise = new Promise(resolve => { resolveStop = resolve; });
+    audioInfo.stopPromise = stopPromise;
 
     if (!soundButtonElement) { soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`); }
 
     audioInfo.isFadingOut = true;
 
     if (audioInfo.meterAnimationFrameId) { cancelAnimationFrame(audioInfo.meterAnimationFrameId); }
-    if (audioInfo.progressBarInterval) { clearInterval(audioInfo.progressBarInterval); }
+    clearInterval(audioInfo.progressBarInterval);
     audioInfo.meterAnimationFrameId = null;
     audioInfo.progressBarInterval = null;
     triggerWaveformUpdate();
@@ -306,6 +314,7 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
         } catch (e) { /* ignore */ }
         finally {
             cleanupAfterStop(soundId, soundButtonElement);
+            resolveStop();
         }
     };
 
@@ -321,6 +330,8 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
         }
         stopPlayback();
     }
+
+    return stopPromise;
 }
 
 export function stopAllSounds(fadeOut = true) {
@@ -342,11 +353,15 @@ export function seekSound(soundId, seekTime) {
             fadeInSound(soundId, soundData?.volume ?? 1);
         }, MIN_STOP_FADE_SECONDS * 1000);
     } else if (audioInfo.audioBuffer) { // HIGH_PERFORMANCE
-        stopSound(soundId, null, true);
-        setTimeout(() => {
+        const token = Symbol();
+        pendingSeekRequests.set(soundId, { token, seekTime });
+        stopSound(soundId, null, true, true).then(() => {
+            const request = pendingSeekRequests.get(soundId);
+            if (request?.token !== token) return;
+            pendingSeekRequests.delete(soundId);
             const soundButton = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
-            playSound(soundId, soundButton, performance.now(), seekTime);
-        }, MIN_STOP_FADE_SECONDS * 1000);
+            playSound(soundId, soundButton, performance.now(), request.seekTime);
+        });
     }
 }
 
