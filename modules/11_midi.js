@@ -28,7 +28,11 @@ export async function enableMidiInput(onControlEvent) {
     controlEventHandler = onControlEvent;
 
     if (!isMidiSupported()) {
-        updateState({ midiStatus: 'unsupported', midiEnabled: false });
+        updateState({
+            midiStatus: 'unsupported',
+            midiEnabled: false,
+            midiSettings: normalizeMidiSettings({ ...state.midiSettings, enabled: false })
+        });
         updateMidiButtonState('unsupported');
         throw new Error('Web MIDI API is not supported in this browser.');
     }
@@ -60,7 +64,11 @@ export async function enableMidiInput(onControlEvent) {
         return midiAccess;
     }).catch(err => {
         if (generation === connectionGeneration) {
-            updateState({ midiStatus: 'error', midiEnabled: false });
+            updateState({
+                midiStatus: 'error',
+                midiEnabled: false,
+                midiSettings: normalizeMidiSettings({ ...state.midiSettings, enabled: false })
+            });
             updateMidiButtonState('error');
         }
         throw err;
@@ -199,7 +207,10 @@ export function parseMidiMessage(data) {
 
 export function getMidiEventPhase(midiEvent) {
     if (midiEvent.type === 'noteoff') return 'release';
-    if (midiEvent.type === 'cc') return midiEvent.value > 0 ? 'press' : 'release';
+    if (midiEvent.type === 'cc') {
+        if (midiEvent.number === 120 || midiEvent.number === 123) return 'press';
+        return midiEvent.value > 0 ? 'press' : 'release';
+    }
     if (midiEvent.type === 'activeSensing' || midiEvent.type === 'clock') return 'ignore';
     if (midiEvent.type === 'mtcQuarterFrame' || midiEvent.type === 'songPosition' || midiEvent.type === 'pitchbend' || midiEvent.type === 'channelPressure' || midiEvent.type === 'polyAftertouch') return 'change';
     return 'press';

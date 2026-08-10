@@ -28,6 +28,7 @@ function debounce(func, delay) {
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
+let midiRestoreAttempted = false;
 
 // Move master volume between header and master-effect-bar based on available width
 function relocateMasterVolume() {
@@ -142,8 +143,21 @@ export function setupEventListeners() {
             updateMidiAudioStatus(state.audioContext?.state);
         });
     }
+    restoreSavedMidiInput();
 }
+async function restoreSavedMidiInput() {
+    if (midiRestoreAttempted || !state.midiSettings?.enabled) return;
+    midiRestoreAttempted = true;
 
+    try {
+        await enableMidiInput(handleMidiControlEvent);
+        populateMidiSettingsUI();
+    } catch (err) {
+        console.error('Failed to restore MIDI input:', err);
+        await saveSetting('midiSettings', state.midiSettings);
+        populateMidiSettingsUI();
+    }
+}
 
 // --- Custom Modal Handlers ---
 function handleModalOk() {
@@ -194,6 +208,8 @@ async function handleMidiEnableClick() {
         }
     } catch (err) {
         console.error('Failed to enable MIDI input:', err);
+        await saveSetting('midiSettings', state.midiSettings);
+        populateMidiSettingsUI();
         updateMidiButtonState(err.message?.includes('not supported') ? 'unsupported' : 'error');
         showAlert('MIDI入力を有効化できませんでした。Web MIDI対応ブラウザ、権限、MIDIデバイスを確認してください。', 'MIDI');
     }
@@ -319,6 +335,12 @@ function populateMidiSettingsUI() {
 
     if (dom.midiDeviceSelect) {
         const inputs = getMidiInputOptions();
+        const inputById = inputs.find(input => input.id === settings.deviceId);
+        const inputsByName = settings.deviceName
+            ? inputs.filter(input => input.name === settings.deviceName)
+            : [];
+        const resolvedInput = inputById || (inputsByName.length === 1 ? inputsByName[0] : null);
+
         dom.midiDeviceSelect.innerHTML = '<option value="all">すべての入力</option>';
         inputs.forEach(input => {
             const option = document.createElement('option');
@@ -327,7 +349,7 @@ function populateMidiSettingsUI() {
             option.dataset.name = input.name;
             dom.midiDeviceSelect.appendChild(option);
         });
-        dom.midiDeviceSelect.value = inputs.some(input => input.id === settings.deviceId) ? settings.deviceId : 'all';
+        dom.midiDeviceSelect.value = resolvedInput?.id || 'all';
     }
 
     if (dom.midiChannelSelect) {
@@ -347,12 +369,15 @@ function populateMidiSettingsUI() {
     updateMidiGlobalActionLabels();
 }
 
-async function handleMidiSettingsChange() {
+async function handleMidiSettingsChange(event) {
     const selectedDeviceOption = dom.midiDeviceSelect?.selectedOptions?.[0];
+    const preserveSavedDevice = event?.currentTarget !== dom.midiDeviceSelect
+        && dom.midiDeviceSelect?.value === 'all'
+        && state.midiSettings.deviceId !== 'all';
     const nextSettings = normalizeMidiSettings({
         ...state.midiSettings,
-        deviceId: dom.midiDeviceSelect?.value || 'all',
-        deviceName: selectedDeviceOption?.dataset?.name || '',
+        deviceId: preserveSavedDevice ? state.midiSettings.deviceId : (dom.midiDeviceSelect?.value || 'all'),
+        deviceName: preserveSavedDevice ? state.midiSettings.deviceName : (selectedDeviceOption?.dataset?.name || ''),
         channel: dom.midiChannelSelect?.value === 'all' ? 'all' : Number(dom.midiChannelSelect.value),
         fixedGridEnabled: Boolean(dom.midiFixedGridCheckbox?.checked),
         baseNote: Math.max(0, Math.min(127, Number(dom.midiBaseNoteInput?.value ?? 36)))

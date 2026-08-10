@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MIDI_PLAYBACK_MODE } from '../modules/01_config.js';
+import { MIDI_GLOBAL_ACTIONS, MIDI_PLAYBACK_MODE } from '../modules/01_config.js';
 import { state, updateState } from '../modules/03_state.js';
 import {
     disableMidiInput,
@@ -69,6 +69,47 @@ test('parses zero-velocity Note On as Note Off', () => {
     assert.deepEqual(parseMidiMessage(Uint8Array.of(0x92, 64, 0)), {
         type: 'noteoff', channel: 2, number: 64, velocity: 0
     });
+});
+
+test('dispatches CC 120 and 123 as Panic presses regardless of value', async () => {
+    const input = createInput('main');
+    globalThis.navigator = { requestMIDIAccess: async () => createAccess([input]) };
+    setSound();
+    const events = [];
+    await enableMidiInput(event => events.push(event));
+
+    for (const number of [120, 123]) {
+        send(input, [0xb0, number, 127]);
+        send(input, [0xb0, number, 0]);
+    }
+
+    assert.equal(events.length, 4);
+    for (const event of events) {
+        assert.equal(event.midiEvent.phase, 'press');
+        assert.deepEqual(event.actions, [{ type: MIDI_GLOBAL_ACTIONS.PANIC }]);
+    }
+});
+
+test('clears the enabled setting when MIDI is unsupported or access is denied', async () => {
+    updateState({
+        midiSettings: { ...state.midiSettings, enabled: true }
+    });
+    delete globalThis.navigator;
+
+    await assert.rejects(enableMidiInput(() => {}), /not supported/);
+    assert.equal(state.midiEnabled, false);
+    assert.equal(state.midiSettings.enabled, false);
+
+    updateState({
+        midiSettings: { ...state.midiSettings, enabled: true }
+    });
+    globalThis.navigator = {
+        requestMIDIAccess: async () => { throw new Error('denied'); }
+    };
+
+    await assert.rejects(enableMidiInput(() => {}), /denied/);
+    assert.equal(state.midiEnabled, false);
+    assert.equal(state.midiSettings.enabled, false);
 });
 
 test('shares a concurrent access request and attaches each input once', async () => {
