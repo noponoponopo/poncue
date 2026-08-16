@@ -196,6 +196,44 @@ export function resumeAudioContext() {
     }
 }
 
+export function supportsAudioOutputSelection() {
+    return typeof state.audioContext?.setSinkId === 'function';
+}
+
+export async function listAudioOutputDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter(device => device.kind === 'audiooutput');
+}
+
+export async function setAudioOutputDevice(deviceId = 'default', label = '', options = {}) {
+    const requestedId = deviceId || 'default';
+    const commitState = options?.commitState !== false;
+    const outputLabel = label || (requestedId === 'default' ? 'システム既定' : '選択した出力');
+    if (!supportsAudioOutputSelection()) {
+        if (requestedId !== 'default') throw new Error('このブラウザは音声出力先の変更に対応していません。');
+        if (commitState) updateState({ audioOutputDeviceId: 'default', audioOutputDeviceLabel: outputLabel, audioOutputPending: false });
+        return false;
+    }
+
+    await state.audioContext.setSinkId(requestedId === 'default' ? '' : requestedId);
+    if (commitState) {
+        updateState({
+            audioOutputDeviceId: requestedId,
+            audioOutputDeviceLabel: outputLabel,
+            audioOutputPending: false
+        });
+    }
+    return true;
+}
+
+export async function chooseAudioOutputDevice() {
+    if (typeof navigator.mediaDevices?.selectAudioOutput !== 'function') {
+        throw new Error('OSの出力選択ダイアログはこのブラウザで利用できません。');
+    }
+    return navigator.mediaDevices.selectAudioOutput();
+}
+
 function recordStartMetric(soundId, requestedAt, startedAt) {
     if (!requestedAt || !startedAt) return;
     const sample = {

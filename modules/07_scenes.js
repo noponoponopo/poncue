@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS } from './01_config.js';
 
@@ -346,7 +346,7 @@ export function disableAppControls() {
 // --- 設定管理 ---
 export async function loadSettings() {
     try {
-        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'keyboardViewVisible', 'keyboardLayout'];
+        const settingsToLoad = ['currentSceneId', 'darkMode', 'masterVolume', 'audioOutputDeviceId', 'audioOutputDeviceLabel', 'isSortableEnabled', 'shortcuts', 'performanceMode', 'showWaveform', 'padSize', 'masterEq', 'masterComp', 'masterDelay', 'masterPan', 'masterDistortion', 'masterReverb', 'masterLimiter', 'keyboardViewVisible', 'keyboardLayout'];
         const results = await Promise.all(settingsToLoad.map(key => dbRequest(SETTINGS_STORE_NAME, 'readonly', 'get', key).catch(() => null)));
         const settings = results.reduce((acc, res, index) => {
             if (res) acc[settingsToLoad[index]] = res.value;
@@ -356,6 +356,9 @@ export async function loadSettings() {
         updateState({
             currentSceneId: settings.currentSceneId ?? null,
             masterVolume: settings.masterVolume ?? 1.0,
+            audioOutputDeviceId: settings.audioOutputDeviceId ?? 'default',
+            audioOutputDeviceLabel: settings.audioOutputDeviceLabel ?? 'システム既定',
+            audioOutputPending: false,
             isSortableEnabled: settings.isSortableEnabled ?? false,
             shortcuts: settings.shortcuts ?? {},
             performanceMode: settings.performanceMode ?? DEFAULT_PERFORMANCE_MODE,
@@ -390,6 +393,19 @@ export async function loadSettings() {
         if (dom.padSizeValue) dom.padSizeValue.textContent = state.padSize;
         updatePadSizeCSS(state.padSize);
         if (dom.keyboardLayoutSelect) dom.keyboardLayoutSelect.value = state.keyboardLayout;
+        try {
+            await setAudioOutputDevice(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
+        } catch (error) {
+            // enumerateDevices() is permission-filtered and cannot prove that a
+            // saved sink disappeared. Only NotFoundError is authoritative here.
+            if (state.audioOutputDeviceId !== 'default' && error?.name === 'NotFoundError') {
+                await setAudioOutputDevice('default', 'システム既定');
+                await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
+            } else if (state.audioOutputDeviceId !== 'default') {
+                updateState({ audioOutputPending: true });
+                console.warn('Saved audio output is pending permission or unavailable.', error);
+            }
+        }
     } catch (err) {
         if (state.showErrorPopups) showAlert("設定の読み込みに失敗しました。");
     }
@@ -404,6 +420,19 @@ export async function saveSetting(key, value) {
     } catch (err) {
         if (state.showErrorPopups) showAlert(`設定「${key}」の保存に失敗しました。`);
     }
+}
+
+export async function saveAudioOutputSettings(deviceId, deviceLabel) {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+        const transaction = db.transaction(SETTINGS_STORE_NAME, 'readwrite');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Audio output settings transaction failed'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Audio output settings transaction aborted'));
+        const store = transaction.objectStore(SETTINGS_STORE_NAME);
+        store.put({ key: 'audioOutputDeviceId', value: deviceId });
+        store.put({ key: 'audioOutputDeviceLabel', value: deviceLabel });
+    });
 }
 
 // --- シーン管理 ---
