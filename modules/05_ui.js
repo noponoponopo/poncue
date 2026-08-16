@@ -1065,7 +1065,8 @@ export function resetProgressBar(soundButtonElement) {
 export function updateDraggableState() {
     const buttons = dom.soundboard.querySelectorAll('.sound-button');
     buttons.forEach(button => {
-        button.draggable = state.isSortableEnabled;
+        // 本番モード中は並べ替えを無効化する
+        button.draggable = state.isSortableEnabled && !state.showMode;
     });
 }
 

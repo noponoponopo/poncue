@@ -235,12 +235,14 @@ function toggleShowMode() {
         document.body.classList.remove('show-mode');
         updateState({ showMode: false });
     }
+    updateDraggableState();
 }
 
 function handleFullscreenChange() {
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         document.body.classList.remove('show-mode');
         updateState({ showMode: false });
+        updateDraggableState();
     }
 }
 
@@ -738,7 +740,7 @@ function handleProgressBarClick(event, soundId, soundButtonElement) {
 
 // --- Drag & Drop Handlers ---
 function handleDragStart(event) {
-    if (!state.isSortableEnabled) { event.preventDefault(); return; }
+    if (!state.isSortableEnabled || state.showMode) { event.preventDefault(); return; }
     const target = event.target.closest('.sound-button');
     if (target?.draggable) {
         updateState({ draggedElement: target, draggedSoundId: target.dataset.id });
@@ -794,7 +796,7 @@ let touchStartY = 0;
 let touchMoveOccurred = false;
 
 function handleTouchStart(event) {
-    if (!state.isSortableEnabled) return;
+    if (!state.isSortableEnabled || state.showMode) return;
     const targetButton = event.target.closest('.sound-button');
     if (!targetButton || isDraggingViaTouch || event.target.closest('.volume-control')) return;
     touchMoveOccurred = false;
@@ -1027,6 +1029,19 @@ function createSoundButton(sound) {
     volumeSlider.addEventListener('input', e => { e.stopPropagation(); handleIndividualVolumeChange(sound.id, parseFloat(e.target.value)); e.target.title = `音量: ${Math.round(parseFloat(e.target.value) * 100)}%`; });
     volumeSlider.addEventListener('click', e => e.stopPropagation());
     volumeSlider.addEventListener('touchstart', e => { e.stopPropagation(); clearTimeout(longPressTimeoutId); }, { passive: true });
+
+    // ドラッグモード中にスライダー操作がカードのHTML5ドラッグに横取りされないよう、押下中のみカードのdraggableを無効化する
+    volumeSlider.addEventListener('pointerdown', () => {
+        if (!state.isSortableEnabled || state.showMode) return;
+        buttonWrapper.draggable = false;
+        const restoreDraggable = () => {
+            window.removeEventListener('pointerup', restoreDraggable);
+            window.removeEventListener('pointercancel', restoreDraggable);
+            buttonWrapper.draggable = state.isSortableEnabled && !state.showMode;
+        };
+        window.addEventListener('pointerup', restoreDraggable);
+        window.addEventListener('pointercancel', restoreDraggable);
+    });
 
     const progressBar = buttonWrapper.querySelector('.progress-bar');
     progressBar.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); handleProgressBarClick(e.changedTouches[0], sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
