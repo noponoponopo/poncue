@@ -175,19 +175,24 @@ export async function listAudioOutputDevices() {
     return devices.filter(device => device.kind === 'audiooutput');
 }
 
-export async function setAudioOutputDevice(deviceId = 'default', label = '') {
+export async function setAudioOutputDevice(deviceId = 'default', label = '', options = {}) {
     const requestedId = deviceId || 'default';
+    const commitState = options?.commitState !== false;
+    const outputLabel = label || (requestedId === 'default' ? 'システム既定' : '選択した出力');
     if (!supportsAudioOutputSelection()) {
         if (requestedId !== 'default') throw new Error('このブラウザは音声出力先の変更に対応していません。');
-        updateState({ audioOutputDeviceId: 'default', audioOutputDeviceLabel: 'システム既定' });
+        if (commitState) updateState({ audioOutputDeviceId: 'default', audioOutputDeviceLabel: outputLabel, audioOutputPending: false });
         return false;
     }
 
     await state.audioContext.setSinkId(requestedId === 'default' ? '' : requestedId);
-    updateState({
-        audioOutputDeviceId: requestedId,
-        audioOutputDeviceLabel: label || (requestedId === 'default' ? 'システム既定' : '選択した出力')
-    });
+    if (commitState) {
+        updateState({
+            audioOutputDeviceId: requestedId,
+            audioOutputDeviceLabel: outputLabel,
+            audioOutputPending: false
+        });
+    }
     return true;
 }
 

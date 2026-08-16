@@ -113,7 +113,7 @@ export function setupEventListeners() {
     dom.padSizeSlider?.addEventListener('input', handlePadSizeChange);
     dom.padSizeSlider?.addEventListener('change', () => saveSetting('padSize', state.padSize));
     dom.audioOutputSelect?.addEventListener('change', handleAudioOutputChange);
-    dom.audioOutputRefreshBtn?.addEventListener('click', () => refreshAudioOutputControls('出力一覧を更新しました。'));
+    dom.audioOutputRefreshBtn?.addEventListener('click', () => { void refreshAudioOutputControls('出力一覧を更新しました。'); });
     dom.audioOutputPickerBtn?.addEventListener('click', handleAudioOutputPicker);
     navigator.mediaDevices?.addEventListener?.('devicechange', handleAudioDeviceChange);
 
@@ -222,14 +222,55 @@ function handlePerformanceModeChange(event) {
     // 例: オーディオバッファの再読み込み、波形表示の精度変更など
 }
 
-async function refreshAudioOutputControls(message = '') {
-    if (!dom.audioOutputSelect) return;
-    const supported = supportsAudioOutputSelection();
-    dom.audioOutputSelect.disabled = !supported;
-    dom.audioOutputRefreshBtn.disabled = !navigator.mediaDevices?.enumerateDevices;
-    dom.audioOutputPickerBtn.hidden = typeof navigator.mediaDevices?.selectAudioOutput !== 'function';
+let audioOutputRefreshGeneration = 0;
+let confirmedAudioOutputDeviceIds = null;
+let audioOutputOperationGeneration = 0;
+let audioOutputSelectionQueue = Promise.resolve();
+let audioOutputPickerInFlight = false;
+let audioOutputPendingSelectionCount = 0;
 
-    const devices = await listAudioOutputDevices().catch(() => []);
+function updateAudioOutputDisplay(message = '') {
+    const supported = supportsAudioOutputSelection();
+    const canEnumerate = typeof navigator.mediaDevices?.enumerateDevices === 'function';
+    const canPick = typeof navigator.mediaDevices?.selectAudioOutput === 'function';
+    if (dom.audioOutputSelect) dom.audioOutputSelect.disabled = !supported;
+    if (dom.audioOutputRefreshBtn) dom.audioOutputRefreshBtn.disabled = !canEnumerate;
+    if (dom.audioOutputPickerBtn) dom.audioOutputPickerBtn.hidden = !supported || !canPick;
+    if (!dom.audioOutputStatus) return;
+    if (!supported) {
+        dom.audioOutputStatus.textContent = 'このブラウザでは出力変更に対応していません。既定出力を使用します。';
+        return;
+    }
+    const pendingMessage = state.audioOutputPending ? '（権限を確認してから適用）' : '';
+    dom.audioOutputStatus.textContent = message || `現在: ${state.audioOutputDeviceLabel}${pendingMessage}`;
+}
+
+async function refreshAudioOutputControls(message = '') {
+    const generation = ++audioOutputRefreshGeneration;
+    updateAudioOutputDisplay(message);
+    if (!dom.audioOutputSelect) return;
+
+    const canEnumerate = typeof navigator.mediaDevices?.enumerateDevices === 'function';
+    let devices = [];
+    if (canEnumerate) {
+        try {
+            devices = await listAudioOutputDevices();
+        } catch (error) {
+            if (generation === audioOutputRefreshGeneration && dom.audioOutputStatus) {
+                dom.audioOutputStatus.textContent = `出力一覧を取得できません: ${error.message || '権限を確認してください。'}`;
+            }
+            return;
+        }
+    }
+    if (generation !== audioOutputRefreshGeneration) return;
+    if (!state.audioOutputPending
+        && state.audioOutputDeviceId !== 'default'
+        && devices.some(device => device.deviceId === state.audioOutputDeviceId)) {
+        confirmedAudioOutputDeviceIds = new Set(
+            devices.filter(device => device.deviceId).map(device => device.deviceId)
+        );
+    }
+
     dom.audioOutputSelect.replaceChildren();
     const defaultOption = document.createElement('option');
     defaultOption.value = 'default';
@@ -243,61 +284,146 @@ async function refreshAudioOutputControls(message = '') {
         dom.audioOutputSelect.appendChild(option);
     });
 
-    if (state.audioOutputDeviceId !== 'default' && !devices.some(device => device.deviceId === state.audioOutputDeviceId)) {
+    if (state.audioOutputDeviceId !== 'default'
+        && !devices.some(device => device.deviceId === state.audioOutputDeviceId)) {
         const unavailableOption = document.createElement('option');
         unavailableOption.value = state.audioOutputDeviceId;
-        unavailableOption.textContent = `${state.audioOutputDeviceLabel || '選択した出力'}（未接続）`;
+        unavailableOption.textContent = `${state.audioOutputDeviceLabel || '選択した出力'}（未接続または未許可）`;
         dom.audioOutputSelect.appendChild(unavailableOption);
     }
     dom.audioOutputSelect.value = state.audioOutputDeviceId;
-    if (dom.audioOutputStatus) {
-        dom.audioOutputStatus.textContent = supported
-            ? (message || `現在: ${state.audioOutputDeviceLabel}`)
-            : '出力変更には対応する Chromium 系ブラウザが必要です。既定出力を使用します。';
-    }
+    updateAudioOutputDisplay(message);
 }
 
-async function applyAudioOutputSelection(deviceId, label) {
-    dom.audioOutputSelect.disabled = true;
-    if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = '出力を切り替えています...';
-    try {
-        await setAudioOutputDevice(deviceId, label);
-        await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
-        await refreshAudioOutputControls(`現在: ${state.audioOutputDeviceLabel}`);
-        return true;
-    } catch (error) {
-        if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = `切替失敗: ${error.message}`;
-        dom.audioOutputSelect.value = state.audioOutputDeviceId;
-        dom.audioOutputSelect.disabled = !supportsAudioOutputSelection();
-        return false;
+async function applyAudioOutputSelection(deviceId, label, expectedOperationGeneration = null) {
+    const isDeviceChange = expectedOperationGeneration !== null;
+    const operationGeneration = expectedOperationGeneration ?? ++audioOutputOperationGeneration;
+    if (!isDeviceChange) audioOutputPendingSelectionCount += 1;
+    const operation = audioOutputSelectionQueue.then(async () => {
+        let stale = false;
+        try {
+            if (operationGeneration !== audioOutputOperationGeneration) {
+                stale = true;
+                return false;
+            }
+
+            if (dom.audioOutputSelect) dom.audioOutputSelect.disabled = true;
+            if (dom.audioOutputRefreshBtn) dom.audioOutputRefreshBtn.disabled = true;
+            if (dom.audioOutputPickerBtn) dom.audioOutputPickerBtn.disabled = true;
+            if (dom.audioOutputStatus) dom.audioOutputStatus.textContent = '出力を切り替えています...';
+
+            const requestedId = deviceId || 'default';
+            const outputLabel = label || (requestedId === 'default' ? 'システム既定' : '選択した出力');
+            await setAudioOutputDevice(requestedId, outputLabel, { commitState: false });
+            if (operationGeneration !== audioOutputOperationGeneration) {
+                stale = true;
+                return false;
+            }
+
+            updateState({
+                audioOutputDeviceId: requestedId,
+                audioOutputDeviceLabel: outputLabel,
+                audioOutputPending: false
+            });
+            await saveAudioOutputSettings(requestedId, outputLabel);
+            if (operationGeneration !== audioOutputOperationGeneration) {
+                stale = true;
+                return false;
+            }
+            await refreshAudioOutputControls(`現在: ${outputLabel}`);
+            return true;
+        } catch (error) {
+            if (['NotAllowedError', 'SecurityError'].includes(error.name)) {
+                updateState({ audioOutputPending: true });
+            }
+            updateAudioOutputDisplay(`切替失敗: ${error.message || '出力デバイスを利用できません。'}`);
+            if (dom.audioOutputSelect) dom.audioOutputSelect.value = state.audioOutputDeviceId;
+            return false;
+        } finally {
+            if (!stale) {
+                if (dom.audioOutputSelect) dom.audioOutputSelect.disabled = !supportsAudioOutputSelection();
+                if (dom.audioOutputRefreshBtn) dom.audioOutputRefreshBtn.disabled = typeof navigator.mediaDevices?.enumerateDevices !== 'function';
+                if (dom.audioOutputPickerBtn) {
+                    dom.audioOutputPickerBtn.disabled = false;
+                    dom.audioOutputPickerBtn.hidden = !supportsAudioOutputSelection()
+                        || typeof navigator.mediaDevices?.selectAudioOutput !== 'function';
+                }
+            }
+        }
+    });
+    audioOutputSelectionQueue = operation.catch(() => {});
+    if (!isDeviceChange) {
+        operation.then(
+            () => { audioOutputPendingSelectionCount = Math.max(0, audioOutputPendingSelectionCount - 1); },
+            () => { audioOutputPendingSelectionCount = Math.max(0, audioOutputPendingSelectionCount - 1); }
+        );
     }
+    return operation;
 }
 
 async function handleAudioOutputChange(event) {
-    const option = event.target.selectedOptions[0];
+    const option = event.target.selectedOptions?.[0];
     await applyAudioOutputSelection(event.target.value, option?.textContent || '選択した出力');
 }
 
 async function handleAudioOutputPicker() {
+    if (audioOutputPickerInFlight) return;
+    audioOutputPickerInFlight = true;
+    if (dom.audioOutputPickerBtn) dom.audioOutputPickerBtn.disabled = true;
     try {
         const device = await chooseAudioOutputDevice();
-        await applyAudioOutputSelection(device.deviceId, device.label || '選択した出力');
+        if (device?.deviceId) await applyAudioOutputSelection(device.deviceId, device.label || '選択した出力');
     } catch (error) {
-        if (error.name !== 'NotAllowedError' && dom.audioOutputStatus) {
-            dom.audioOutputStatus.textContent = error.message;
+        if (dom.audioOutputStatus) {
+            dom.audioOutputStatus.textContent = error.name === 'NotAllowedError'
+                ? '出力選択が許可されませんでした。HTTPS接続とユーザー操作を確認してください。'
+                : (error.message || '出力デバイスを選択できませんでした。');
+        }
+    } finally {
+        audioOutputPickerInFlight = false;
+        if (dom.audioOutputPickerBtn) {
+            dom.audioOutputPickerBtn.disabled = false;
+            dom.audioOutputPickerBtn.hidden = !supportsAudioOutputSelection()
+                || typeof navigator.mediaDevices?.selectAudioOutput !== 'function';
         }
     }
+    void handleAudioDeviceChange();
 }
 
 async function handleAudioDeviceChange() {
-    const devices = await listAudioOutputDevices().catch(() => []);
-    const selectedStillAvailable = state.audioOutputDeviceId === 'default'
-        || devices.some(device => device.deviceId === state.audioOutputDeviceId);
-    if (!selectedStillAvailable) {
-        const changed = await applyAudioOutputSelection('default', 'システム既定');
-        if (changed) {
-            await refreshAudioOutputControls('選択していた出力が切断されたため、システム既定へ戻しました。');
+    if (audioOutputPickerInFlight) {
+        await refreshAudioOutputControls();
+        return;
+    }
+    const refreshGeneration = ++audioOutputRefreshGeneration;
+    const selectedDeviceId = state.audioOutputDeviceId;
+    if (typeof navigator.mediaDevices?.enumerateDevices !== 'function') {
+        updateAudioOutputDisplay();
+        return;
+    }
+    let devices;
+    try {
+        devices = await listAudioOutputDevices();
+    } catch (error) {
+        if (refreshGeneration === audioOutputRefreshGeneration) {
+            updateAudioOutputDisplay(`出力一覧を更新できません: ${error.message || '権限を確認してください。'}`);
         }
+        return;
+    }
+    if (refreshGeneration !== audioOutputRefreshGeneration
+        || selectedDeviceId !== state.audioOutputDeviceId) return;
+    if (audioOutputPendingSelectionCount > 0) {
+        await refreshAudioOutputControls();
+        return;
+    }
+
+    const selectedStillAvailable = selectedDeviceId === 'default'
+        || devices.some(device => device.deviceId === selectedDeviceId);
+    const selectedWasConfirmed = confirmedAudioOutputDeviceIds?.has(selectedDeviceId);
+    if (!selectedStillAvailable && selectedWasConfirmed && devices.length > 0) {
+        const operationGeneration = ++audioOutputOperationGeneration;
+        const changed = await applyAudioOutputSelection('default', 'システム既定', operationGeneration);
+        if (changed) updateAudioOutputDisplay('選択していた出力が切断されたため、システム既定へ戻しました。');
         return;
     }
     await refreshAudioOutputControls();
@@ -307,7 +433,7 @@ async function handleAudioDeviceChange() {
 function openSceneSettingsModal() {
     if (!state.db) { showAlert("データベースに接続されていません。"); return; }
     populateSceneModalList();
-    refreshAudioOutputControls();
+    void refreshAudioOutputControls();
     dom.sceneSettingsModal.classList.add('active');
 }
 function closeSceneSettingsModal() {

@@ -358,6 +358,7 @@ export async function loadSettings() {
             masterVolume: settings.masterVolume ?? 1.0,
             audioOutputDeviceId: settings.audioOutputDeviceId ?? 'default',
             audioOutputDeviceLabel: settings.audioOutputDeviceLabel ?? 'システム既定',
+            audioOutputPending: false,
             isSortableEnabled: settings.isSortableEnabled ?? false,
             shortcuts: settings.shortcuts ?? {},
             performanceMode: settings.performanceMode ?? DEFAULT_PERFORMANCE_MODE,
@@ -388,9 +389,15 @@ export async function loadSettings() {
         try {
             await setAudioOutputDevice(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
         } catch (error) {
-            console.warn('Saved audio output is unavailable; using system default.', error);
-            await setAudioOutputDevice('default', 'システム既定');
-            await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
+            // enumerateDevices() is permission-filtered and cannot prove that a
+            // saved sink disappeared. Only NotFoundError is authoritative here.
+            if (state.audioOutputDeviceId !== 'default' && error?.name === 'NotFoundError') {
+                await setAudioOutputDevice('default', 'システム既定');
+                await saveAudioOutputSettings(state.audioOutputDeviceId, state.audioOutputDeviceLabel);
+            } else if (state.audioOutputDeviceId !== 'default') {
+                updateState({ audioOutputPending: true });
+                console.warn('Saved audio output is pending permission or unavailable.', error);
+            }
         }
     } catch (err) {
         if (state.showErrorPopups) showAlert("設定の読み込みに失敗しました。");
