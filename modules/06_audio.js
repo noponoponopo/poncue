@@ -348,19 +348,24 @@ function scheduleNaturalFadeOut(soundId) {
     audioInfo.naturalFadeStartTime = fadeStartTime;
 }
 
+// playSound 内の非同期ロード（IndexedDB 読み出し・デコード）の完了は activeAudios 登録より
+// 前に発生するため、ロード中の再クリックが同じ soundId の再生を二重に開始し得る。
+// この間の soundId を記録して直列化し、二重再生と停止不能な孤立プレイヤーを防ぐ。
+const _startingSoundIds = new Set();
+
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
 
-    // Starting from a pad always supersedes a previously paused position.
-    delete state.pausedSounds[soundId];
-
-    if (state.activeAudios[soundId]) {
-        // If it's already playing, we do nothing. The stop button should handle it.
-        return;
-    }
-
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return; }
+
+    // 同一サウンドの再生開始が並走すると二重再生（片方は停止不能な孤立プレイヤー）になるため、
+    // ロード中（activeAudios 登録前）の再開始要求は無視する。
+    if (state.activeAudios[soundId] || _startingSoundIds.has(soundId)) { return; }
+    _startingSoundIds.add(soundId);
+
+    // Starting from a pad always supersedes a previously paused position.
+    delete state.pausedSounds[soundId];
 
     let sourceNode;
     let audioElement = null;
@@ -518,6 +523,8 @@ ${err.message}`);
         console.error("Error in playSound:", err);
         if (state.showErrorPopups) showAlert('サウンドの再生準備中に予期せぬエラーが発生しました。');
         cleanupAfterStop(soundId, soundButtonElement);
+    } finally {
+        _startingSoundIds.delete(soundId);
     }
 }
 
