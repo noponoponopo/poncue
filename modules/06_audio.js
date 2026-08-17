@@ -2,9 +2,9 @@
 
 import { state, setAudioContext, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
-import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, resetProgressBar, setupCanvasResize } from './05_ui.js';
+import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize } from './05_ui.js';
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
-import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS } from './01_config.js';
+import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS } from './01_config.js';
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
@@ -355,35 +355,105 @@ function cancelNaturalFadeOut(audioInfo, now) {
 function scheduleNaturalFadeOut(soundId) {
     const audioInfo = state.activeAudios[soundId];
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!audioInfo || !soundData || soundData.loop || audioInfo.isFadingOut || !state.audioContext) return;
+    if (!audioInfo || !soundData) return;
+    scheduleNaturalFadeOutFor(audioInfo, soundData);
+}
+
+// 終端の自然フェードアウトをスケジュールする。playSound 本体と sustain レイヤーで共用。
+// voice は individualGain / fadeInEndTime / naturalFadeStartTime / 再生位置情報を持つオブジェクト。
+function scheduleNaturalFadeOutFor(voice, soundData) {
+    if (soundData.loop || voice.isFadingOut || !state.audioContext) return;
 
     const now = state.audioContext.currentTime;
-    const fadeWasInProgress = cancelNaturalFadeOut(audioInfo, now);
-    audioInfo.naturalFadeStartTime = null;
-    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
+    const fadeWasInProgress = cancelNaturalFadeOut(voice, now);
+    voice.naturalFadeStartTime = null;
+    const duration = voice.audioBuffer?.duration || voice.audioElement?.duration;
     const fadeDuration = Math.max(0, soundData.fadeOutDuration ?? 0);
-    const remaining = duration - getCurrentSourcePosition(audioInfo);
-    const playbackRate = getCurrentPlaybackRate(audioInfo);
+    const remaining = duration - getCurrentSourcePosition(voice);
+    const playbackRate = getCurrentPlaybackRate(voice);
     if (!Number.isFinite(remaining) || remaining <= 0 || fadeDuration <= 0 || !Number.isFinite(playbackRate) || playbackRate <= 0) return;
 
     const playbackEndTime = now + remaining / playbackRate;
-    const fadeInEndTime = audioInfo.fadeInEndTime ?? now;
+    const fadeInEndTime = voice.fadeInEndTime ?? now;
     const desiredStartTime = playbackEndTime - fadeDuration;
     const fadeStartTime = Math.max(now, desiredStartTime, fadeInEndTime);
     const effectiveFadeDuration = playbackEndTime - fadeStartTime;
     if (effectiveFadeDuration <= 0) return;
     const startGain = fadeWasInProgress
-        ? Math.max(0.0001, audioInfo.individualGain.gain.value)
+        ? Math.max(0.0001, voice.individualGain.gain.value)
         : Math.max(0.0001, soundData.volume ?? 1);
     applyFadeCurve(
-        audioInfo.individualGain.gain,
+        voice.individualGain.gain,
         startGain,
         0.0001,
         fadeStartTime,
         effectiveFadeDuration,
         soundData.fadeOutEasing || 'linear'
     );
-    audioInfo.naturalFadeStartTime = fadeStartTime;
+    voice.naturalFadeStartTime = fadeStartTime;
+}
+
+// playSound / sustain レイヤー共通の音源ノード生成。
+// LOW_MEMORY では <audio> 要素、それ以外（または逆再生時）は GrainPlayer を返す。
+// 戻り値は { sourceNode, audioElement, objectUrl, audioBuffer } または { error }。
+async function createSoundSourceNodes(soundData) {
+    const wantsReverse = !!soundData.reverse;
+    // reverse の場合は LOW_MEMORY でも BufferSource を使用（反転バッファが必要なため）
+    const useBufferSource = state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY || wantsReverse;
+
+    if (!useBufferSource) {
+        const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+        const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+
+        if (!blob) return { error: `サウンド「${soundData.name}」の音声データが見つかりません。` };
+        const objectUrl = URL.createObjectURL(blob);
+        const audioElement = new Audio(objectUrl);
+        audioElement.loop = soundData.loop;
+        audioElement.preservesPitch = Boolean(soundData.preservePitch);
+        audioElement.playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+        audioElement.preload = 'auto';
+        const sourceNode = state.audioContext.createMediaElementSource(audioElement);
+
+        // For waveform, we still need the buffer
+        let audioBuffer = null;
+        try {
+            const arrayBuffer = await blob.arrayBuffer();
+            audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        } catch (decodeError) {
+            console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
+        }
+        return { sourceNode, audioElement, objectUrl, audioBuffer };
+    }
+
+    // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
+    let baseBuffer = state.decodedAudioBuffers[soundData.id];
+    if (!baseBuffer && wantsReverse) {
+        // LOW_MEMORY + reverse: blob からデコードしてキャッシュ
+        const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
+        const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+        if (!blob) return { error: `サウンド「${soundData.name}」の音声データが見つかりません。` };
+        try {
+            const arrayBuffer = await blob.arrayBuffer();
+            baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+            state.decodedAudioBuffers[soundData.id] = baseBuffer;
+        } catch (decodeError) {
+            console.error("Error decoding audio for reverse:", decodeError);
+        }
+    }
+
+    const audioBuffer = wantsReverse
+        ? getReversedAudioBuffer(soundData.id, baseBuffer)
+        : baseBuffer;
+
+    if (!audioBuffer) return { error: `サウンド「${soundData.name}」の音声データがキャッシュされていません。` };
+    const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+    const sourceNode = new Tone.GrainPlayer({
+        url: audioBuffer,
+        loop: soundData.loop,
+        playbackRate,
+        detune: soundData.preservePitch ? 0 : 1200 * Math.log2(playbackRate)
+    });
+    return { sourceNode, audioElement: null, objectUrl: null, audioBuffer };
 }
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = 0) {
@@ -406,70 +476,13 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
     let audioBuffer = null;
 
     try {
-        const wantsReverse = !!soundData.reverse;
-        // reverse の場合は LOW_MEMORY でも BufferSource を使用（反転バッファが必要なため）
-        const useBufferSource = state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY || wantsReverse;
-
-        if (!useBufferSource) {
-            const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
-            const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
-
-            if (!blob) {
-                if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                return;
-            }
-            objectUrl = URL.createObjectURL(blob);
-            audioElement = new Audio(objectUrl);
-            audioElement.loop = soundData.loop;
-            audioElement.preservesPitch = Boolean(soundData.preservePitch);
-            audioElement.playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
-            audioElement.preload = 'auto';
-            audioElement.currentTime = Math.max(0, startOffset);
-            sourceNode = state.audioContext.createMediaElementSource(audioElement);
-
-            // For waveform, we still need the buffer
-            try {
-                const arrayBuffer = await blob.arrayBuffer();
-                audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-            } catch (decodeError) {
-                console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
-            }
-
-        } else { // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
-            let baseBuffer = state.decodedAudioBuffers[soundId];
-            if (!baseBuffer && wantsReverse) {
-                // LOW_MEMORY + reverse: blob からデコードしてキャッシュ
-                const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
-                const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
-                if (!blob) {
-                    if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データが見つかりません。`);
-                    return;
-                }
-                try {
-                    const arrayBuffer = await blob.arrayBuffer();
-                    baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-                    state.decodedAudioBuffers[soundId] = baseBuffer;
-                } catch (decodeError) {
-                    console.error("Error decoding audio for reverse:", decodeError);
-                }
-            }
-
-            audioBuffer = wantsReverse
-                ? getReversedAudioBuffer(soundId, baseBuffer)
-                : baseBuffer;
-
-            if (!audioBuffer) {
-                if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」の音声データがキャッシュされていません。`);
-                return;
-            }
-            const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
-            sourceNode = new Tone.GrainPlayer({
-                url: audioBuffer,
-                loop: soundData.loop,
-                playbackRate,
-                detune: soundData.preservePitch ? 0 : 1200 * Math.log2(playbackRate)
-            });
+        const created = await createSoundSourceNodes(soundData);
+        if (created.error) {
+            if (state.showErrorPopups) showAlert(created.error);
+            return;
         }
+        ({ sourceNode, audioElement, objectUrl, audioBuffer } = created);
+        if (audioElement) audioElement.currentTime = Math.max(0, startOffset);
 
         const pannerNode = state.audioContext.createStereoPanner();
         pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
@@ -498,6 +511,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
             splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
+            muted: false,
             progressPercent: 0,
             stopAfterLoop: false,
             loopStopTime: null,
@@ -560,6 +574,7 @@ ${err.message}`);
 }
 
 export function stopSound(soundId, soundButtonElement = null, useFadeOut = true) {
+    stopSustainLayers(soundId, useFadeOut); // sustain モードの重ね再生ボイスも道連れに停止
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo) {
         if (!state.pausedSounds[soundId]) return;
@@ -620,12 +635,15 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
 
 export function stopAllSounds(fadeOut = true) {
     Object.keys(state.activeAudios).forEach(id => stopSound(id, null, fadeOut));
+    // 本体が自然終了済みでレイヤーだけ残っているケース（stopSound 経由で消えない）への対応
+    Object.keys(state.sustainLayers).forEach(id => stopSustainLayers(id, fadeOut));
     Object.keys(state.pausedSounds).forEach(id => stopSound(id, null, false));
 }
 
 // 即時停止（フェードなし）。retrigger の頭出し再再生で使用。
 // 通常の stopSound は最低でも MIN_STOP_FADE_SECONDS の遅延が入るため、即座に playSound し直したい場合はこれを使う。
 export function forceStopSound(soundId, soundButtonElement = null) {
+    stopSustainLayers(soundId, false);
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo) return;
     if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
@@ -635,6 +653,158 @@ export function forceStopSound(soundId, soundButtonElement = null) {
         if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
     } catch (e) { /* ignore */ }
     cleanupAfterStop(soundId, soundButtonElement);
+}
+
+// --- sustain モード（重ね再生）のレイヤーボイス管理 ---
+// メーター・プログレス等のUIは本体（activeAudios）側だけが持ち、レイヤーは
+// 自然終了時に自分で後始末する。停止は stopSustainLayers 経由で明示的に行う。
+
+export function getSustainLayerCount(soundId) {
+    return state.sustainLayers[soundId]?.length ?? 0;
+}
+
+// sustain モード: 再生中のサウンドに重ねる追加ボイスを鳴らす。
+// 開始に成功したら true を返す。
+export async function startSustainLayer(soundId) {
+    if (!state.audioContext || state.audioContext.state !== 'running') return false;
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!soundData?.audioId) return false;
+
+    let sourceNode, audioElement, objectUrl, audioBuffer;
+    try {
+        const created = await createSoundSourceNodes(soundData);
+        if (created.error) {
+            if (state.showErrorPopups) showAlert(created.error);
+            return false;
+        }
+        ({ sourceNode, audioElement, objectUrl, audioBuffer } = created);
+    } catch (err) {
+        console.error("Error in startSustainLayer:", err);
+        return false;
+    }
+
+    try {
+        const pannerNode = state.audioContext.createStereoPanner();
+        pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
+        const individualGain = state.audioContext.createGain();
+        const effectRack = createEffectRack(soundData.effects);
+        individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
+        sourceNode.connect(pannerNode);
+        pannerNode.connect(individualGain);
+        individualGain.connect(effectRack.entry);
+        effectRack.exit.connect(state.masterInputNode);
+
+        const layer = {
+            soundId, sourceNode, audioElement, objectUrl, audioBuffer,
+            pannerNode, individualGain, effectRack,
+            playbackPosition: 0,
+            playbackPositionContextTime: state.audioContext.currentTime,
+            playbackRate: Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1)),
+            fadeInEndTime: null, naturalFadeStartTime: null, isFadingOut: false
+        };
+
+        const finishLayer = () => disposeSustainLayer(soundId, layer, false);
+        if (audioElement) { // LOW_MEMORY
+            audioElement.onended = finishLayer;
+            audioElement.onerror = finishLayer;
+        } else {
+            if ('onended' in sourceNode) sourceNode.onended = finishLayer;
+            else sourceNode.onstop = finishLayer;
+            sourceNode.start(0);
+        }
+
+        (state.sustainLayers[soundId] ??= []).push(layer);
+
+        const fadeDuration = Math.max(soundData.fadeInDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
+        applyFadeCurve(individualGain.gain, 0.0001, Math.max(0.0001, soundData.volume ?? 1), state.audioContext.currentTime, fadeDuration, soundData.fadeInEasing || 'linear');
+        layer.fadeInEndTime = state.audioContext.currentTime + fadeDuration;
+
+        if (audioElement) {
+            try { await audioElement.play(); }
+            catch (err) {
+                console.error("Error starting sustain layer:", err);
+                disposeSustainLayer(soundId, layer, false);
+                return false;
+            }
+        }
+        // LOW_MEMORY の <audio> は play() 後に duration が確定するため、ここで終端フェードを計算する。
+        scheduleNaturalFadeOutFor(layer, soundData);
+        updateSustainLayerBadge(soundId, getSustainLayerCount(soundId));
+        return true;
+    } catch (err) {
+        console.error("Error in startSustainLayer:", err);
+        return false;
+    }
+}
+
+// レイヤーを1つ破棄する。useFadeOut なら設定のフェードアウトで消音してから破棄。
+function disposeSustainLayer(soundId, layer, useFadeOut) {
+    const layers = state.sustainLayers[soundId];
+    if (!layers || !layers.includes(layer)) return; // 二重破棄ガード
+
+    if (useFadeOut && !layer.isFadingOut && state.audioContext) {
+        layer.isFadingOut = true;
+        const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+        const fadeSeconds = Math.max(soundData?.fadeOutDuration ?? 0, MIN_STOP_FADE_SECONDS);
+        applyFadeCurve(layer.individualGain.gain, Math.max(0.0001, layer.individualGain.gain.value), 0.0001, state.audioContext.currentTime, fadeSeconds, soundData?.fadeOutEasing || 'linear');
+        setTimeout(() => disposeSustainLayer(soundId, layer, false), fadeSeconds * 1000);
+        return;
+    }
+
+    const index = layers.indexOf(layer);
+    layers.splice(index, 1);
+    if (!layers.length) delete state.sustainLayers[soundId];
+
+    try {
+        if (layer.sourceNode && typeof layer.sourceNode.stop === 'function') layer.sourceNode.stop();
+    } catch (e) { /* ignore */ }
+    try { layer.sourceNode?.disconnect(); } catch (e) { /* ignore */ }
+    if (layer.sourceNode instanceof Tone.GrainPlayer) layer.sourceNode.dispose();
+    if (layer.audioElement) {
+        layer.audioElement.onended = null;
+        layer.audioElement.onerror = null;
+        layer.audioElement.src = '';
+        layer.audioElement.load();
+    }
+    if (layer.objectUrl) URL.revokeObjectURL(layer.objectUrl);
+    try { layer.individualGain?.disconnect(); } catch (e) { /* ignore */ }
+    try { layer.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
+    disposeEffectRack(layer.effectRack);
+    updateSustainLayerBadge(soundId, getSustainLayerCount(soundId));
+}
+
+export function stopSustainLayers(soundId, useFadeOut = true) {
+    const layers = state.sustainLayers[soundId];
+    if (!layers) return;
+    [...layers].forEach(layer => disposeSustainLayer(soundId, layer, useFadeOut));
+}
+
+// --- mute モード（消音切替） ---
+
+// 再生位置は進めたまま音だけを消す/戻す。gain は個別音量と同期し、
+// ミュート中に音量スライダーを動かしても解除時に新しい音量が反映される。
+export function setSoundMuted(soundId, muted) {
+    const audioInfo = state.activeAudios[soundId];
+    if (!audioInfo || audioInfo.isFadingOut || !state.audioContext || !audioInfo.individualGain) return false;
+    muted = !!muted;
+    if (audioInfo.muted === muted) return true;
+    audioInfo.muted = muted;
+
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const now = state.audioContext.currentTime;
+    const targetVolume = muted ? 0.0001 : Math.max(0.0001, soundData?.volume ?? 1);
+    applyFadeCurve(audioInfo.individualGain.gain, Math.max(0.0001, audioInfo.individualGain.gain.value), targetVolume, now, MUTE_FADE_SECONDS, 'linear');
+    if (muted) {
+        // 終端フェードアウトのスケジュールと競合しないよう解除してから 0 に向かわせる
+        cancelNaturalFadeOut(audioInfo, now);
+        audioInfo.naturalFadeStartTime = null;
+    } else {
+        scheduleNaturalFadeOut(soundId);
+    }
+
+    const soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+    if (soundButtonElement) updateButtonUI(soundId, soundButtonElement, true, false);
+    return true;
 }
 
 export function isSoundPaused(soundId) {
@@ -773,7 +943,7 @@ function fadeInSound(soundId, targetVolume) {
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     const fadeDurationSeconds = Math.max(soundData?.fadeInDuration ?? 0, MIN_GAIN_RAMP_SECONDS);
     const easing = soundData?.fadeInEasing || 'linear';
-    const finalTargetVolume = Math.max(0.0001, targetVolume);
+    const finalTargetVolume = Math.max(0.0001, audioInfo.muted ? 0.0001 : targetVolume); // ミュート中は無音のまま維持
     const startTime = state.audioContext.currentTime;
 
     applyFadeCurve(individualGain.gain, 0.0001, finalTargetVolume, startTime, fadeDurationSeconds, easing);
@@ -848,6 +1018,8 @@ function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
         try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
 
         delete state.activeAudios[soundId];
+        // 本体が自然終了しても、残っているレイヤー数をバッジへ反映する。
+        updateSustainLayerBadge(soundId, getSustainLayerCount(soundId));
     }
 
     if (!soundButtonElement?.isConnected) {
@@ -948,7 +1120,7 @@ export async function normalizeSoundVolume(soundId, targetLufs = -18) {
     soundData.volume = recommendedVolume;
 
     const activeAudio = state.activeAudios[soundId];
-    if (activeAudio?.individualGain && !activeAudio.isFadingOut) {
+    if (activeAudio?.individualGain && !activeAudio.isFadingOut && !activeAudio.muted) {
         activeAudio.individualGain.gain.setTargetAtTime(recommendedVolume, state.audioContext.currentTime, 0.01);
     }
 

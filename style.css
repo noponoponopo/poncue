@@ -1473,8 +1473,19 @@
     }
 
     .sound-button.trigger-momentary .trigger-indicator,
-    .sound-button.trigger-retrigger .trigger-indicator {
+    .sound-button.trigger-retrigger .trigger-indicator,
+    .sound-button.trigger-sustain .trigger-indicator,
+    .sound-button.trigger-pause .trigger-indicator,
+    .sound-button.trigger-pauseHold .trigger-indicator,
+    .sound-button.trigger-mute .trigger-indicator,
+    .sound-button.trigger-muteHold .trigger-indicator {
       display: inline-block;
+    }
+
+    /* ミュート中は再生位置は進むが音が出ないことを視認させる */
+    .sound-button.muted .sound-name,
+    .sound-button.muted .time-display {
+      opacity: 0.45;
     }
 
     .button-content {

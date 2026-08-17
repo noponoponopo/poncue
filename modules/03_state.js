@@ -37,6 +37,7 @@ export const state = {
     masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
     pausedSounds: {}, // { [soundId]: { position, pausedAt } }
+    sustainLayers: {}, // { [soundId]: [layer, ...] } sustainモードの重ね再生ボイス（メーター等のUIは持たない）
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
     audioStartMetrics: [],

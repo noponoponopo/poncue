@@ -10,9 +10,18 @@ export const SETTINGS_STORE_NAME = 'settings';
 export const MAX_FILE_SIZE_MB = 512;
 export const LONG_PRESS_DURATION = 300;
 
-// サウンドの起動モード。toggle=クリックで再生/停止、momentary=押している間だけ再生、retrigger=常に頭出し再生
-export const TRIGGER_MODES = ['toggle', 'momentary', 'retrigger'];
+// サウンドの起動モード（Soundplant の keymode 相当）。
+// toggle=クリックで再生/停止、momentary=押している間だけ再生、retrigger=常に頭出し再生、
+// sustain=再生中に再押で重ねて再生、pause=再クリックで一時停止/再開、mute=再クリックで消音切替。
+// pauseHold/muteHold は pause/mute のホールド版（離した時に一時停止/消音）。
+// なお Soundplant の fade/fade-hold は音源ごとのフェードイン/アウト設定＋toggleで同等になる。
+export const TRIGGER_MODES = ['toggle', 'momentary', 'retrigger', 'sustain', 'pause', 'pauseHold', 'mute', 'muteHold'];
 export const DEFAULT_TRIGGER_MODE = 'toggle';
+// 押下開始・離上で動作するモード（momentary 系）。
+export const HOLD_TRIGGER_MODES = ['momentary', 'pauseHold', 'muteHold'];
+
+// ミュート切替時のゲインフェード時間（秒）。
+export const MUTE_FADE_SECONDS = 0.05;
 
 // キーボードビューの配列。state.keyboardLayout と 11_keyboard_view.js の LAYOUTS のキーと対応。
 export const KEYBOARD_LAYOUTS = ['us', 'jis', 'mac-jis', 'mac-us', 'dvorak'];

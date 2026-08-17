@@ -7,7 +7,16 @@ import { normalizeEffectSettings } from './09_effects.js';
 import { setKeyboardKeyPlaying } from './11_keyboard_view.js';
 import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
 
-const TRIGGER_LABELS = { toggle: 'トグル', momentary: 'ホールド', retrigger: 'リトリガー' };
+const TRIGGER_LABELS = {
+    toggle: 'トグル（再生/停止）',
+    momentary: 'ホールド（押してる間再生）',
+    retrigger: 'リトリガー（頭出し再生）',
+    sustain: 'レイヤー（重ねて再生）',
+    pause: 'ポーズ（一時停止）',
+    pauseHold: 'ポーズ・ホールド（離すと一時停止）',
+    mute: 'ミュート（消音切替）',
+    muteHold: 'ミュート・ホールド（離すと消音）'
+};
 function triggerOptions(selected) {
     return TRIGGER_MODES
         .map(mode => `<option value="${mode}"${mode === selected ? ' selected' : ''}>${TRIGGER_LABELS[mode] ?? mode}</option>`)
@@ -1002,17 +1011,33 @@ export function createKnob(spec) {
 }
 
 // --- General UI Updates ---
+// ボタンの trigger-* クラスから起動モードを逆引きする（toggle はクラスを持たない）。
+function getTriggerModeFromButton(soundButtonElement) {
+    for (const mode of TRIGGER_MODES) {
+        if (mode !== 'toggle' && soundButtonElement.classList.contains(`trigger-${mode}`)) return mode;
+    }
+    return 'toggle';
+}
+
 export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused = false) {
     if (!soundButtonElement) return;
     const iconElement = soundButtonElement.querySelector('.sound-icon');
     soundButtonElement.classList.toggle('playing', isPlaying);
     soundButtonElement.classList.toggle('paused', isPaused);
     if (iconElement) {
-        const isToggle = !soundButtonElement.classList.contains('trigger-momentary') && !soundButtonElement.classList.contains('trigger-retrigger');
-        const showAsPause = isPlaying && isToggle && state.isOptHeld;
-        iconElement.classList.toggle('fa-play', !isPlaying);
-        iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause);
+        const triggerMode = getTriggerModeFromButton(soundButtonElement);
+        const isMuted = isPlaying && ['mute', 'muteHold'].includes(triggerMode) && Boolean(state.activeAudios[soundId]?.muted);
+        soundButtonElement.classList.toggle('muted', isMuted);
+        // 再生中アイコン = 「次に押した時の動作」を示す:
+        // toggle=停止（Option押下中は一時停止）、pause=一時停止、mute=ミュート中なら消音アイコン、
+        // retrigger/sustain=もう一度鳴らす、ホールド系=離すと止まるので停止
+        const showAsPause = isPlaying && (triggerMode === 'pause' || (triggerMode === 'toggle' && state.isOptHeld));
+        const showAsPlay = isPlaying && (triggerMode === 'retrigger' || triggerMode === 'sustain');
+        const showAsMuted = isPlaying && isMuted;
+        iconElement.classList.toggle('fa-play', !isPlaying || showAsPlay);
+        iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause && !showAsPlay && !showAsMuted);
         iconElement.classList.toggle('fa-pause', showAsPause);
+        iconElement.classList.toggle('fa-volume-xmark', showAsMuted);
     }
     setKeyboardKeyPlaying(soundId, isPlaying);
     if (isPaused) {
@@ -1031,12 +1056,22 @@ export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused 
 
 export function refreshOptAffordance() {
     document.querySelectorAll('.sound-button.playing').forEach(btn => {
-        if (btn.classList.contains('trigger-momentary') || btn.classList.contains('trigger-retrigger')) return;
+        // Option+クリックの一時停止は toggle モード専用（trigger-* クラスを持たないボタン）。
+        if ([...btn.classList].some(name => name.startsWith('trigger-'))) return;
         const icon = btn.querySelector('.sound-icon');
         if (!icon) return;
         icon.classList.toggle('fa-stop', !state.isOptHeld);
         icon.classList.toggle('fa-pause', state.isOptHeld);
     });
+}
+
+// sustain モードのパッド右上インジケーターに鳴らしているボイス数（本体＋レイヤー）を表示する。
+// layerCount は呼び出し側（06_audio / 08_handlers）から渡す。
+export function updateSustainLayerBadge(soundId, layerCount) {
+    const indicator = dom.soundboard?.querySelector(`.sound-button.trigger-sustain[data-id="${soundId}"] .trigger-indicator`);
+    if (!indicator) return;
+    const voices = (Number(layerCount) || 0) + (state.activeAudios[soundId] ? 1 : 0);
+    indicator.textContent = voices > 1 ? `LAYER×${voices}` : 'LAYER';
 }
 
 export function resetProgressBar(soundButtonElement) {
