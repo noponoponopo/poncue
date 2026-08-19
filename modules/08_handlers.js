@@ -117,6 +117,14 @@ export function setupEventListeners() {
     dom.importFileInput?.addEventListener('change', handleImportFileSelect);
     // dom.modalExportBtn is now hidden, so no listener needed.
     dom.modalSceneList?.addEventListener('click', handleModalSceneListClick);
+
+    // Operations Help Modal
+    dom.modalHelpBtn?.addEventListener('click', openHelpModal);
+    dom.helpModalCloseBtn?.addEventListener('click', closeHelpModal);
+    dom.helpModal?.addEventListener('click', (e) => {
+        if (e.target !== dom.helpModal) return;
+        closeHelpModal();
+    });
     
     // App Settings Toggles
     dom.darkModeToggle?.addEventListener('change', toggleDarkMode);
@@ -538,6 +546,14 @@ function openSceneSettingsModal() {
 function closeSceneSettingsModal() {
     dom.sceneSettingsModal.classList.remove('active');
 }
+
+// --- Operations Help Modal ---
+function openHelpModal() {
+    dom.helpModal?.classList.add('active');
+}
+function closeHelpModal() {
+    dom.helpModal?.classList.remove('active');
+}
 async function handleModalAddScene() {
     const sceneName = await showPrompt(`新しいシーンの名前:`, `新しいシーン`, `Scene ${Object.keys(state.scenes).length + 1}`);
     if (sceneName?.trim()) {
@@ -765,6 +781,7 @@ async function handleKeyDown(event) {
     }
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
+        dom.helpModal?.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
         document.activeElement.tagName === 'TEXTAREA') {
         return;
@@ -835,6 +852,7 @@ function handleKeyUp(event) {
 
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
+        dom.helpModal?.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
         document.activeElement.tagName === 'TEXTAREA') {
         return;
