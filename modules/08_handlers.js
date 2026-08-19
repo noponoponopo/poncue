@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, analyzeAndApplySilenceTrim, clearSilenceTrim, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
@@ -686,6 +686,20 @@ async function handleSoundSettings(soundId) {
                 renderers.renderSoundboard();
             }
             return result;
+        },
+        onTrimSilence: async (thresholdDb) => {
+            const result = await analyzeAndApplySilenceTrim(soundId, thresholdDb);
+            if (result && !result.silent) {
+                await saveCurrentSceneSounds(`trim-silence-${soundId}`);
+                renderers.renderSoundboard();
+            }
+            return result;
+        },
+        onResetTrim: async () => {
+            if (!clearSilenceTrim(soundId)) return false;
+            await saveCurrentSceneSounds(`reset-trim-${soundId}`);
+            renderers.renderSoundboard();
+            return true;
         }
     });
 
@@ -1100,18 +1114,14 @@ function handleProgressBarClick(event, soundId, soundButtonElement) {
     const rect = progressBar.getBoundingClientRect();
     const seekRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / progressBar.offsetWidth));
 
-    let duration;
-    if (audioInfo.audioElement) {
-        duration = audioInfo.audioElement.duration;
-    } else if (audioInfo.audioBuffer) {
-        duration = audioInfo.audioBuffer.duration;
-    } else {
-        return; // No duration available
-    }
-
+    const trimStart = Number.isFinite(audioInfo.trimStart) ? audioInfo.trimStart : 0;
+    const trimEnd = Number.isFinite(audioInfo.trimEnd)
+        ? audioInfo.trimEnd
+        : audioInfo.audioBuffer?.duration ?? audioInfo.audioElement?.duration;
+    const duration = trimEnd - trimStart;
     if (!duration || !isFinite(duration)) return;
 
-    const seekTime = duration * seekRatio;
+    const seekTime = trimStart + duration * seekRatio;
 
     if (audioInfo.audioElement || audioInfo.audioBuffer) {
         seekSound(soundId, seekTime);
@@ -1329,7 +1339,10 @@ function createSoundButton(sound) {
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
+    const trimStart = Number.isFinite(sound.trimStart) ? sound.trimStart : 0;
+    const trimEnd = Number.isFinite(sound.trimEnd) ? sound.trimEnd : sound.duration;
+    const playbackDuration = Number.isFinite(trimEnd) ? Math.max(0, trimEnd - trimStart) : sound.duration;
+    const durationText = playbackDuration ? `0:00 / ${formatTime(playbackDuration)}` : '0:00 / --:--';
     const isRoll = sound.type === 'roll';
 
     // パッド右上の動作インジケーター（モードの次動作を示す。sustain はボイス数に置き換わる）
