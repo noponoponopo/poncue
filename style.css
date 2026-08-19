@@ -565,6 +565,33 @@
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 30%, transparent);
     }
 
+    /* ドラムロール追加ボタン — 本番/キーボードボタンと同じborderスタイル */
+    #add-roll-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--secondary-color);
+      font-size: 0.9em;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: color var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    #add-roll-btn:hover {
+      background-color: var(--control-hover-bg);
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+    }
+
+    #add-roll-btn:active {
+      transform: scale(0.98);
+    }
+
     #keyboard-view-btn {
       background: none;
       border: 1px solid var(--border-color);
@@ -1142,6 +1169,173 @@
       cursor: pointer;
     }
 
+    /* --- ドラムロール設定モーダル --- */
+    /* 他のeffect-param-rowと同じ64pxラベル列で左端を揃え、ボタン列を右に置く */
+    .roll-part-row {
+      grid-template-columns: 64px 1fr auto auto;
+      margin-bottom: 6px;
+    }
+
+    .roll-part-label {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .roll-part-required {
+      font-size: 0.85em;
+      font-style: normal;
+      color: var(--secondary-color);
+      opacity: 0.85;
+    }
+
+    .roll-part-row.is-set .roll-part-required {
+      color: var(--success-color);
+      opacity: 1;
+    }
+
+    .roll-part-file {
+      font-size: 0.8em;
+      color: var(--text-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .roll-part-row:not(.is-set) .roll-part-file {
+      color: var(--secondary-color);
+      opacity: 0.7;
+    }
+
+    /* 選択/解除ボタンは effect-color-clear-btn と同じスタイル */
+    .roll-part-select-btn,
+    .roll-part-clear-btn {
+      justify-self: end;
+      padding: 4px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.75em;
+      cursor: pointer;
+      transition: background-color var(--transition-speed), border-color var(--transition-speed), color var(--transition-speed);
+    }
+
+    .roll-part-select-btn:hover,
+    .roll-part-clear-btn:hover {
+      background-color: var(--control-hover-bg);
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+
+    /* ループパートの並びリスト（登録順に循環再生される） */
+    .roll-loop-section {
+      margin: 2px 0 8px;
+      padding: 8px;
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    .roll-loop-title {
+      font-size: 0.8em;
+      color: var(--secondary-color);
+      margin-bottom: 6px;
+    }
+
+    .roll-loop-title em {
+      font-style: normal;
+      opacity: 0.8;
+    }
+
+    .roll-loop-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .roll-loop-row {
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .roll-loop-label {
+      font-size: 0.8em;
+      font-weight: 700;
+      color: var(--secondary-color);
+      text-align: center;
+    }
+
+    .roll-loop-row.is-set .roll-loop-label {
+      color: var(--success-color);
+    }
+
+    .roll-loop-row:not(.is-set) .roll-part-file {
+      color: var(--secondary-color);
+      opacity: 0.7;
+    }
+
+    .roll-loop-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    /* 並べ替え/選択/削除ボタンも同じスタイル。削除(×)は危険色で示す */
+    .roll-loop-btn {
+      padding: 4px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.75em;
+      cursor: pointer;
+      transition: background-color var(--transition-speed), border-color var(--transition-speed), color var(--transition-speed);
+    }
+
+    .roll-loop-btn:hover:not(:disabled) {
+      background-color: var(--control-hover-bg);
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+
+    .roll-loop-btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .roll-loop-btn[data-loop-remove]:hover:not(:disabled) {
+      border-color: var(--danger-color);
+      color: var(--danger-color);
+    }
+
+    .roll-loop-add-btn {
+      width: 100%;
+      margin-top: 6px;
+      padding: 5px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.8em;
+      cursor: pointer;
+      transition: background-color var(--transition-speed), border-color var(--transition-speed), color var(--transition-speed);
+    }
+
+    .roll-loop-add-btn:hover {
+      background-color: var(--control-hover-bg);
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+
+    .roll-error {
+      margin: 6px 0 0;
+      font-size: 0.8em;
+      color: var(--danger-color, #dc3545);
+      min-height: 1em;
+    }
+
     .modal-scene-list {
       list-style: none;
       padding: 0;
@@ -1557,7 +1751,8 @@
     .sound-button.trigger-pause .trigger-indicator,
     .sound-button.trigger-pauseHold .trigger-indicator,
     .sound-button.trigger-mute .trigger-indicator,
-    .sound-button.trigger-muteHold .trigger-indicator {
+    .sound-button.trigger-muteHold .trigger-indicator,
+    .sound-button.trigger-roll .trigger-indicator {
       display: inline-block;
     }
 
@@ -2269,7 +2464,8 @@
       button#add-sound-btn,
       #pause-all-btn,
       button#stop-all-btn,
-      #show-mode-btn {
+      #show-mode-btn,
+      #add-roll-btn {
         padding: 10px;
         min-width: 38px;
       }
@@ -2278,6 +2474,7 @@
       #pause-all-btn span,
       button#stop-all-btn span,
       #show-mode-btn span,
+      #add-roll-btn span,
       #keyboard-view-btn span {
         display: none;
       }
@@ -2285,6 +2482,7 @@
       button#add-sound-btn,
       button#stop-all-btn,
       #show-mode-btn,
+      #add-roll-btn,
       #keyboard-view-btn,
       #scene-settings-btn {
         flex: 0 0 38px;

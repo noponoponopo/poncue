@@ -42,6 +42,9 @@
         <button id="add-sound-btn" aria-label="現在のシーンに音声を追加">
           <i class="fas fa-plus"></i> <span>追加</span>
         </button>
+        <button id="add-roll-btn" title="可変長ドラムロールを追加" aria-label="可変長ドラムロールを追加">
+          <i class="fas fa-drum"></i> <span>ロール</span>
+        </button>
         <button id="pause-all-btn" title="再生中のサウンドを一時停止" aria-label="全てのサウンドを一時停止" disabled>
           <i class="fas fa-pause"></i> <span>一時停止</span>
         </button>
@@ -89,6 +92,12 @@
       accept=".mp3,.wav,.m4a,.aac,.ogg,.opus,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/opus,audio/*"
       style="display: none"
       multiple
+    />
+    <input
+      type="file"
+      id="roll-file-input"
+      accept=".mp3,.wav,.m4a,.aac,.ogg,.opus,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/opus,audio/*"
+      style="display: none"
     />
     <input
       type="file"

@@ -164,7 +164,7 @@ function createKeyButton(item) {
     button.dataset.shortcut = item.shortcut;
     const sound = soundForShortcut(item.shortcut);
     button.disabled = !sound;
-    button.title = sound ? `${item.shortcut}: ${sound.name}` : `${item.shortcut}: 未割り当て`;
+    button.title = sound ? `${item.shortcut}: ${sound.name}${sound.type === 'roll' ? '（ドラムロール）' : ''}` : `${item.shortcut}: 未割り当て`;
     const keyLabel = document.createElement('span');
     keyLabel.className = 'keyboard-key-label';
     keyLabel.textContent = item.label;

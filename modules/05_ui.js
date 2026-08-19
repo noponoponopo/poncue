@@ -5,7 +5,7 @@ import { state, updateState } from './03_state.js';
 import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
 import { setKeyboardKeyPlaying } from './11_keyboard_view.js';
-import { FADE_EASING_TYPES, TRIGGER_MODES } from './01_config.js';
+import { FADE_EASING_TYPES, TRIGGER_MODES, MAX_FILE_SIZE_MB } from './01_config.js';
 
 const TRIGGER_LABELS = {
     toggle: 'トグル（再生/停止）',
@@ -19,6 +19,7 @@ const TRIGGER_LABELS = {
 };
 function triggerOptions(selected) {
     return TRIGGER_MODES
+        .filter(mode => mode !== 'roll') // roll はドラムロール専用モードなので単独では選択できない
         .map(mode => `<option value="${mode}"${mode === selected ? ' selected' : ''}>${TRIGGER_LABELS[mode] ?? mode}</option>`)
         .join('');
 }
@@ -526,6 +527,325 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
     });
 }
 
+// ドラムロール単発パート（起こり/終わり/締め）の表示ラベル
+const ROLL_PART_LABELS = {
+    intro: '起こり',
+    end: '終わり',
+    finish: '締め'
+};
+
+/**
+ * ドラムロールの追加・編集モーダル。
+ * sound が null の時は追加、既存サウンドなら編集。
+ * resolve するのは { name, shortcut, color, parts } or null。
+ * parts は { intro, loops, end, finish }。各値は { audioId: 既存audioId|null, file: 新規File|null, name: 表示名|null }
+ * で、loops のみ「登録順に循環再生するパート」の配列。
+ */
+export async function showRollSettingsModal(sound = null, currentShortcut = '') {
+    return new Promise(resolve => {
+        if (!dom.customModalOverlay) {
+            showAlert("設定モーダルを表示できません。", 'エラー');
+            resolve(null);
+            return;
+        }
+
+        let settled = false;
+        const isEdit = Boolean(sound);
+        const initialColor = (typeof sound?.color === 'string' && sound.color) ? sound.color : '#808080';
+
+        dom.customModalTitle.textContent = isEdit ? `${sound.name} の設定` : 'ドラムロールを追加';
+
+        dom.customModalMessage.innerHTML = `
+            <div class="effect-section">
+                <div class="effect-param-row">
+                    <label for="roll-name-input" class="effect-param-label">名前</label>
+                    <input type="text" id="roll-name-input" class="modal-input effect-text-input" value="${escapeHtml(sound?.name ?? 'ドラムロール')}" maxlength="60">
+                </div>
+                <div class="effect-param-row">
+                    <label for="roll-shortcut-input" class="effect-param-label">ショートカット</label>
+                    <input type="text" id="roll-shortcut-input" class="modal-input effect-text-input" readonly value="${escapeHtml(currentShortcut)}" placeholder="キーを押してください">
+                </div>
+                <div class="effect-param-row">
+                    <label for="roll-color-input" class="effect-param-label">カラー</label>
+                    <input type="color" id="roll-color-input" class="modal-input effect-color-input" value="${initialColor}">
+                    <button type="button" id="roll-color-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
+                </div>
+                <div class="effect-divider"></div>
+                <div class="effect-param-row roll-part-row" data-part="intro">
+                    <span class="effect-param-label roll-part-label">${ROLL_PART_LABELS.intro}<em class="roll-part-required">任意</em></span>
+                    <span class="roll-part-file"></span>
+                    <button type="button" class="modal-input roll-part-select-btn" data-select="intro">選択</button>
+                    <button type="button" class="modal-input roll-part-clear-btn" data-clear="intro">解除</button>
+                </div>
+                <div class="roll-loop-section">
+                    <div class="roll-loop-title">ループ</div>
+                    <div class="roll-loop-list"></div>
+                    <button type="button" id="roll-loop-add-btn" class="modal-input roll-loop-add-btn"><i class="fas fa-plus"></i> パートを追加</button>
+                </div>
+                <div class="effect-param-row roll-part-row" data-part="end">
+                    <span class="effect-param-label roll-part-label">${ROLL_PART_LABELS.end}<em class="roll-part-required">任意</em></span>
+                    <span class="roll-part-file"></span>
+                    <button type="button" class="modal-input roll-part-select-btn" data-select="end">選択</button>
+                    <button type="button" class="modal-input roll-part-clear-btn" data-clear="end">解除</button>
+                </div>
+                <div class="effect-param-row roll-part-row" data-part="finish">
+                    <span class="effect-param-label roll-part-label">${ROLL_PART_LABELS.finish}<em class="roll-part-required">任意</em></span>
+                    <span class="roll-part-file"></span>
+                    <button type="button" class="modal-input roll-part-select-btn" data-select="finish">選択</button>
+                    <button type="button" class="modal-input roll-part-clear-btn" data-clear="finish">解除</button>
+                </div>
+                <p id="roll-error" class="roll-error" role="alert"></p>
+            </div>
+        `;
+
+        const nameInput = dom.customModalMessage.querySelector('#roll-name-input');
+        const shortcutInput = dom.customModalMessage.querySelector('#roll-shortcut-input');
+        const colorInput = dom.customModalMessage.querySelector('#roll-color-input');
+        const colorClearBtn = dom.customModalMessage.querySelector('#roll-color-clear-btn');
+        const errorElement = dom.customModalMessage.querySelector('#roll-error');
+        const loopListElement = dom.customModalMessage.querySelector('.roll-loop-list');
+
+        // 編集時は既存の audioId を保持し、再選択時に差し替える
+        const emptySlot = () => ({ audioId: null, file: null, name: '' });
+        const slots = {
+            intro: sound?.rollParts?.intro ? { audioId: sound.rollParts.intro, file: null, name: sound?.rollPartNames?.intro || '' } : emptySlot(),
+            loops: Array.isArray(sound?.rollParts?.loops) && sound.rollParts.loops.length
+                ? sound.rollParts.loops.map((audioId, index) => ({ audioId, file: null, name: sound?.rollPartNames?.loops?.[index] || '' }))
+                : [emptySlot()],
+            end: sound?.rollParts?.end ? { audioId: sound.rollParts.end, file: null, name: sound?.rollPartNames?.end || '' } : emptySlot(),
+            finish: sound?.rollParts?.finish ? { audioId: sound.rollParts.finish, file: null, name: sound?.rollPartNames?.finish || '' } : emptySlot()
+        };
+
+        let newShortcut = currentShortcut;
+        let newColor = (typeof sound?.color === 'string' && sound.color) ? sound.color : null;
+        let pendingPart = null; // { part: 'intro'... } or { loopIndex: n }
+
+        const renderSingleSlots = () => {
+            for (const part of Object.keys(ROLL_PART_LABELS)) {
+                const row = dom.customModalMessage.querySelector(`.roll-part-row[data-part="${part}"]`);
+                if (!row) continue;
+                const fileLabel = row.querySelector('.roll-part-file');
+                const isSet = Boolean(slots[part].audioId || slots[part].file);
+                row.classList.toggle('is-set', isSet);
+                if (fileLabel) {
+                    fileLabel.textContent = isSet ? (slots[part].name || '設定済み') : '未設定';
+                    fileLabel.title = fileLabel.textContent;
+                }
+            }
+        };
+
+        const renderLoopList = () => {
+            loopListElement.replaceChildren();
+            slots.loops.forEach((slot, index) => {
+                const row = document.createElement('div');
+                row.className = 'roll-loop-row';
+                const isSet = Boolean(slot.audioId || slot.file);
+                if (isSet) row.classList.add('is-set');
+
+                const label = document.createElement('span');
+                label.className = 'roll-loop-label';
+                label.textContent = String(index + 1);
+
+                const fileLabel = document.createElement('span');
+                fileLabel.className = 'roll-part-file';
+                fileLabel.textContent = isSet ? (slot.name || '設定済み') : '未設定';
+                fileLabel.title = fileLabel.textContent;
+
+                const actions = document.createElement('span');
+                actions.className = 'roll-loop-actions';
+                const addButton = (datasetKey, value, text, title, disabled) => {
+                    const action = document.createElement('button');
+                    action.type = 'button';
+                    action.className = 'modal-input roll-loop-btn';
+                    action.dataset[datasetKey] = value;
+                    action.textContent = text;
+                    action.title = title;
+                    action.disabled = Boolean(disabled);
+                    actions.appendChild(action);
+                };
+                addButton('loopUp', String(index), '↑', '一つ上へ移動', index === 0);
+                addButton('loopDown', String(index), '↓', '一つ下へ移動', index === slots.loops.length - 1);
+                addButton('loopSelect', String(index), '選択', '音声ファイルを選択');
+                addButton('loopRemove', String(index), '×', 'このパートを削除');
+
+                row.append(label, fileLabel, actions);
+                loopListElement.appendChild(row);
+            });
+        };
+
+        const handleSelectClick = (e) => {
+            const button = e.target.closest('[data-select]');
+            if (!button) return;
+            pendingPart = { part: button.dataset.select };
+            dom.rollFileInput?.click();
+        };
+
+        const handleClearClick = (e) => {
+            const button = e.target.closest('[data-clear]');
+            if (!button) return;
+            slots[button.dataset.clear] = emptySlot();
+            errorElement.textContent = '';
+            renderSingleSlots();
+        };
+
+        const handleLoopActions = (e) => {
+            const button = e.target.closest('button');
+            if (!button) return;
+            if ('loopUp' in button.dataset) {
+                const index = Number(button.dataset.loopUp);
+                if (index > 0) {
+                    [slots.loops[index - 1], slots.loops[index]] = [slots.loops[index], slots.loops[index - 1]];
+                    renderLoopList();
+                }
+            } else if ('loopDown' in button.dataset) {
+                const index = Number(button.dataset.loopDown);
+                if (index < slots.loops.length - 1) {
+                    [slots.loops[index], slots.loops[index + 1]] = [slots.loops[index + 1], slots.loops[index]];
+                    renderLoopList();
+                }
+            } else if ('loopSelect' in button.dataset) {
+                pendingPart = { loopIndex: Number(button.dataset.loopSelect) };
+                dom.rollFileInput?.click();
+            } else if ('loopRemove' in button.dataset) {
+                slots.loops.splice(Number(button.dataset.loopRemove), 1);
+                if (!slots.loops.length) slots.loops.push(emptySlot());
+                renderLoopList();
+            }
+        };
+
+        const handleLoopAdd = () => {
+            slots.loops.push(emptySlot());
+            renderLoopList();
+            pendingPart = { loopIndex: slots.loops.length - 1 };
+            dom.rollFileInput?.click();
+        };
+
+        const handleFileChange = () => {
+            const file = dom.rollFileInput.files[0];
+            dom.rollFileInput.value = '';
+            const part = pendingPart;
+            pendingPart = null;
+            if (!file || !part) return;
+            const partLabel = part.loopIndex != null
+                ? `ループ${part.loopIndex + 1}`
+                : ROLL_PART_LABELS[part.part] ?? part.part;
+            if (!file.type.startsWith('audio/')) {
+                errorElement.textContent = `「${partLabel}」に音声ファイル以外が指定されました。`;
+                return;
+            }
+            if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+                errorElement.textContent = `「${partLabel}」のファイルサイズが${MAX_FILE_SIZE_MB}MBを超えています。`;
+                return;
+            }
+            errorElement.textContent = '';
+            const slot = { audioId: null, file, name: file.name.replace(/\.[^/.]+$/, "") };
+            if (part.loopIndex != null) slots.loops[part.loopIndex] = slot;
+            else slots[part.part] = slot;
+            renderSingleSlots();
+            renderLoopList();
+        };
+
+        const handleKeydown = (e) => {
+            e.preventDefault();
+            if (e.key === 'Backspace' || e.key === 'Delete') {
+                newShortcut = '';
+                shortcutInput.value = '';
+                return;
+            }
+            const modifiers = [];
+            if (e.ctrlKey) modifiers.push('Control');
+            if (e.altKey) modifiers.push('Alt');
+            if (e.shiftKey) modifiers.push('Shift');
+            if (e.metaKey) modifiers.push('Meta');
+            let key = e.key;
+            if (key === ' ') key = 'Space';
+            if (modifiers.includes(key)) key = '';
+            const displayKey = key.length === 1 ? key.toUpperCase() : key;
+            newShortcut = [...modifiers, displayKey].filter(Boolean).join('+');
+            shortcutInput.value = newShortcut;
+        };
+
+        const handleColorInput = (e) => { newColor = e.target.value; };
+        const handleColorClear = () => {
+            newColor = null;
+            colorInput.value = '#808080';
+        };
+
+        // オーバーレイ背面クリックで閉じられた場合も Promise を解決する
+        // （setupEventListeners の共通ハンドラが active を外すため）
+        let overlayMouseDownPos = null;
+        const handleOverlayMouseDown = (e) => {
+            overlayMouseDownPos = { x: e.clientX, y: e.clientY };
+        };
+        const handleOverlayClose = (e) => {
+            if (settled || e.target !== dom.customModalOverlay) return;
+            if (overlayMouseDownPos) {
+                const dx = Math.abs(e.clientX - overlayMouseDownPos.x);
+                const dy = Math.abs(e.clientY - overlayMouseDownPos.y);
+                if (dx > 3 || dy > 3) return;
+            }
+            finish(null);
+        };
+
+        const cleanup = () => {
+            shortcutInput.removeEventListener('keydown', handleKeydown);
+            colorInput.removeEventListener('input', handleColorInput);
+            colorClearBtn.removeEventListener('click', handleColorClear);
+            dom.customModalMessage.querySelectorAll('[data-select]').forEach(btn => btn.removeEventListener('click', handleSelectClick));
+            dom.customModalMessage.querySelectorAll('[data-clear]').forEach(btn => btn.removeEventListener('click', handleClearClick));
+            loopListElement.removeEventListener('click', handleLoopActions);
+            dom.customModalMessage.querySelector('#roll-loop-add-btn')?.removeEventListener('click', handleLoopAdd);
+            if (dom.rollFileInput) dom.rollFileInput.removeEventListener('change', handleFileChange);
+            dom.customModalOverlay.removeEventListener('mousedown', handleOverlayMouseDown);
+            dom.customModalOverlay.removeEventListener('click', handleOverlayClose);
+        };
+
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            dom.customModalOverlay.classList.remove('active');
+            resolve(result);
+        };
+
+        shortcutInput.addEventListener('keydown', handleKeydown);
+        colorInput.addEventListener('input', handleColorInput);
+        colorClearBtn.addEventListener('click', handleColorClear);
+        dom.customModalMessage.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', handleSelectClick));
+        dom.customModalMessage.querySelectorAll('[data-clear]').forEach(btn => btn.addEventListener('click', handleClearClick));
+        loopListElement.addEventListener('click', handleLoopActions);
+        dom.customModalMessage.querySelector('#roll-loop-add-btn')?.addEventListener('click', handleLoopAdd);
+        dom.rollFileInput?.addEventListener('change', handleFileChange);
+        dom.customModalOverlay.addEventListener('mousedown', handleOverlayMouseDown);
+        dom.customModalOverlay.addEventListener('click', handleOverlayClose);
+
+        dom.customModalOkBtn.textContent = '保存';
+        dom.customModalCancelBtn.textContent = 'キャンセル';
+        dom.customModalCancelBtn.style.display = 'inline-block';
+
+        dom.customModalOkBtn.onclick = () => {
+            errorElement.textContent = '';
+            if (!slots.loops.some(slot => slot.audioId || slot.file)) {
+                errorElement.textContent = 'ループ音声を1つ以上指定してください。';
+                return;
+            }
+            finish({
+                name: nameInput.value.trim() || 'ドラムロール',
+                shortcut: newShortcut,
+                color: newColor,
+                parts: slots
+            });
+        };
+        dom.customModalCancelBtn.onclick = () => finish(null);
+
+        renderSingleSlots();
+        renderLoopList();
+        dom.customModalOverlay.classList.add('active');
+        nameInput.focus();
+        nameInput.select();
+    });
+}
+
 // --- Dark Mode ---
 export function initDarkMode() {
     const savedMode = localStorage.getItem('darkModePref') || 'system';
@@ -1020,19 +1340,19 @@ function getTriggerModeFromButton(soundButtonElement) {
 }
 
 // 再生中パッドのアイコン = 「次に押した時の動作」を示す。
-// Option押下中は全モードで一時停止になるため、pauseアイコンに統一する。
-// 通常時: toggle/ホールド系=停止、pause=一時停止、mute=ミュート中なら消音アイコン、
-// retrigger/sustain=もう一度鳴らす
+// Option(Alt)押下中はロール以外の全モードで一時停止になるため、pauseアイコンに統一する。
 function applyPlayingIcon(soundButtonElement, soundId, isPlaying) {
     const iconElement = soundButtonElement.querySelector('.sound-icon');
     if (!iconElement) return;
     const triggerMode = getTriggerModeFromButton(soundButtonElement);
+    const isRoll = triggerMode === 'roll';
     const isMuted = isPlaying && ['mute', 'muteHold'].includes(triggerMode) && Boolean(state.activeAudios[soundId]?.muted);
     soundButtonElement.classList.toggle('muted', isMuted);
-    const showAsPause = isPlaying && (state.isOptHeld || triggerMode === 'pause');
-    const showAsPlay = isPlaying && !state.isOptHeld && (triggerMode === 'retrigger' || triggerMode === 'sustain');
+    const showAsPause = isPlaying && !isRoll && (state.isOptHeld || triggerMode === 'pause');
+    const showAsPlay = isPlaying && !isRoll && !state.isOptHeld && (triggerMode === 'retrigger' || triggerMode === 'sustain');
     const showAsMuted = isPlaying && isMuted && !state.isOptHeld;
-    iconElement.classList.toggle('fa-play', !isPlaying || showAsPlay);
+    iconElement.classList.toggle('fa-drum', isRoll && !isPlaying);
+    iconElement.classList.toggle('fa-play', !isRoll && (!isPlaying || showAsPlay));
     iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause && !showAsPlay && !showAsMuted);
     iconElement.classList.toggle('fa-pause', showAsPause);
     iconElement.classList.toggle('fa-volume-xmark', showAsMuted);
@@ -1059,8 +1379,7 @@ export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused 
 }
 
 export function refreshOptAffordance() {
-    // Option押下中は全モードで「次に押した時の動作」が一時停止になるため、
-    // 再生中の全パッドのアイコンを更新する。
+    // Option(Alt)押下中は次に押した時の動作が一時停止になる全パッドを更新する。
     document.querySelectorAll('.sound-button.playing').forEach(btn => {
         applyPlayingIcon(btn, btn.dataset.id, true);
     });

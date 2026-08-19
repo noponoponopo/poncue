@@ -4,7 +4,7 @@ import { state, setAudioContext, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize } from './05_ui.js';
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
-import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS } from './01_config.js';
+import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS } from './01_config.js';
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
@@ -363,7 +363,7 @@ function scheduleNaturalFadeOut(soundId) {
 // 終端の自然フェードアウトをスケジュールする。playSound 本体と sustain レイヤーで共用。
 // voice は individualGain / fadeInEndTime / naturalFadeStartTime / 再生位置情報を持つオブジェクト。
 function scheduleNaturalFadeOutFor(voice, soundData) {
-    if (soundData.loop || voice.isFadingOut || !state.audioContext) return;
+    if (soundData.loop || voice.isRoll || voice.isFadingOut || !state.audioContext) return;
 
     const now = state.audioContext.currentTime;
     const fadeWasInProgress = cancelNaturalFadeOut(voice, now);
@@ -616,6 +616,7 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
             if (sourceNode && typeof sourceNode.stop === 'function') {
                 sourceNode.stop();
             }
+            if (audioInfo.isRoll) stopRollSources(audioInfo);
         } catch (e) { /* ignore */ }
         finally {
             cleanupAfterStop(soundId, soundButtonElement);
@@ -653,8 +654,330 @@ export function forceStopSound(soundId, soundButtonElement = null) {
         if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
         if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
     } catch (e) { /* ignore */ }
+    if (audioInfo.isRoll) stopRollSources(audioInfo);
     cleanupAfterStop(soundId, soundButtonElement);
 }
+
+// --- 可変長ドラムロール（roll）: 起こり→ループ(複数パートを順に循環)→終わり→締め のパート連結再生 ---
+
+// パート音声のキャッシュキー（decodedAudioBuffers は通常サウンドを soundId で持つため接尾辞で区別する）
+// part は 'intro' / 'loop:0' / 'end' / 'finish'
+export function rollPartCacheKey(soundId, part) {
+    return `${soundId}:${part}`;
+}
+
+// パート音声の AudioBuffer を取得。キャッシュが無ければDBのblobからデコードする。
+// ロールはパート切替の無音隙を防ぐため、パフォーマンスモードに関わらず必ずバッファ再生する。
+async function getRollPartBuffer(cacheKey, audioId, soundName) {
+    if (!audioId || !state.audioContext) return null;
+    if (state.decodedAudioBuffers[cacheKey]) return state.decodedAudioBuffers[cacheKey];
+    try {
+        const audioRecord = await dbRequest('audio_files', 'readonly', 'get', audioId);
+        const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+        if (!blob) return null;
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        state.decodedAudioBuffers[cacheKey] = audioBuffer;
+        return audioBuffer;
+    } catch (error) {
+        console.error(`Failed to decode roll part "${cacheKey}" of ${soundName}:`, error);
+        return null;
+    }
+}
+
+// シーン選択時の事前デコード。LOW_MEMORY は初回再生時にデコードする。
+export async function preloadRollParts(soundData) {
+    if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) return;
+    const rollParts = soundData?.rollParts || {};
+    const tasks = [];
+    if (rollParts.intro) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'intro'), rollParts.intro, soundData.name));
+    (rollParts.loops || []).forEach((audioId, index) => {
+        if (audioId) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, `loop:${index}`), audioId, soundData.name));
+    });
+    if (rollParts.end) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'end'), rollParts.end, soundData.name));
+    if (rollParts.finish) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'finish'), rollParts.finish, soundData.name));
+    await Promise.all(tasks);
+}
+
+// ロールの全パートソースを即座に停止・切断する（フェードは individualGain 側で行う）
+function stopRollSources(audioInfo) {
+    if (!audioInfo?.scheduled) return;
+    for (const item of audioInfo.scheduled) {
+        item.source.onended = null;
+        try { item.source.stop(0); } catch (e) { /* 未開始・既終了のソース */ }
+        try { item.source.disconnect(); } catch (e) { /* ignore */ }
+        try { item.gain.disconnect(); } catch (e) { /* ignore */ }
+    }
+    audioInfo.scheduled = [];
+}
+
+// パートバッファの波形ピークはロールでは使用しない（波形表示・プログレス更新の対象外のため）
+
+// チェーンの1パートを生成し、名目開始時刻（オーディオクロック）から再生する。
+// 直前パートとの継ぎ目は ROLL_CROSSFADE_SECONDS 秒の微小クロスフェードにする:
+// 前パートは自然に鳴り終わる直前にフェードアウトし、新パートは継ぎ目直前からフェードインする。
+function scheduleRollChainItem(info, kind, buffer, nominalStart, isTerminal) {
+    const ctx = state.audioContext;
+    const crossfade = Math.min(ROLL_CROSSFADE_SECONDS, buffer.duration / 2);
+    const prev = info.scheduled[info.scheduled.length - 1] || null;
+    const sourceStart = prev
+        ? Math.max(nominalStart - crossfade, ctx.currentTime)
+        : Math.max(nominalStart, ctx.currentTime);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const gain = ctx.createGain();
+    source.connect(gain);
+    gain.connect(info.pannerNode);
+
+    const item = {
+        kind, buffer, source, gain,
+        sourceStart,
+        nominalStart,
+        nominalEnd: nominalStart + buffer.duration
+    };
+
+    const boundary = Math.max(nominalStart, sourceStart);
+    if (prev) {
+        gain.gain.setValueAtTime(0.0001, sourceStart);
+        gain.gain.linearRampToValueAtTime(1, boundary);
+        prev.gain.gain.setValueAtTime(1, sourceStart);
+        prev.gain.gain.linearRampToValueAtTime(0.0001, boundary);
+    } else {
+        // 先頭パートはロール全体のフェードイン (fadeInSound) に任せて全開で始める
+        gain.gain.setValueAtTime(1, sourceStart);
+    }
+
+    if (isTerminal) {
+        // 末尾パートは自然終端でフェードアウトし、終了時にロール全体を完了する
+        const fadeOutStart = Math.max(item.nominalEnd - crossfade, boundary);
+        gain.gain.setValueAtTime(1, fadeOutStart);
+        gain.gain.linearRampToValueAtTime(0.0001, item.nominalEnd);
+        const soundId = info.soundId;
+        source.onended = () => {
+            const current = state.activeAudios[soundId];
+            if (!current || current.isFadingOut) return;
+            cleanupAfterStop(soundId, null);
+        };
+    }
+
+    source.start(sourceStart);
+    info.scheduled.push(item);
+    return item;
+}
+
+// チェーンの次パートを決定する。未離上なら起こり→ループ(循環)、離上後は終わり→締めの末尾。
+function nextRollChainItem(info) {
+    if (!info.introConsumed) {
+        info.introConsumed = true;
+        if (info.introBuffer) return { kind: 'intro', buffer: info.introBuffer, terminal: false };
+    }
+    if (!info.rollReleased) {
+        const buffer = info.loopBuffers[info.loopCursor % info.loopBuffers.length];
+        info.loopCursor += 1;
+        return { kind: 'loop', buffer, terminal: false };
+    }
+    if (info.tailIndex < info.tailBuffers.length) {
+        const index = info.tailIndex;
+        info.tailIndex += 1;
+        return {
+            kind: info.tailKinds[index],
+            buffer: info.tailBuffers[index],
+            terminal: index === info.tailBuffers.length - 1
+        };
+    }
+    return null;
+}
+
+// 先読みスケジューラ: 境界時刻に合わせて次パートを事前スケジュールし、継ぎ目を途切れさせない。
+function pumpRoll(soundId) {
+    const info = state.activeAudios[soundId];
+    if (!info || !info.isRoll || info.isFadingOut || !state.audioContext) {
+        if (info?.rollSchedulerId) { clearInterval(info.rollSchedulerId); info.rollSchedulerId = null; }
+        return;
+    }
+    const now = state.audioContext.currentTime;
+    const horizon = now + ROLL_SCHEDULER_LOOKAHEAD_SECONDS;
+
+    // 終了済みアイテムの後始末（onended ではなく時刻で判定して破棄する）
+    info.scheduled = info.scheduled.filter(item => {
+        if (item.nominalEnd > now - 0.1) return true;
+        item.source.onended = null;
+        try { item.source.disconnect(); } catch (e) { /* ignore */ }
+        try { item.gain.disconnect(); } catch (e) { /* ignore */ }
+        return false;
+    });
+
+    while (info.chainTime < horizon) {
+        const next = nextRollChainItem(info);
+        if (!next) break; // 末尾までスケジュール済み
+        scheduleRollChainItem(info, next.kind, next.buffer, info.chainTime, next.terminal);
+        info.chainTime += next.buffer.duration;
+    }
+
+    // 離上後の末尾までスケジュールし終えたらポーリングを止める
+    if (info.rollReleased && info.tailIndex >= info.tailBuffers.length) {
+        clearInterval(info.rollSchedulerId);
+        info.rollSchedulerId = null;
+    }
+}
+
+// ロール再生を開始する。押下開始（キー/パッド/キーボードビュー）から呼ばれる。
+// 起こり（無ければ省略）から始まり、ループパート群を登録順に循環させて鳴らし続ける。
+export async function startRollPlayback(soundId, soundButtonElement, clickTime = null) {
+    if (!state.audioContext) return false;
+    if (state.audioContext.state !== 'running') await resumeAudioContext();
+    if (state.audioContext.state !== 'running') {
+        // 通常サウンド（handleSoundButtonClick）と同じ案内を出す
+        if (state.showErrorPopups) showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知");
+        return false;
+    }
+    delete state.pausedSounds[soundId];
+
+    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!soundData?.rollParts) return false;
+
+    const active = state.activeAudios[soundId];
+    if (active?.isRoll) {
+        // 押下中の再押下は無視（複数入力のホールド集約は 08_handlers 側で行う）
+        if (!active.rollReleased) return true;
+        // 終わり/締めの再生中に再押下した場合は頭出しでやり直す
+        forceStopSound(soundId, soundButtonElement);
+    } else if (active) {
+        return false;
+    }
+
+    // パートバッファを先に全て用意する（起こり→ループ切替の隙を防ぐ）
+    const partIds = soundData.rollParts;
+    const introBuffer = partIds.intro ? await getRollPartBuffer(rollPartCacheKey(soundId, 'intro'), partIds.intro, soundData.name) : null;
+    const loopBuffers = [];
+    for (let index = 0; index < (partIds.loops || []).length; index++) {
+        const audioId = partIds.loops[index];
+        if (!audioId) continue;
+        const buffer = await getRollPartBuffer(rollPartCacheKey(soundId, `loop:${index}`), audioId, soundData.name);
+        if (buffer) loopBuffers.push(buffer);
+    }
+    const endBuffer = partIds.end ? await getRollPartBuffer(rollPartCacheKey(soundId, 'end'), partIds.end, soundData.name) : null;
+    const finishBuffer = partIds.finish ? await getRollPartBuffer(rollPartCacheKey(soundId, 'finish'), partIds.finish, soundData.name) : null;
+
+    if (!loopBuffers.length) {
+        if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」のループ音声を読み込めません。`);
+        return false;
+    }
+    // デコード待ちの間にシーン切替・削除があった場合は中断する
+    if (!state.scenes[state.currentSceneId]?.sounds.some(s => s.id === soundId)) return false;
+
+    const ctx = state.audioContext;
+    const pannerNode = ctx.createStereoPanner();
+    pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, ctx.currentTime);
+    const individualGain = ctx.createGain();
+    const effectRack = createEffectRack(soundData.effects);
+    const splitter = ctx.createChannelSplitter(2);
+    const analyserL = ctx.createAnalyser();
+    const analyserR = ctx.createAnalyser();
+
+    let fftSizeMeter = state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE ? ANALYSER_FFT_SIZE : 32;
+    Object.assign(analyserL, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
+    Object.assign(analyserR, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
+
+    pannerNode.connect(individualGain);
+    individualGain.connect(effectRack.entry);
+    effectRack.exit.connect(splitter);
+    splitter.connect(analyserL, 0);
+    splitter.connect(analyserR, 1);
+    effectRack.exit.connect(state.masterInputNode);
+    individualGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+
+    const now = ctx.currentTime;
+    const audioInfo = {
+        isRoll: true,
+        soundId: soundId,
+        audioElement: null, objectUrl: null, sourceNode: null,
+        introBuffer, loopBuffers, endBuffer, finishBuffer,
+        scheduled: [],           // チェーンのパート再生キュー（時刻順）
+        chainTime: now,          // 次パートの名目開始時刻
+        introConsumed: false,
+        loopCursor: 0,
+        tailBuffers: [], tailKinds: [], tailIndex: 0, // 離上後の終わり→締め
+        rollSchedulerId: null,
+        rollReleaseTime: null,
+        rollReleased: false,
+        pannerNode, individualGain, effectRack, splitter, analyserL, analyserR,
+        dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
+        audioBuffer: introBuffer ?? loopBuffers[0],
+        waveformPeaks: null,
+        meterAnimationFrameId: null, progressBarInterval: null,
+        isFadingOut: false, muted: false, progressPercent: 0,
+        playbackPosition: 0, playbackPositionContextTime: now, playbackRate: 1,
+        fadeInEndTime: null, naturalFadeStartTime: null,
+        peakL: 0, peakR: 0
+    };
+    state.activeAudios[soundId] = audioInfo;
+
+    // 最初のパート（起こり or ループ）を即時スケジュールし、以降は先読みポーリングで継ぐ
+    pumpRoll(soundId);
+    audioInfo.rollSchedulerId = setInterval(() => pumpRoll(soundId), ROLL_SCHEDULER_INTERVAL_MS);
+
+    recordStartMetric(soundId, clickTime, performance.now());
+    updateButtonUI(soundId, soundButtonElement, true);
+    updatePauseAllButton();
+    createMeterElement(soundId, soundData.name);
+    triggerWaveformUpdate();
+    fadeInSound(soundId, soundData.volume);
+    startMeterUpdate(soundId);
+    return true;
+}
+
+// ロールを離上する。鳴っているパートは最後まで再生し、その境界から終わり→締めへ遷移する。
+export function endRollPlayback(soundId) {
+    const audioInfo = state.activeAudios[soundId];
+    if (!audioInfo?.isRoll || audioInfo.rollReleased || audioInfo.isFadingOut) return;
+
+    const ctx = state.audioContext;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    audioInfo.rollReleased = true;
+    audioInfo.rollReleaseTime = now;
+
+    // 未開始のパートをキャンセルする（鳴り始めたパートは維持して最後まで聴かせる）
+    audioInfo.scheduled = audioInfo.scheduled.filter(item => {
+        if (item.sourceStart <= now) return true;
+        item.source.onended = null;
+        try { item.source.stop(0); } catch (e) { /* ignore */ }
+        try { item.source.disconnect(); } catch (e) { /* ignore */ }
+        try { item.gain.disconnect(); } catch (e) { /* ignore */ }
+        return false;
+    });
+
+    const current = audioInfo.scheduled[audioInfo.scheduled.length - 1] || null;
+    audioInfo.chainTime = current ? current.nominalEnd : now;
+    audioInfo.tailBuffers = [];
+    audioInfo.tailKinds = [];
+    audioInfo.tailIndex = 0;
+    if (audioInfo.endBuffer) { audioInfo.tailBuffers.push(audioInfo.endBuffer); audioInfo.tailKinds.push('end'); }
+    if (audioInfo.finishBuffer) { audioInfo.tailBuffers.push(audioInfo.finishBuffer); audioInfo.tailKinds.push('finish'); }
+
+    if (!audioInfo.tailBuffers.length) {
+        // 終わりも締めも無いロールは現在パートの自然終了で完了する
+        if (audioInfo.rollSchedulerId) { clearInterval(audioInfo.rollSchedulerId); audioInfo.rollSchedulerId = null; }
+        if (!current) {
+            cleanupAfterStop(soundId, null);
+            return;
+        }
+        current.source.onended = () => {
+            const info = state.activeAudios[soundId];
+            if (!info || info.isFadingOut) return;
+            cleanupAfterStop(soundId, null);
+        };
+        return;
+    }
+
+    pumpRoll(soundId);
+}
+
+// ロールはパート単位の短いサイクルで進捗・波形が忙しく動くため、
+// プログレスバーや波形表示の更新対象に含めない（メーターのみ表示する）。
 
 // --- sustain モード（重ね再生）のレイヤーボイス管理 ---
 // メーター・プログレス等のUIは本体（activeAudios）側だけが持ち、レイヤーは
@@ -835,6 +1158,12 @@ export function pauseSound(soundId, soundButtonElement = null) {
     const hasLayers = Boolean(layers?.length);
     if ((!hasMain && !hasLayers) || !state.audioContext) return false;
 
+    // ロールは途中から再開できないため、Option(Alt)操作でも停止として扱う。
+    if (audioInfo?.isRoll) {
+        stopSound(soundId, soundButtonElement);
+        return true;
+    }
+
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
     const position = hasMain ? normalizeVoicePosition(audioInfo, sound) : null;
     const layerPositions = [];
@@ -899,6 +1228,7 @@ export async function togglePauseAllSounds() {
 export function seekSound(soundId, seekTime) {
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo || !state.audioContext) return;
+    if (audioInfo.isRoll) return; // ロールはパート連結再生のためシーク不可
 
     if (audioInfo.audioElement) { // LOW_MEMORY
         audioInfo.naturalFadeStartTime = null;
@@ -923,7 +1253,7 @@ export function seekSound(soundId, seekTime) {
 
 export function updateActiveSoundLoop(soundId, loop) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || !state.audioContext) return;
+    if (!audioInfo || audioInfo.isRoll || !state.audioContext) return; // ロールのループはパート構成で決まる
 
     const now = state.audioContext.currentTime;
     const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
@@ -1005,6 +1335,7 @@ export function updateActiveSoundSpeed(soundId) {
     const audioInfo = state.activeAudios[soundId];
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!audioInfo || !soundData || !state.audioContext) return;
+    if (audioInfo.isRoll) return; // ロールはパート間の継ぎ目を保つため常に等速再生
     const rate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
     if (!audioInfo.audioElement) {
         const now = state.audioContext.currentTime;
@@ -1032,6 +1363,11 @@ function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
     const audioInfo = state.activeAudios[soundId];
 
     if (audioInfo) {
+        if (audioInfo.isRoll) {
+            // ロールはパートごとに複数ソースと先読みスケジューラを持つため全て破棄する
+            stopRollSources(audioInfo);
+            if (audioInfo.rollSchedulerId) { clearInterval(audioInfo.rollSchedulerId); audioInfo.rollSchedulerId = null; }
+        }
         if (audioInfo.sourceNode) {
             audioInfo.sourceNode.onended = null;
             if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = () => {};
@@ -1389,8 +1725,8 @@ export function triggerWaveformUpdate() {
         clearWaveformDisplay();
         return;
     }
-    const hasActiveSounds = Object.keys(state.activeAudios).some(id => !state.activeAudios[id].isFadingOut)
-        // 本体が自然終了してレイヤーだけ鳴っている場合も波形を描き続ける
+    // ロールは波形表示の対象外。本体が自然終了してレイヤーだけ鳴る場合は描画を継続する。
+    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut && !audio.isRoll)
         || Object.values(state.sustainLayers).some(layers => layers.some(layer => !layer.isFadingOut));
     if (hasActiveSounds && !state.isWaveformLoopRunning) {
         startWaveformDisplayLoop();
@@ -1466,11 +1802,11 @@ function startWaveformDisplayLoop() {
         dom.waveformCtx.fillStyle = cachedStyles.bg;
         dom.waveformCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-        // 描画対象 = 本体 (activeAudios) + sustain レイヤーの全ボイス。
+        // 描画対象 = ロール以外の本体 (activeAudios) + sustain レイヤーの全ボイス。
         // レイヤーはUIを持たないが、波形には重ねて反映する。
         const voices = [];
         for (const audioInfo of Object.values(state.activeAudios)) {
-            if (!audioInfo.isFadingOut) voices.push(audioInfo);
+            if (!audioInfo.isFadingOut && !audioInfo.isRoll) voices.push(audioInfo);
         }
         for (const layers of Object.values(state.sustainLayers)) {
             for (const layer of layers) {
