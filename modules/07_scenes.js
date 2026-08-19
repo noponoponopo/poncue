@@ -534,7 +534,7 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
 
 export async function selectScene(sceneId) {
     stopAllSounds(false);
-    updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {} });
+    updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {}, waveformPeaksCache: {} });
     triggerWaveformUpdate();
 
     if (!state.scenes[sceneId]) {
@@ -858,6 +858,7 @@ export async function saveRollSound(soundId, settings) {
 
 export async function removeSound(soundId) {    if (state.decodedAudioBuffers[soundId] && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
         delete state.decodedAudioBuffers[soundId];
+        delete state.waveformPeaksCache[soundId];
         triggerWaveformUpdate();
     }
     if (!state.currentSceneId) return;

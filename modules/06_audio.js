@@ -316,7 +316,8 @@ export function updatePauseAllButton() {
     const pauseAllButton = dom.pauseAllBtn;
     if (!pauseAllButton) return;
 
-    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut);
+    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut)
+        || Object.values(state.sustainLayers).some(layers => layers.length > 0);
     const hasPausedSounds = Object.keys(state.pausedSounds).length > 0;
     const resumeAll = !hasActiveSounds && hasPausedSounds;
     const icon = pauseAllButton.querySelector('i');
@@ -509,7 +510,7 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
         state.activeAudios[soundId] = {
             audioElement, sourceNode, pannerNode, individualGain, effectRack,
             analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
-            splitter, audioBuffer, waveformPeaks: audioBuffer ? precomputeWaveformPeaks(audioBuffer) : null,
+            splitter, audioBuffer, waveformPeaks: getWaveformPeaks(soundId, audioBuffer),
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
             muted: false,
             progressPercent: 0,
@@ -978,7 +979,6 @@ export function endRollPlayback(soundId) {
 // ロールはパート単位の短いサイクルで進捗・波形が忙しく動くため、
 // プログレスバーや波形表示の更新対象に含めない（メーターのみ表示する）。
 
-
 // --- sustain モード（重ね再生）のレイヤーボイス管理 ---
 // メーター・プログレス等のUIは本体（activeAudios）側だけが持ち、レイヤーは
 // 自然終了時に自分で後始末する。停止は stopSustainLayers 経由で明示的に行う。
@@ -988,8 +988,9 @@ export function getSustainLayerCount(soundId) {
 }
 
 // sustain モード: 再生中のサウンドに重ねる追加ボイスを鳴らす。
+// startOffset で一時停止からの再開位置を指定できる。
 // 開始に成功したら true を返す。
-export async function startSustainLayer(soundId) {
+export async function startSustainLayer(soundId, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') return false;
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.audioId) return false;
@@ -1020,8 +1021,9 @@ export async function startSustainLayer(soundId) {
 
         const layer = {
             soundId, sourceNode, audioElement, objectUrl, audioBuffer,
+            waveformPeaks: getWaveformPeaks(soundId, audioBuffer),
             pannerNode, individualGain, effectRack,
-            playbackPosition: 0,
+            playbackPosition: Math.max(0, startOffset),
             playbackPositionContextTime: state.audioContext.currentTime,
             playbackRate: Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1)),
             fadeInEndTime: null, naturalFadeStartTime: null, isFadingOut: false
@@ -1031,10 +1033,11 @@ export async function startSustainLayer(soundId) {
         if (audioElement) { // LOW_MEMORY
             audioElement.onended = finishLayer;
             audioElement.onerror = finishLayer;
+            audioElement.currentTime = Math.max(0, startOffset);
         } else {
             if ('onended' in sourceNode) sourceNode.onended = finishLayer;
             else sourceNode.onstop = finishLayer;
-            sourceNode.start(0);
+            sourceNode.start(0, Math.max(0, startOffset));
         }
 
         (state.sustainLayers[soundId] ??= []).push(layer);
@@ -1054,6 +1057,7 @@ export async function startSustainLayer(soundId) {
         // LOW_MEMORY の <audio> は play() 後に duration が確定するため、ここで終端フェードを計算する。
         scheduleNaturalFadeOutFor(layer, soundData);
         updateSustainLayerBadge(soundId, getSustainLayerCount(soundId));
+        triggerWaveformUpdate();
         return true;
     } catch (err) {
         console.error("Error in startSustainLayer:", err);
@@ -1095,6 +1099,7 @@ function disposeSustainLayer(soundId, layer, useFadeOut) {
     try { layer.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
     disposeEffectRack(layer.effectRack);
     updateSustainLayerBadge(soundId, getSustainLayerCount(soundId));
+    triggerWaveformUpdate();
 }
 
 export function stopSustainLayers(soundId, useFadeOut = true) {
@@ -1135,38 +1140,59 @@ export function isSoundPaused(soundId) {
     return Boolean(state.pausedSounds[soundId]);
 }
 
+// ボイス（本体または sustain レイヤー）の現在位置をループ設定に沿って正規化する。
+// 不正な位置は null を返す。
+function normalizeVoicePosition(voice, sound) {
+    const duration = voice.audioBuffer?.duration || voice.audioElement?.duration || sound?.duration;
+    let position = getCurrentSourcePosition(voice);
+    if (Number.isFinite(duration) && duration > 0) {
+        position = sound?.loop ? position % duration : Math.min(duration, position);
+    }
+    return Number.isFinite(position) && position >= 0 ? position : null;
+}
+
 export function pauseSound(soundId, soundButtonElement = null) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || audioInfo.isFadingOut || !state.audioContext) return false;
+    const layers = state.sustainLayers[soundId];
+    const hasMain = Boolean(audioInfo) && !audioInfo.isFadingOut;
+    const hasLayers = Boolean(layers?.length);
+    if ((!hasMain && !hasLayers) || !state.audioContext) return false;
 
-    // ロールは途中からの一時停止ができないため、停止として扱う
-    if (audioInfo.isRoll) {
+    // ロールは途中から再開できないため、Option(Alt)操作でも停止として扱う。
+    if (audioInfo?.isRoll) {
         stopSound(soundId, soundButtonElement);
         return true;
     }
 
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
-    const duration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration || sound?.duration;
-    let position = getCurrentSourcePosition(audioInfo);
-    if (Number.isFinite(duration) && duration > 0) {
-        position = sound?.loop ? position % duration : Math.min(duration, position);
+    const position = hasMain ? normalizeVoicePosition(audioInfo, sound) : null;
+    const layerPositions = [];
+    for (const layer of layers ?? []) {
+        const pos = layer.isFadingOut ? null : normalizeVoicePosition(layer, sound);
+        if (pos !== null) layerPositions.push(pos);
     }
-    if (!Number.isFinite(position) || position < 0) return false;
+    if (position === null && layerPositions.length === 0) return false;
 
-    state.pausedSounds[soundId] = { position, pausedAt: Date.now() };
+    // sustain レイヤーも位置を保存して道連れに一時停止する
+    for (const layer of [...(layers ?? [])]) {
+        disposeSustainLayer(soundId, layer, false);
+    }
+    state.pausedSounds[soundId] = { position, pausedAt: Date.now(), layers: layerPositions };
     if (!soundButtonElement) soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
 
-    if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
-    if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
-    audioInfo.sourceNode.onended = null;
-    if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = null;
-    try {
-        if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
-        if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
-    } catch (_) { /* the audio source may already have ended */ }
-    cleanupAfterStop(soundId, soundButtonElement, false);
+    if (hasMain) {
+        if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
+        if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
+        audioInfo.sourceNode.onended = null;
+        if ('onstop' in audioInfo.sourceNode) audioInfo.sourceNode.onstop = null;
+        try {
+            if (audioInfo.audioElement && !audioInfo.audioElement.paused) audioInfo.audioElement.pause();
+            if (audioInfo.sourceNode && typeof audioInfo.sourceNode.stop === 'function') audioInfo.sourceNode.stop();
+        } catch (_) { /* the audio source may already have ended */ }
+        cleanupAfterStop(soundId, soundButtonElement, false);
+    }
     updateButtonUI(soundId, soundButtonElement, false, true);
-    updatePausedProgress(soundId, soundButtonElement, position);
+    updatePausedProgress(soundId, soundButtonElement, position ?? layerPositions[0] ?? 0);
     updatePauseAllButton();
     return true;
 }
@@ -1175,16 +1201,24 @@ export async function resumeSound(soundId, soundButtonElement = null) {
     const paused = state.pausedSounds[soundId];
     if (!paused) return false;
     delete state.pausedSounds[soundId];
-    await playSound(soundId, soundButtonElement, performance.now(), paused.position);
+    if (Number.isFinite(paused.position)) {
+        await playSound(soundId, soundButtonElement, performance.now(), paused.position);
+    }
+    // 一時停止時に鳴っていた sustain レイヤーも同じ位置から再開する
+    for (const layerPosition of paused.layers ?? []) {
+        await startSustainLayer(soundId, layerPosition);
+    }
     updatePauseAllButton();
     return true;
 }
 
 export async function togglePauseAllSounds() {
-    const activeIds = Object.entries(state.activeAudios)
+    const activeIds = new Set(Object.entries(state.activeAudios)
         .filter(([, audio]) => !audio.isFadingOut)
-        .map(([soundId]) => soundId);
-    if (activeIds.length > 0) {
+        .map(([soundId]) => soundId));
+    // 本体が自然終了してレイヤーだけ鳴っているサウンドも対象にする
+    Object.keys(state.sustainLayers).forEach(soundId => activeIds.add(soundId));
+    if (activeIds.size > 0) {
         activeIds.forEach(soundId => pauseSound(soundId));
         return;
     }
@@ -1691,8 +1725,9 @@ export function triggerWaveformUpdate() {
         clearWaveformDisplay();
         return;
     }
-    // ロールは波形表示の対象外（パート切替で波形が飛び安定しないため）
-    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut && !audio.isRoll);
+    // ロールは波形表示の対象外。本体が自然終了してレイヤーだけ鳴る場合は描画を継続する。
+    const hasActiveSounds = Object.values(state.activeAudios).some(audio => !audio.isFadingOut && !audio.isRoll)
+        || Object.values(state.sustainLayers).some(layers => layers.some(layer => !layer.isFadingOut));
     if (hasActiveSounds && !state.isWaveformLoopRunning) {
         startWaveformDisplayLoop();
     } else if (!hasActiveSounds && state.isWaveformLoopRunning) {
@@ -1700,6 +1735,17 @@ export function triggerWaveformUpdate() {
     } else if (!hasActiveSounds && !state.isWaveformLoopRunning) {
         clearWaveformDisplay();
     }
+}
+
+// 波形描画用のピークを soundId 単位でキャッシュする。本体と sustain レイヤーで共用し、
+// バッファが差し替わったら（再インポート・逆再生など）計算し直す。
+function getWaveformPeaks(soundId, audioBuffer) {
+    if (!audioBuffer) return null;
+    const cached = state.waveformPeaksCache[soundId];
+    if (cached && cached.buffer === audioBuffer) return cached.peaks;
+    const peaks = precomputeWaveformPeaks(audioBuffer);
+    state.waveformPeaksCache[soundId] = { buffer: audioBuffer, peaks };
+    return peaks;
 }
 
 function precomputeWaveformPeaks(audioBuffer) {
@@ -1756,9 +1802,18 @@ function startWaveformDisplayLoop() {
         dom.waveformCtx.fillStyle = cachedStyles.bg;
         dom.waveformCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-        // ロールはパート切替ごとに波形が飛び安定しないため波形表示の対象外とする
-        const activeSoundsInfo = Object.values(state.activeAudios).filter(info => !info.isFadingOut && !info.isRoll);
-        if (activeSoundsInfo.length === 0) { stopWaveformDisplayLoop(); return; }
+        // 描画対象 = ロール以外の本体 (activeAudios) + sustain レイヤーの全ボイス。
+        // レイヤーはUIを持たないが、波形には重ねて反映する。
+        const voices = [];
+        for (const audioInfo of Object.values(state.activeAudios)) {
+            if (!audioInfo.isFadingOut && !audioInfo.isRoll) voices.push(audioInfo);
+        }
+        for (const layers of Object.values(state.sustainLayers)) {
+            for (const layer of layers) {
+                if (!layer.isFadingOut) voices.push(layer);
+            }
+        }
+        if (voices.length === 0) { stopWaveformDisplayLoop(); return; }
 
         dom.waveformCtx.strokeStyle = cachedStyles.stroke;
         dom.waveformCtx.lineWidth = 1;
@@ -1775,7 +1830,7 @@ function startWaveformDisplayLoop() {
             const secondsPerPixel = WAVEFORM_SECONDS_AHEAD / canvasWidth;
             const timeOffsetFromLeftEdge = (x / canvasWidth) * WAVEFORM_SECONDS_AHEAD;
 
-            for (const audioInfo of activeSoundsInfo) {
+            for (const audioInfo of voices) {
                 const { audioBuffer, waveformPeaks, individualGain } = audioInfo;
                 if (!audioBuffer || !waveformPeaks) continue;
 

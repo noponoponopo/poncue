@@ -788,6 +788,85 @@
       background-color: var(--control-hover-bg);
     }
 
+    /* Operations Help (? button + help modal) */
+    .modal-help-btn {
+      position: absolute;
+      top: 10px;
+      right: 48px;
+      background: none;
+      border: none;
+      font-size: 1.2em;
+      font-weight: 700;
+      color: var(--secondary-color);
+      cursor: pointer;
+      line-height: 1;
+      padding: 0;
+      border-radius: 50%;
+      transition: color var(--transition-speed), background-color var(--transition-speed);
+      width: 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-help-btn:hover {
+      color: var(--primary-color);
+      background-color: var(--control-hover-bg);
+    }
+
+    #help-modal {
+      z-index: 1500; /* シーン設定より上、アラートより下 */
+    }
+
+    .help-modal-content {
+      width: 560px;
+    }
+
+    .help-modal-body {
+      font-size: 0.92em;
+      line-height: 1.65;
+      overflow-y: auto;
+    }
+
+    .help-modal-body h3 {
+      margin: 16px 0 6px;
+      font-size: 1.02em;
+      color: var(--primary-color);
+    }
+
+    .help-modal-body h3:first-child {
+      margin-top: 0;
+    }
+
+    .help-modal-body ul {
+      margin: 0;
+      padding-left: 1.2em;
+    }
+
+    .help-modal-body li {
+      margin-bottom: 4px;
+    }
+
+    .help-modal-body kbd {
+      display: inline-block;
+      padding: 1px 7px;
+      border: 1px solid var(--border-color);
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      background-color: var(--control-hover-bg);
+      font-family: inherit;
+      font-size: 0.9em;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .help-modal-body .help-note {
+      margin-top: 14px;
+      font-size: 0.88em;
+      color: var(--secondary-color);
+    }
+
     .modal-title {
       margin: 0 0 20px 0;
       font-size: 1.4em;

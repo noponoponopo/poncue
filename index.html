@@ -144,6 +144,14 @@
     <div id="scene-settings-modal" class="modal-overlay">
       <div class="modal-content">
         <button
+          id="modal-help-btn"
+          class="modal-help-btn"
+          title="操作ガイド"
+          aria-label="操作ガイドを開く"
+        >
+          ?
+        </button>
+        <button
           id="modal-close-btn"
           class="modal-close-btn"
           aria-label="閉じる"
@@ -269,6 +277,39 @@
               <i class="fas fa-plus-square"></i> 新しいシーンを追加
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operations Help Modal -->
+    <div id="help-modal" class="modal-overlay">
+      <div class="modal-content help-modal-content">
+        <button
+          id="help-modal-close-btn"
+          class="modal-close-btn"
+          aria-label="閉じる"
+        >
+          ×
+        </button>
+        <h2 class="modal-title">操作ガイド</h2>
+        <div class="modal-body help-modal-body">
+          <h3>パッドの再生</h3>
+          <ul>
+            <li>パッドのクリック、または割り当てたショートカットキーで再生する。動作はサウンドごとの「起動」設定（トグル / ホールド / リトリガー / レイヤー / ポーズ / ミュートなど）に従う。</li>
+          </ul>
+          <h3>Option / Alt + クリック（一時停止）</h3>
+          <ul>
+            <li><kbd>Option</kbd>/<kbd>Alt</kbd> を押しながら再生中のパッドをクリックすると、そのサウンドを一時停止する。もう一度押すと同じ位置から再開する。</li>
+            <li>起動モードは問わず有効。レイヤー（重ね再生）のボイスも位置を保ったまま、まとめて一時停止・再開する。</li>
+            <li>ホールド系モード（押している間だけ再生）も、<kbd>Option</kbd>/<kbd>Alt</kbd> を押したまま離すと一時停止になる。</li>
+            <li>キーを押している間、再生中パッドのアイコンが一時停止表示に変わる。</li>
+          </ul>
+          <h3>全停止・全一時停止</h3>
+          <ul>
+            <li><kbd>Esc</kbd> または「全停止」ボタン: 再生中の全サウンドを停止する（位置はリセット）。</li>
+            <li><kbd>Option</kbd>/<kbd>Alt</kbd> + <kbd>Esc</kbd>、または Option/Alt を押しながら「全停止」ボタン: 全サウンドを一時停止する。もう一度で全再開する。</li>
+          </ul>
+          <p class="help-note">※ Mac は Option キー、Windows / Linux は Alt キー。</p>
         </div>
       </div>
     </div>
