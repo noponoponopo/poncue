@@ -2026,7 +2026,8 @@ function startWaveformDisplayLoop() {
             bg: (isDarkMode ? cs.getPropertyValue('--waveform-bg-dark') : cs.getPropertyValue('--waveform-bg-light')).trim(),
             stroke: (isDarkMode ? cs.getPropertyValue('--primary-color-dark') : cs.getPropertyValue('--primary-color-light')).trim(),
             playhead: (isDarkMode ? cs.getPropertyValue('--waveform-playhead-dark') : cs.getPropertyValue('--waveform-playhead-light')).trim(),
-            playheadWidth: parseFloat(cs.getPropertyValue('--waveform-playhead-width').trim()) || 2
+            playheadWidth: parseFloat(cs.getPropertyValue('--waveform-playhead-width').trim()) || 2,
+            centerLine: isDarkMode ? '#333333' : '#dcdcdc'
         };
     };
     refreshStyles();
@@ -2052,19 +2053,31 @@ function startWaveformDisplayLoop() {
         }
         if (voices.length === 0) { stopWaveformDisplayLoop(); return; }
 
-        dom.waveformCtx.strokeStyle = cachedStyles.stroke;
+        // 中央ガイド線（voxwarp方式: 波形の下地に薄い中心線を引く）
+        const centerY = canvasHeight / 2;
+        dom.waveformCtx.strokeStyle = cachedStyles.centerLine;
         dom.waveformCtx.lineWidth = 1;
         dom.waveformCtx.beginPath();
+        dom.waveformCtx.moveTo(0, Math.round(centerY) + 0.5);
+        dom.waveformCtx.lineTo(canvasWidth, Math.round(centerY) + 0.5);
+        dom.waveformCtx.stroke();
 
-        for (let x = 0; x < canvasWidth; x++) {
+        // --- パス1: 1ピクセル幅の min/max エンベロープを組み立てる ---
+        const columns = Math.max(1, Math.ceil(canvasWidth));
+        const rawMin = new Float32Array(columns);
+        const rawMax = new Float32Array(columns);
+        const active = new Uint8Array(columns);
+
+        // Pixel-snap: round base time to pixel grid so the same peak
+        // maps to the same x every frame until the waveform advances
+        // by a full pixel. Eliminates per-frame peak shimmer.
+        const secondsPerPixel = WAVEFORM_SECONDS_AHEAD / canvasWidth;
+
+        for (let x = 0; x < columns; x++) {
             let summedMinPeak = 0;
             let summedMaxPeak = 0;
             let contributionCount = 0;
 
-            // Pixel-snap: round base time to pixel grid so the same peak
-            // maps to the same x every frame until the waveform advances
-            // by a full pixel. Eliminates per-frame peak shimmer.
-            const secondsPerPixel = WAVEFORM_SECONDS_AHEAD / canvasWidth;
             const timeOffsetFromLeftEdge = (x / canvasWidth) * WAVEFORM_SECONDS_AHEAD;
 
             for (const audioInfo of voices) {
@@ -2119,16 +2132,79 @@ function startWaveformDisplayLoop() {
                 }
             }
 
-            let finalMinPeak = (contributionCount > 0) ? summedMinPeak / contributionCount : 0;
-            let finalMaxPeak = (contributionCount > 0) ? summedMaxPeak / contributionCount : 0;
-
-            const yMin = ((1 - finalMaxPeak) / 2) * canvasHeight;
-            const yMax = ((1 - finalMinPeak) / 2) * canvasHeight;
-
-            dom.waveformCtx.moveTo(x, yMin);
-            dom.waveformCtx.lineTo(x, yMax);
+            if (contributionCount > 0) {
+                rawMin[x] = summedMinPeak / contributionCount;
+                rawMax[x] = summedMaxPeak / contributionCount;
+                active[x] = 1;
+            }
         }
-        dom.waveformCtx.stroke();
+
+        let first = -1;
+        let last = -1;
+        for (let x = 0; x < columns; x++) {
+            if (active[x]) {
+                if (first < 0) first = x;
+                last = x;
+            }
+        }
+
+        if (first >= 0) {
+            // --- パス2: 5タップbinomialカーネルでスムージング（voxwarpと同じ重み） ---
+            const smooth = (source) => {
+                const out = new Float32Array(columns);
+                const weights = [1, 4, 6, 4, 1];
+                for (let x = 0; x < columns; x++) {
+                    if (!active[x]) continue;
+                    let sum = 0;
+                    let used = 0;
+                    for (let k = -2; k <= 2; k++) {
+                        const xi = Math.max(0, Math.min(columns - 1, x + k));
+                        if (!active[xi]) continue;
+                        const w = weights[k + 2];
+                        sum += source[xi] * w;
+                        used += w;
+                    }
+                    out[x] = sum / Math.max(1, used || 16);
+                }
+                return out;
+            };
+            const smoothMin = smooth(rawMin);
+            const smoothMax = smooth(rawMax);
+
+            // --- パス3: スムーズ値と生値を 74:26 でブレンド（子音・トランジェントを残す） ---
+            const lower = new Float32Array(columns);
+            const upper = new Float32Array(columns);
+            const rawMix = 0.26;
+            for (let x = first; x <= last; x++) {
+                if (!active[x]) continue;
+                lower[x] = smoothMin[x] * (1 - rawMix) + rawMin[x] * rawMix;
+                upper[x] = smoothMax[x] * (1 - rawMix) + rawMax[x] * rawMix;
+            }
+
+            // --- パス4: 中点二次補間で塗りつぶし（DAW風の滑らかなエンベロープ） ---
+            const amp = canvasHeight * 0.43;
+            const yUpper = (x) => centerY - upper[x] * amp;
+            const yLower = (x) => centerY - lower[x] * amp;
+
+            dom.waveformCtx.fillStyle = cachedStyles.stroke;
+            dom.waveformCtx.beginPath();
+            dom.waveformCtx.moveTo(first, yUpper(first));
+            for (let x = first + 1; x <= last; x++) {
+                const midX = x - 0.5;
+                const midY = (yUpper(x - 1) + yUpper(x)) / 2;
+                dom.waveformCtx.quadraticCurveTo(x - 1, yUpper(x - 1), midX, midY);
+            }
+            dom.waveformCtx.lineTo(last, yUpper(last));
+            dom.waveformCtx.lineTo(last, yLower(last));
+            for (let x = last - 1; x >= first; x--) {
+                const midX = x + 0.5;
+                const midY = (yLower(x + 1) + yLower(x)) / 2;
+                dom.waveformCtx.quadraticCurveTo(x + 1, yLower(x + 1), midX, midY);
+            }
+            dom.waveformCtx.lineTo(first, yLower(first));
+            dom.waveformCtx.closePath();
+            dom.waveformCtx.fill();
+        }
 
         dom.waveformCtx.strokeStyle = cachedStyles.playhead;
         dom.waveformCtx.lineWidth = cachedStyles.playheadWidth;
