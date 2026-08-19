@@ -713,16 +713,18 @@ function stopRollSources(audioInfo) {
 
 // パートバッファの波形ピークはロールでは使用しない（波形表示・プログレス更新の対象外のため）
 
-// チェーンの1パートを生成し、名目開始時刻（オーディオクロック）から再生する。
-// 直前パートとの継ぎ目は ROLL_CROSSFADE_SECONDS 秒の微小クロスフェードにする:
-// 前パートは自然に鳴り終わる直前にフェードアウトし、新パートは継ぎ目直前からフェードインする。
-function scheduleRollChainItem(info, kind, buffer, nominalStart, isTerminal) {
+// チェーンの1パートを生成する。前パートの終端よりクロスフェード分だけ早く開始し、
+// 両方の音源が実際に重なる区間でGainを逆方向にランプする。
+function scheduleRollChainItem(info, kind, buffer, requestedStart, isTerminal) {
     const ctx = state.audioContext;
-    const crossfade = Math.min(ROLL_CROSSFADE_SECONDS, buffer.duration / 2);
     const prev = info.scheduled[info.scheduled.length - 1] || null;
+    const crossfade = prev
+        ? Math.min(ROLL_CROSSFADE_SECONDS, prev.buffer.duration / 2, buffer.duration / 2)
+        : 0;
     const sourceStart = prev
-        ? Math.max(nominalStart - crossfade, ctx.currentTime)
-        : Math.max(nominalStart, ctx.currentTime);
+        ? Math.max(prev.endTime - crossfade, ctx.currentTime)
+        : Math.max(requestedStart, ctx.currentTime);
+    const endTime = sourceStart + buffer.duration;
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -730,14 +732,8 @@ function scheduleRollChainItem(info, kind, buffer, nominalStart, isTerminal) {
     source.connect(gain);
     gain.connect(info.pannerNode);
 
-    const item = {
-        kind, buffer, source, gain,
-        sourceStart,
-        nominalStart,
-        nominalEnd: nominalStart + buffer.duration
-    };
-
-    const boundary = Math.max(nominalStart, sourceStart);
+    const item = { kind, buffer, source, gain, sourceStart, endTime };
+    const boundary = prev ? Math.max(prev.endTime, sourceStart) : sourceStart;
     if (prev) {
         gain.gain.setValueAtTime(0.0001, sourceStart);
         gain.gain.linearRampToValueAtTime(1, boundary);
@@ -750,9 +746,10 @@ function scheduleRollChainItem(info, kind, buffer, nominalStart, isTerminal) {
 
     if (isTerminal) {
         // 末尾パートは自然終端でフェードアウトし、終了時にロール全体を完了する
-        const fadeOutStart = Math.max(item.nominalEnd - crossfade, boundary);
+        const fadeOutSeconds = Math.min(ROLL_CROSSFADE_SECONDS, buffer.duration / 2);
+        const fadeOutStart = Math.max(endTime - fadeOutSeconds, boundary);
         gain.gain.setValueAtTime(1, fadeOutStart);
-        gain.gain.linearRampToValueAtTime(0.0001, item.nominalEnd);
+        gain.gain.linearRampToValueAtTime(0.0001, endTime);
         const soundId = info.soundId;
         source.onended = () => {
             const current = state.activeAudios[soundId];
@@ -801,7 +798,7 @@ function pumpRoll(soundId) {
 
     // 終了済みアイテムの後始末（onended ではなく時刻で判定して破棄する）
     info.scheduled = info.scheduled.filter(item => {
-        if (item.nominalEnd > now - 0.1) return true;
+        if (item.endTime > now - 0.1) return true;
         item.source.onended = null;
         try { item.source.disconnect(); } catch (e) { /* ignore */ }
         try { item.gain.disconnect(); } catch (e) { /* ignore */ }
@@ -811,8 +808,8 @@ function pumpRoll(soundId) {
     while (info.chainTime < horizon) {
         const next = nextRollChainItem(info);
         if (!next) break; // 末尾までスケジュール済み
-        scheduleRollChainItem(info, next.kind, next.buffer, info.chainTime, next.terminal);
-        info.chainTime += next.buffer.duration;
+        const item = scheduleRollChainItem(info, next.kind, next.buffer, info.chainTime, next.terminal);
+        info.chainTime = item.endTime;
     }
 
     // 離上後の末尾までスケジュールし終えたらポーリングを止める
@@ -895,7 +892,7 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
         audioElement: null, objectUrl: null, sourceNode: null,
         introBuffer, loopBuffers, endBuffer, finishBuffer,
         scheduled: [],           // チェーンのパート再生キュー（時刻順）
-        chainTime: now,          // 次パートの名目開始時刻
+        chainTime: now,          // 最後にスケジュールしたパートの終了時刻
         introConsumed: false,
         loopCursor: 0,
         tailBuffers: [], tailKinds: [], tailIndex: 0, // 離上後の終わり→締め
@@ -951,7 +948,7 @@ export function endRollPlayback(soundId) {
     });
 
     const current = audioInfo.scheduled[audioInfo.scheduled.length - 1] || null;
-    audioInfo.chainTime = current ? current.nominalEnd : now;
+    audioInfo.chainTime = current ? current.endTime : now;
     audioInfo.tailBuffers = [];
     audioInfo.tailKinds = [];
     audioInfo.tailIndex = 0;

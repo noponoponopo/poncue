@@ -26,7 +26,7 @@ export const HOLD_TRIGGER_MODES = ['momentary', 'pauseHold', 'muteHold', 'roll']
 // ループのみ必須（1つ以上）。それ以外は任意で、無いパートは飛ばして遷移する。
 // パート継ぎ目のクリックノイズ防止用の微小クロスフェード時間（秒）と、
 // チェーン先読みスケジューラのポーリング間隔・先読み時間。
-export const ROLL_CROSSFADE_SECONDS = 0.005;
+export const ROLL_CROSSFADE_SECONDS = 0.015;
 export const ROLL_SCHEDULER_INTERVAL_MS = 100;
 export const ROLL_SCHEDULER_LOOKAHEAD_SECONDS = 0.5;
 
