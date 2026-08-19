@@ -81,7 +81,11 @@ export function setupEventListeners() {
         await resumeAudioContext();
         await togglePauseAllSounds();
     });
-    dom.stopAllBtn?.addEventListener('click', () => stopAllSounds(true));
+    dom.stopAllBtn?.addEventListener('click', () => {
+        // Option押下中は全停止ではなく全ボイスの一時停止にする
+        if (state.isOptHeld) togglePauseAllSounds();
+        else stopAllSounds(true);
+    });
     dom.keyboardViewBtn?.addEventListener('click', toggleKeyboardView);
     dom.keyboardView?.addEventListener('pointerdown', handleVirtualKeyDown);
     dom.keyboardView?.addEventListener('pointerup', handleVirtualKeyUp);
@@ -778,7 +782,9 @@ async function handleKeyDown(event) {
     if (normalizedKey) setKeyboardKeyPressed(normalizedKey, true);
 
     if (event.key === 'Escape') {
-        stopAllSounds(true);
+        // Option押下中は全停止ではなく全ボイスの一時停止にする
+        if (state.isOptHeld) togglePauseAllSounds();
+        else stopAllSounds(true);
         return;
     }
 
@@ -876,10 +882,11 @@ async function startHoldPlayback(soundId, soundButtonElement, inputId) {
 
 function releaseHoldPlayback(soundId, soundButtonElement = null) {
     if (!state.activeAudios[soundId]) return;
-    // 離した時の動作はモード依存: momentary=停止、pauseHold=一時停止、muteHold=消音
+    // 離した時の動作はモード依存: momentary=停止、pauseHold=一時停止、muteHold=消音。
+    // Option押下中は全モードで一時停止に統一。
     const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     const mode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'momentary';
-    if (mode === 'pauseHold') pauseSound(soundId, soundButtonElement);
+    if (state.isOptHeld || mode === 'pauseHold') pauseSound(soundId, soundButtonElement);
     else if (mode === 'muteHold') setSoundMuted(soundId, true);
     else stopSound(soundId, soundButtonElement);
 }
@@ -913,20 +920,19 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
         return;
     }
 
-    if (state.activeAudios[soundId]) {
-        const triggerMode = TRIGGER_MODES.includes(soundData?.triggerMode) ? soundData.triggerMode : 'toggle';
-        if (triggerMode === 'toggle' && state.isOptHeld) {
+    if (state.activeAudios[soundId] || state.sustainLayers[soundId]?.length) {
+        // Option押下中はモードによらず一時停止（本体＋レイヤー全ボイス）に統一
+        if (state.isOptHeld) {
             pauseSound(soundId, soundButtonElement);
-        } else if (triggerMode === 'sustain') {
-            // Option+クリックは全ボイス停止の回避手段、通常時は重ね再生
-            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
-            else await startSustainLayer(soundId);
+            return;
+        }
+        const triggerMode = TRIGGER_MODES.includes(soundData?.triggerMode) ? soundData.triggerMode : 'toggle';
+        if (triggerMode === 'sustain') {
+            await startSustainLayer(soundId);
         } else if (triggerMode === 'pause') {
-            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
-            else pauseSound(soundId, soundButtonElement);
+            pauseSound(soundId, soundButtonElement);
         } else if (triggerMode === 'mute') {
-            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
-            else setSoundMuted(soundId, !state.activeAudios[soundId].muted);
+            setSoundMuted(soundId, !state.activeAudios[soundId].muted);
         } else if (triggerMode === 'pauseHold') {
             // 押下時は再生を続け、離した時に一時停止する（startHoldPlayback 経由）
         } else if (triggerMode === 'muteHold') {
@@ -947,6 +953,17 @@ async function startRetriggerPlayback(soundId, soundButtonElement) {
     if (!state.audioContext) { if (!initAudioContext()) { return; } }
     await resumeAudioContext();
     if (state.audioContext?.state !== 'running') { return; }
+    // Option押下中は頭出し再生ではなく一時停止/再開（全モード共通の挙動）
+    if (state.isOptHeld) {
+        if (state.activeAudios[soundId] || state.sustainLayers[soundId]?.length) {
+            pauseSound(soundId, soundButtonElement);
+            return;
+        }
+        if (isSoundPaused(soundId)) {
+            resumeSound(soundId, soundButtonElement);
+            return;
+        }
+    }
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (soundData?.error) {
         showAlert(`サウンド「${soundData.name}」の音声データを読み込めません。ファイルが破損しているか、インポートに失敗した可能性があります。`, 'エラー');

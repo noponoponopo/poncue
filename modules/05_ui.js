@@ -1019,26 +1019,30 @@ function getTriggerModeFromButton(soundButtonElement) {
     return 'toggle';
 }
 
+// 再生中パッドのアイコン = 「次に押した時の動作」を示す。
+// Option押下中は全モードで一時停止になるため、pauseアイコンに統一する。
+// 通常時: toggle/ホールド系=停止、pause=一時停止、mute=ミュート中なら消音アイコン、
+// retrigger/sustain=もう一度鳴らす
+function applyPlayingIcon(soundButtonElement, soundId, isPlaying) {
+    const iconElement = soundButtonElement.querySelector('.sound-icon');
+    if (!iconElement) return;
+    const triggerMode = getTriggerModeFromButton(soundButtonElement);
+    const isMuted = isPlaying && ['mute', 'muteHold'].includes(triggerMode) && Boolean(state.activeAudios[soundId]?.muted);
+    soundButtonElement.classList.toggle('muted', isMuted);
+    const showAsPause = isPlaying && (state.isOptHeld || triggerMode === 'pause');
+    const showAsPlay = isPlaying && !state.isOptHeld && (triggerMode === 'retrigger' || triggerMode === 'sustain');
+    const showAsMuted = isPlaying && isMuted && !state.isOptHeld;
+    iconElement.classList.toggle('fa-play', !isPlaying || showAsPlay);
+    iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause && !showAsPlay && !showAsMuted);
+    iconElement.classList.toggle('fa-pause', showAsPause);
+    iconElement.classList.toggle('fa-volume-xmark', showAsMuted);
+}
+
 export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused = false) {
     if (!soundButtonElement) return;
-    const iconElement = soundButtonElement.querySelector('.sound-icon');
     soundButtonElement.classList.toggle('playing', isPlaying);
     soundButtonElement.classList.toggle('paused', isPaused);
-    if (iconElement) {
-        const triggerMode = getTriggerModeFromButton(soundButtonElement);
-        const isMuted = isPlaying && ['mute', 'muteHold'].includes(triggerMode) && Boolean(state.activeAudios[soundId]?.muted);
-        soundButtonElement.classList.toggle('muted', isMuted);
-        // 再生中アイコン = 「次に押した時の動作」を示す:
-        // toggle=停止（Option押下中は一時停止）、pause=一時停止、mute=ミュート中なら消音アイコン、
-        // retrigger/sustain=もう一度鳴らす、ホールド系=離すと止まるので停止
-        const showAsPause = isPlaying && (triggerMode === 'pause' || (triggerMode === 'toggle' && state.isOptHeld));
-        const showAsPlay = isPlaying && (triggerMode === 'retrigger' || triggerMode === 'sustain');
-        const showAsMuted = isPlaying && isMuted;
-        iconElement.classList.toggle('fa-play', !isPlaying || showAsPlay);
-        iconElement.classList.toggle('fa-stop', isPlaying && !showAsPause && !showAsPlay && !showAsMuted);
-        iconElement.classList.toggle('fa-pause', showAsPause);
-        iconElement.classList.toggle('fa-volume-xmark', showAsMuted);
-    }
+    applyPlayingIcon(soundButtonElement, soundId, isPlaying);
     setKeyboardKeyPlaying(soundId, isPlaying);
     if (isPaused) {
         const position = state.pausedSounds[soundId]?.position;
@@ -1055,13 +1059,10 @@ export function updateButtonUI(soundId, soundButtonElement, isPlaying, isPaused 
 }
 
 export function refreshOptAffordance() {
+    // Option押下中は全モードで「次に押した時の動作」が一時停止になるため、
+    // 再生中の全パッドのアイコンを更新する。
     document.querySelectorAll('.sound-button.playing').forEach(btn => {
-        // Option+クリックの一時停止は toggle モード専用（trigger-* クラスを持たないボタン）。
-        if ([...btn.classList].some(name => name.startsWith('trigger-'))) return;
-        const icon = btn.querySelector('.sound-icon');
-        if (!icon) return;
-        icon.classList.toggle('fa-stop', !state.isOptHeld);
-        icon.classList.toggle('fa-pause', state.isOptHeld);
+        applyPlayingIcon(btn, btn.dataset.id, true);
     });
 }
 

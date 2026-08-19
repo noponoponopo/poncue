@@ -40,6 +40,7 @@ export const state = {
     sustainLayers: {}, // { [soundId]: [layer, ...] } sustainモードの重ね再生ボイス（メーター等のUIは持たない）
     decodedAudioBuffers: {}, // { soundId: AudioBuffer }
     reversedAudioBuffers: {}, // { soundId: AudioBuffer } 逆再生用の反転バッファキャッシュ
+    waveformPeaksCache: {}, // { soundId: { buffer, peaks } } 波形描画用ピークのキャッシュ（本体とレイヤーで共用）
     audioStartMetrics: [],
     
     // UI and Settings State
@@ -56,7 +57,7 @@ export const state = {
     showMode: false,
     keyboardViewVisible: false,
     keyboardLayout: DEFAULT_KEYBOARD_LAYOUT, // 'us' or 'jis' (11_keyboard_view.js の LAYOUTS と対応)
-    isOptHeld: false, // Option キー押下中: トグル再生カードの停止を一時停止に切替
+    isOptHeld: false, // Option(Alt) キー押下中: 全モードで停止系の操作を一時停止に切替。Mac=Option、Windows/Linux=Alt
 
     // DB instance
     db: null,
