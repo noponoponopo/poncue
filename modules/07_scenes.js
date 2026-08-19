@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice } from './06_audio.js';
+import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS } from './01_config.js';
 
@@ -158,13 +158,37 @@ export async function initializeApp() {
 
     await Promise.all([loadSettings(), loadScenesFromDB()]);
 
+    // --- Roll schema migration: 単一ループ形式を複数ループ配列へ寄せる ---
+    for (const sceneId in state.scenes) {
+        let sceneUpdated = false;
+        for (const sound of state.scenes[sceneId].sounds) {
+            if (normalizeRollSound(sound)) sceneUpdated = true;
+        }
+        if (sceneUpdated) {
+            await saveCurrentSceneSounds(`migration-roll-${sceneId}`, sceneId);
+        }
+    }
+    // --- End of roll schema migration ---
+
     // --- Audio integrity check: verify each referenced audio record is usable ---
     const missingSounds = [];
     try {
         const referencedAudioIds = new Set();
+        const collectSoundAudioIds = (sound) => {
+            if (sound.audioId) referencedAudioIds.add(sound.audioId);
+            // ドラムロールはパートごとに音声を参照する
+            if (sound.type === 'roll' && sound.rollParts) {
+                if (sound.rollParts.intro) referencedAudioIds.add(sound.rollParts.intro);
+                for (const loopAudioId of sound.rollParts.loops || []) {
+                    if (loopAudioId) referencedAudioIds.add(loopAudioId);
+                }
+                if (sound.rollParts.end) referencedAudioIds.add(sound.rollParts.end);
+                if (sound.rollParts.finish) referencedAudioIds.add(sound.rollParts.finish);
+            }
+        };
         for (const sceneId in state.scenes) {
             for (const sound of state.scenes[sceneId].sounds) {
-                if (sound.audioId) referencedAudioIds.add(sound.audioId);
+                collectSoundAudioIds(sound);
             }
         }
 
@@ -176,10 +200,18 @@ export async function initializeApp() {
             }
         }
 
+        const isSoundAudioValid = (sound) => {
+            if (sound.type === 'roll') {
+                // ロールはループパートのどれか1つでも読み込めれば再生可能
+                return (sound.rollParts?.loops || []).some(loopAudioId => loopAudioId && validAudioIds.has(loopAudioId));
+            }
+            return Boolean(sound.audioId && validAudioIds.has(sound.audioId));
+        };
+
         for (const sceneId in state.scenes) {
             const scene = state.scenes[sceneId];
             for (const sound of scene.sounds) {
-                if (!sound.audioId || !validAudioIds.has(sound.audioId)) {
+                if (!isSoundAudioValid(sound)) {
                     if (!sound.error) sound.error = 'Audio data missing';
                     missingSounds.push(`${scene.name} / ${sound.name}`);
                 } else if (sound.error === 'Audio data missing') {
@@ -472,6 +504,28 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
                 sound.error = 'Audio load failed';
             }
         }
+        // ドラムロールのパートはエクスポート時のみdataUrl化する（再生時はblobから直接デコードする）
+        if (force && sound.type === 'roll' && sound.rollParts) {
+            sound.rollPartDataUrls = {};
+            const loadPartDataUrl = async (audioId) => {
+                if (!audioId) return null;
+                try {
+                    const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
+                    if (audioRecord && audioRecord.blob) {
+                        return await blobToDataURL(audioRecord.blob);
+                    }
+                } catch (err) {
+                    console.error(`Failed to load roll part of ${sound.name}:`, err);
+                }
+                return null;
+            };
+            sound.rollPartDataUrls.intro = await loadPartDataUrl(sound.rollParts.intro);
+            sound.rollPartDataUrls.loops = await Promise.all(
+                (sound.rollParts.loops || []).map(loopAudioId => loadPartDataUrl(loopAudioId))
+            );
+            sound.rollPartDataUrls.end = await loadPartDataUrl(sound.rollParts.end);
+            sound.rollPartDataUrls.finish = await loadPartDataUrl(sound.rollParts.finish);
+        }
     });
 
     await Promise.all(audioFetchPromises);
@@ -501,6 +555,11 @@ export async function selectScene(sceneId) {
         state.scenes[sceneId] = sceneWithData;
         if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) { // Only pre-decode if not in low memory mode
             await Promise.all(sceneWithData.sounds.map(async sound => {
+                if (sound.type === 'roll') {
+                    // ロールはパート単位で事前デコードする
+                    await preloadRollParts(sound);
+                    return;
+                }
                 if (!sound.dataUrl) return;
                 const audioBuffer = await getAudioBufferFromDataUrl(sound.id, sound.dataUrl);
                 if (!audioBuffer) sound.error = 'Audio decode failed';
@@ -601,8 +660,203 @@ export async function handleAudioFileSelect(event) {
     }
 }
 
-export async function removeSound(soundId) {
-    if (state.decodedAudioBuffers[soundId] && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+// 音声blobの長さ（秒）を取得する
+function readAudioDuration(blob) {
+    return new Promise((resolve, reject) => {
+        const audio = new Audio(URL.createObjectURL(blob));
+        audio.addEventListener('loadedmetadata', () => {
+            URL.revokeObjectURL(audio.src);
+            resolve(audio.duration);
+        });
+        audio.addEventListener('error', (e) => {
+            URL.revokeObjectURL(audio.src);
+            reject(e);
+        });
+    });
+}
+
+/**
+ * ドラムロールのスキーマ正規化。単一ループ (rollParts.loop) の旧形式を
+ * 複数ループ (rollParts.loops 配列) の新形式へ寄せる。変更があったら true を返す。
+ */
+export function normalizeRollSound(sound) {
+    if (!sound || sound.type !== 'roll') return false;
+    let changed = false;
+    if (!sound.rollParts || typeof sound.rollParts !== 'object') {
+        sound.rollParts = {};
+        changed = true;
+    }
+    if (!Array.isArray(sound.rollParts.loops)) {
+        sound.rollParts.loops = sound.rollParts.loop ? [sound.rollParts.loop] : [];
+        delete sound.rollParts.loop;
+        changed = true;
+    }
+    if (sound.rollParts.loops.some(audioId => !audioId)) {
+        sound.rollParts.loops = sound.rollParts.loops.filter(Boolean);
+        changed = true;
+    }
+    if (sound.rollPartNames && !Array.isArray(sound.rollPartNames.loops)) {
+        sound.rollPartNames.loops = sound.rollPartNames.loop ? [sound.rollPartNames.loop] : [];
+        delete sound.rollPartNames.loop;
+        changed = true;
+    }
+    if (sound.rollPartDurations && !Array.isArray(sound.rollPartDurations.loops)) {
+        sound.rollPartDurations.loops = sound.rollPartDurations.loop ? [sound.rollPartDurations.loop] : [];
+        delete sound.rollPartDurations.loop;
+        changed = true;
+    }
+    return changed;
+}
+
+/**
+ * ドラムロールセットの新規作成・更新。
+ * soundId が null なら追加、既存IDなら更新する。
+ * settings は showRollSettingsModal の結果:
+ * { name, color, parts: { intro, loops: [...], end, finish } }（各スロットは { audioId, file, name }）
+ */
+export async function saveRollSound(soundId, settings) {
+    const scene = state.scenes[state.currentSceneId];
+    if (!scene) {
+        showAlert("ファイルを追加するシーンが選択されていません。");
+        return null;
+    }
+    const existingSound = soundId ? scene.sounds.find(s => s.id === soundId) : null;
+    if (soundId && !existingSound) return null;
+
+    // パートスロットを保存済み音声参照に解決する（新規FileはDBへ保存し、長さも測る）
+    const resolveSlot = async (slot) => {
+        if (!slot) return null;
+        if (slot.file) {
+            const audioId = generateUniqueId('aud');
+            await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'put', { id: audioId, blob: slot.file });
+            let duration = 0;
+            try {
+                duration = await readAudioDuration(slot.file);
+            } catch (e) { /* 長さ取得失敗時は 0 として扱う */ }
+            return { audioId, name: slot.name || slot.file.name.replace(/\.[^/.]+$/, ""), duration };
+        }
+        if (slot.audioId) {
+            let duration = 0;
+            try {
+                const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', slot.audioId);
+                const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+                if (blob) duration = await readAudioDuration(blob);
+            } catch (e) { /* 長さ取得失敗時は 0 として扱う */ }
+            return { audioId: slot.audioId, name: slot.name || '', duration };
+        }
+        return null;
+    };
+
+    const intro = await resolveSlot(settings.parts?.intro);
+    const end = await resolveSlot(settings.parts?.end);
+    const finish = await resolveSlot(settings.parts?.finish);
+    const loops = [];
+    for (const slot of (settings.parts?.loops || [])) {
+        const resolved = await resolveSlot(slot);
+        if (resolved) loops.push(resolved);
+    }
+    if (!loops.length) {
+        showAlert("ループ音声を1つ以上指定してください。", 'エラー');
+        return null;
+    }
+
+    const rollParts = {
+        intro: intro?.audioId ?? null,
+        loops: loops.map(part => part.audioId),
+        end: end?.audioId ?? null,
+        finish: finish?.audioId ?? null
+    };
+    const rollPartNames = {
+        intro: intro?.name ?? null,
+        loops: loops.map(part => part.name),
+        end: end?.name ?? null,
+        finish: finish?.name ?? null
+    };
+    const rollPartDurations = {
+        intro: intro?.duration ?? 0,
+        loops: loops.map(part => part.duration ?? 0),
+        end: end?.duration ?? 0,
+        finish: finish?.duration ?? 0
+    };
+
+    // 差し替え・解除・削除されたパートの旧音声を削除する
+    const oldParts = existingSound?.rollParts || {};
+    const oldSingleIds = [oldParts.intro, oldParts.end, oldParts.finish].filter(Boolean);
+    const oldLoopIds = (oldParts.loops || []).filter(Boolean);
+    const newSingleIds = [rollParts.intro, rollParts.end, rollParts.finish].filter(Boolean);
+    const newLoopIds = rollParts.loops;
+    const staleAudioIds = [
+        ...oldSingleIds.filter(id => !newSingleIds.includes(id)),
+        ...oldLoopIds.filter(id => !newLoopIds.includes(id))
+    ];
+    for (const staleAudioId of staleAudioIds) {
+        try {
+            await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', staleAudioId);
+        } catch (err) {
+            console.error(`Failed to delete replaced roll part audio: ${staleAudioId}`, err);
+        }
+    }
+    // ループは index 付きのキャッシュキーのため、旧・新の両方の範囲を掃除する
+    if (existingSound) {
+        for (const part of ['intro', 'end', 'finish']) {
+            delete state.decodedAudioBuffers[rollPartCacheKey(existingSound.id, part)];
+        }
+        const maxLoopCount = Math.max(oldLoopIds.length, newLoopIds.length);
+        for (let index = 0; index < maxLoopCount; index++) {
+            delete state.decodedAudioBuffers[rollPartCacheKey(existingSound.id, `loop:${index}`)];
+        }
+    }
+
+    const duration = rollPartDurations.intro
+        + rollPartDurations.loops.reduce((sum, value) => sum + value, 0)
+        + rollPartDurations.end
+        + rollPartDurations.finish;
+
+    if (existingSound) {
+        existingSound.name = settings.name;
+        existingSound.rollParts = rollParts;
+        existingSound.rollPartNames = rollPartNames;
+        existingSound.rollPartDurations = rollPartDurations;
+        existingSound.duration = duration;
+        if (settings.color === null) {
+            delete existingSound.color;
+        } else if (typeof settings.color === 'string') {
+            existingSound.color = settings.color;
+        }
+        await saveCurrentSceneSounds(`saveRollSound-${existingSound.id}`);
+        renderers.renderSoundboard();
+        return existingSound;
+    }
+
+    const newSound = {
+        id: generateUniqueId('snd'),
+        type: 'roll',
+        name: settings.name,
+        triggerMode: 'roll',
+        rollParts: rollParts,
+        rollPartNames: rollPartNames,
+        rollPartDurations: rollPartDurations,
+        loop: false,
+        volume: 1.0,
+        pan: 0,
+        color: typeof settings.color === 'string' ? settings.color : undefined,
+        fadeInDuration: 0.0,
+        fadeOutDuration: 0.0,
+        fadeInEasing: DEFAULT_FADE_EASING,
+        fadeOutEasing: DEFAULT_FADE_EASING,
+        reverse: false,
+        playbackRate: 1.0,
+        preservePitch: false,
+        effects: { enabled: false },
+        duration: duration,
+    };
+    scene.sounds.push(newSound);
+    await saveCurrentSceneSounds("saveRollSound");
+    renderers.renderSoundboard();
+    return newSound;
+}
+
+export async function removeSound(soundId) {    if (state.decodedAudioBuffers[soundId] && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
         delete state.decodedAudioBuffers[soundId];
         triggerWaveformUpdate();
     }
@@ -626,6 +880,28 @@ export async function removeSound(soundId) {
     await saveCurrentSceneSounds(`removeSound-${soundId}`);
     renderers.renderSoundboard();
 
+    if (removedSound.type === 'roll') {
+        // ロールはパートごとに音声を持つため全て削除する
+        const loopCount = (removedSound.rollParts?.loops || []).length;
+        for (let index = 0; index < loopCount; index++) {
+            delete state.decodedAudioBuffers[rollPartCacheKey(soundId, `loop:${index}`)];
+        }
+        const partAudioIds = [
+            removedSound.rollParts?.intro,
+            ...(removedSound.rollParts?.loops || []),
+            removedSound.rollParts?.end,
+            removedSound.rollParts?.finish
+        ].filter(Boolean);
+        for (const partAudioId of partAudioIds) {
+            try {
+                await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', partAudioId);
+            } catch (err) {
+                showAlert("音声ファイルの削除に失敗しました。");
+            }
+        }
+        return;
+    }
+
     if (removedSound.audioId) {
         try {
             await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', removedSound.audioId);
@@ -644,6 +920,7 @@ export async function saveCurrentSceneSounds(triggeredBy = "unknown", sceneId = 
     sceneToSave.sounds.forEach(sound => {
         delete sound.dataUrl;
         delete sound.error;
+        delete sound.rollPartDataUrls; // エクスポート用の一時フィールドは保存しない
     });
 
     await dbRequest(SCENES_STORE_NAME, 'readwrite', 'put', sceneToSave);
@@ -691,6 +968,27 @@ export async function exportSceneAsZip(sceneId) {
                 delete sound.dataUrl;
                 delete sound.audioId;
             }
+        }
+        // ドラムロールのパート音声も個別ファイルとして書き出す
+        if (sound.type === 'roll' && sound.rollPartDataUrls) {
+            sound.rollPartFiles = {};
+            const writePartFile = (partLabel, partDataUrl) => {
+                if (!partDataUrl) return null;
+                const blob = dataURLtoBlob(partDataUrl);
+                if (!blob) return null;
+                const fileExtension = blob.type.split('/')[1] || 'mp3';
+                const fileName = `audio/${sound.id}-${partLabel}.${fileExtension}`;
+                audioFiles.push({ fileName, blob });
+                return fileName;
+            };
+            sound.rollPartFiles.intro = writePartFile('intro', sound.rollPartDataUrls.intro);
+            sound.rollPartFiles.loops = (sound.rollPartDataUrls.loops || []).map((loopDataUrl, loopIndex) =>
+                writePartFile(`loop${loopIndex}`, loopDataUrl)
+            );
+            sound.rollPartFiles.end = writePartFile('end', sound.rollPartDataUrls.end);
+            sound.rollPartFiles.finish = writePartFile('finish', sound.rollPartDataUrls.finish);
+            delete sound.rollPartDataUrls;
+            delete sound.rollParts;
         }
     });
 
@@ -757,6 +1055,7 @@ async function handleZipImport(file) {
             normalizeSoundFade(sound);
             if ('fadeDuration' in sound) delete sound.fadeDuration;
             normalizeSoundTriggerMode(sound);
+            if (sound.type === 'roll') sound.triggerMode = 'roll';
             if (sound.fileName) {
                 const audioFileInZip = zip.file(sound.fileName);
                 if (audioFileInZip) {
@@ -771,6 +1070,33 @@ async function handleZipImport(file) {
                     delete sound.fileName;
                 }
             }
+            // ドラムロールのパート音声を復元する
+            if (sound.type === 'roll' && sound.rollPartFiles) {
+                const restorePart = async (partFileName) => {
+                    if (!partFileName) return null;
+                    const audioFileInZip = zip.file(partFileName);
+                    if (!audioFileInZip) return null;
+                    const arrayBuffer = await audioFileInZip.async("arraybuffer");
+                    const fileExtension = partFileName.split('.').pop().toLowerCase();
+                    const mimeType = `audio/${fileExtension === 'mp3' ? 'mpeg' : fileExtension}`;
+                    const blob = new Blob([arrayBuffer], { type: mimeType });
+                    const audioId = generateUniqueId('aud');
+                    await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'put', { id: audioId, blob: blob });
+                    return audioId;
+                };
+                sound.rollParts = {
+                    intro: await restorePart(sound.rollPartFiles.intro),
+                    loops: [],
+                    end: await restorePart(sound.rollPartFiles.end),
+                    finish: await restorePart(sound.rollPartFiles.finish)
+                };
+                for (const loopFileName of sound.rollPartFiles.loops || []) {
+                    const loopAudioId = await restorePart(loopFileName);
+                    if (loopAudioId) sound.rollParts.loops.push(loopAudioId);
+                }
+                delete sound.rollPartFiles;
+            }
+            normalizeRollSound(sound);
         }
 
         state.scenes[importedScene.id] = importedScene;
@@ -821,6 +1147,8 @@ async function handleLegacyJsonImport(file) {
                 normalizeSoundFade(sound);
                 if ('fadeDuration' in sound) delete sound.fadeDuration;
                 normalizeSoundTriggerMode(sound);
+                if (sound.type === 'roll') sound.triggerMode = 'roll';
+                normalizeRollSound(sound);
                 if (sound.dataUrl) {
                     const blob = dataURLtoBlob(sound.dataUrl);
                     if (blob) {

@@ -12,6 +12,8 @@ export function initDom() {
         // --- JS側で使うキー名 : HTMLのid属性 ---
         soundboard: 'soundboard',
         addSoundBtn: 'add-sound-btn',
+        addRollBtn: 'add-roll-btn',
+        rollFileInput: 'roll-file-input',
         pauseAllBtn: 'pause-all-btn',
         stopAllBtn: 'stop-all-btn',
         showModeBtn: 'show-mode-btn',

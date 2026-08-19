@@ -3,16 +3,16 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, refreshOptAffordance } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice } from './06_audio.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
     renderers, // renderers object
     exportSceneAsZip, // New export function
-    updatePadSizeCSS, saveAudioOutputSettings // Import updatePadSizeCSS
+    updatePadSizeCSS, saveAudioOutputSettings, saveRollSound // Import updatePadSizeCSS
 } from './07_scenes.js';
-import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, SCROLL_PREVENT_KEYS, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
+import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, HOLD_TRIGGER_MODES, SCROLL_PREVENT_KEYS, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
 import { renderKeyboardView, setKeyboardKeyPressed, getLayoutOptions, clearAllKeyboardKeyPressed } from './11_keyboard_view.js';
 
 // --- Debounce Utility ---
@@ -77,6 +77,7 @@ export function setupEventListeners() {
 
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
+    dom.addRollBtn?.addEventListener('click', () => { resumeAudioContext(); handleRollSettings(null); });
     dom.pauseAllBtn?.addEventListener('click', async () => {
         await resumeAudioContext();
         await togglePauseAllSounds();
@@ -157,11 +158,13 @@ export function setupEventListeners() {
     window.addEventListener('blur', () => {
         clearAllKeyboardKeyPressed();
         if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+        releaseAllHoldInputs();
     });
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
             clearAllKeyboardKeyPressed();
             if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
+            releaseAllHoldInputs();
         }
     });
 
@@ -190,7 +193,7 @@ function handleVirtualKeyDown(event) {
     const key = event.target.closest('button[data-shortcut]');
     if (!key || key.disabled || event.button !== 0) return;
     event.preventDefault();
-    key.setPointerCapture?.(event.pointerId);
+    try { key.setPointerCapture?.(event.pointerId); } catch (_) { /* pointer capture は環境によって失敗しても再生を続ける */ }
     setKeyboardKeyPressed(key.dataset.shortcut, true);
     triggerShortcutDown(key.dataset.shortcut, `virtual:${event.pointerId}`);
 }
@@ -209,7 +212,7 @@ function triggerShortcutDown(shortcut, inputId) {
     const button = dom.soundboard.querySelector(`.sound-button[data-id="${soundId}"]`);
     if (!sound || !button) return;
     const mode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
-    if (mode === 'momentary') startHoldPlayback(soundId, button, inputId);
+    if (HOLD_TRIGGER_MODES.includes(mode)) startHoldPlayback(soundId, button, inputId);
     else if (mode === 'retrigger') startRetriggerPlayback(soundId, button);
     else handleSoundButtonClick(soundId, button);
 }
@@ -217,7 +220,7 @@ function triggerShortcutDown(shortcut, inputId) {
 function triggerShortcutUp(shortcut, inputId) {
     const soundId = state.shortcuts[shortcut];
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
-    if (sound?.triggerMode === 'momentary') endHoldPlayback(soundId, inputId);
+    if (HOLD_TRIGGER_MODES.includes(sound?.triggerMode)) endHoldPlayback(soundId, inputId);
 }
 
 
@@ -637,6 +640,12 @@ async function handleSoundSettings(soundId) {
     const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (!sound) return;
 
+    // ドラムロールは専用の設定モーダルで編集する
+    if (sound.type === 'roll') {
+        await handleRollSettings(soundId);
+        return;
+    }
+
     let currentShortcut = '';
     for (const key in state.shortcuts) {
         if (state.shortcuts[key] === soundId) {
@@ -720,8 +729,64 @@ async function handleSoundSettings(soundId) {
     }
 }
 
-function normalizeKey(e) {
-    const modifiers = [];
+// ドラムロールの追加・編集。soundId が null なら追加、既存IDなら編集。
+async function handleRollSettings(soundId) {
+    const sound = soundId
+        ? state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId)
+        : null;
+
+    let currentShortcut = '';
+    if (sound) {
+        for (const key in state.shortcuts) {
+            if (state.shortcuts[key] === sound.id) {
+                currentShortcut = key;
+                break;
+            }
+        }
+    }
+
+    const newSettings = await showRollSettingsModal(sound, currentShortcut);
+    if (newSettings === null) return;
+
+    const { name, shortcut, color, parts } = newSettings;
+
+    // ショートカットの衝突のみ先に判定する（通常サウンドと同じ排他ルール）
+    if (shortcut) {
+        const conflictSoundId = state.shortcuts[shortcut];
+        if (conflictSoundId && conflictSoundId !== soundId) {
+            const conflictSound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === conflictSoundId);
+            showAlert(`ショートカット「${shortcut}」は既に「${conflictSound?.name ?? '別のサウンド'}」に割り当てられています。`, 'エラー');
+            return;
+        }
+    }
+
+    // 既存の割り当てを外してから保存する（追加時は soundId が確定してから割り当てる）
+    if (soundId && currentShortcut && state.shortcuts[currentShortcut] === soundId) {
+        delete state.shortcuts[currentShortcut];
+    }
+
+    // 編集中に再生が残っている場合は止めてから更新する
+    if (soundId && state.activeAudios[soundId]) stopSound(soundId, null, false);
+
+    const saved = await saveRollSound(soundId, { name, color, parts });
+    if (!saved) {
+        if (currentShortcut) state.shortcuts[currentShortcut] = soundId;
+        return;
+    }
+
+    if (shortcut) {
+        state.shortcuts[shortcut] = saved.id;
+    }
+    await saveSetting('shortcuts', state.shortcuts);
+    // ショートカット確定後にパッドとキーボードビューへ割り当てを反映する
+    renderers.renderSoundboard();
+
+    if (sound) {
+        showAlert(`ドラムロール「${saved.name}」の設定を更新しました。`, '通知');
+    }
+}
+
+function normalizeKey(e) {    const modifiers = [];
     if (e.ctrlKey) modifiers.push('Control');
     if (e.altKey) modifiers.push('Alt');
     if (e.shiftKey) modifiers.push('Shift');
@@ -745,6 +810,11 @@ function normalizeKey(e) {
 // を抑制すべきキーか。INPUT/TEXTAREA/モーダル表示中は呼び出し元でガード済み。
 function shouldPreventDefaultKey(normalizedKey) {
     return Boolean(state.shortcuts[normalizedKey]) || SCROLL_PREVENT_KEYS.has(normalizedKey);
+}
+
+function getKeyboardHoldInputId(event, normalizedKey) {
+    const code = event.code && event.code !== 'Unidentified' ? event.code : normalizedKey;
+    return `key:${code}`;
 }
 
 async function handleKeyDown(event) {
@@ -782,8 +852,12 @@ async function handleKeyDown(event) {
         if (!soundButtonElement) return;
         const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
         const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
-        if (triggerMode === 'momentary') {
-            if (!event.repeat) startHoldPlayback(soundId, soundButtonElement, `key:${normalizedKey}`);
+        if (HOLD_TRIGGER_MODES.includes(triggerMode)) {
+            if (!event.repeat) {
+                const inputId = getKeyboardHoldInputId(event, normalizedKey);
+                _keyboardHoldSounds.set(inputId, soundId);
+                startHoldPlayback(soundId, soundButtonElement, inputId);
+            }
         } else if (!event.repeat) {
             if (triggerMode === 'retrigger') startRetriggerPlayback(soundId, soundButtonElement);
             else handleSoundButtonClick(soundId, soundButtonElement);
@@ -802,6 +876,20 @@ function handleKeyUp(event) {
         if (state.isOptHeld) { state.isOptHeld = false; refreshOptAffordance(); }
         return;
     }
+
+    // 修飾キーの解放順に左右されないよう、keydown 時の物理キーIDから対象音源を解決する。
+    const inputId = getKeyboardHoldInputId(event, normalizedKey);
+    const fallbackSoundId = state.shortcuts[normalizedKey];
+    const wasTrackedHold = _keyboardHoldSounds.has(inputId);
+    const heldSoundId = _keyboardHoldSounds.get(inputId) ?? fallbackSoundId;
+    if (heldSoundId) {
+        _keyboardHoldSounds.delete(inputId);
+        const heldSound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === heldSoundId);
+        if (wasTrackedHold || HOLD_TRIGGER_MODES.includes(heldSound?.triggerMode)) {
+            endHoldPlayback(heldSoundId, inputId);
+        }
+    }
+
     if (dom.customModalOverlay.classList.contains('active') ||
         dom.sceneSettingsModal.classList.contains('active') ||
         document.activeElement.tagName === 'INPUT' ||
@@ -812,12 +900,6 @@ function handleKeyUp(event) {
     if (shouldPreventDefaultKey(normalizedKey)) {
         event.preventDefault();
     }
-
-    const soundId = state.shortcuts[normalizedKey];
-
-    const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
-    if (sound?.triggerMode !== 'momentary') return;
-    endHoldPlayback(soundId, `key:${normalizedKey}`);
 }
 
 // --- Sound Button and Board Handlers ---
@@ -827,6 +909,7 @@ function handleKeyUp(event) {
 // button re-renders; entries are consumed (deleted) by the click handler.
 const _toggleHandled = new Set();
 const _holdInputs = new Map();
+const _keyboardHoldSounds = new Map(); // key:${event.code} -> soundId（keyup時の修飾キー変化に耐える）
 const _longPressHandled = new Set();
 
 async function startHoldPlayback(soundId, soundButtonElement, inputId) {
@@ -838,12 +921,34 @@ async function startHoldPlayback(soundId, soundButtonElement, inputId) {
     if (inputs.has(inputId)) return;
     inputs.add(inputId);
 
-    if (!state.activeAudios[soundId]) {
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const mode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'momentary';
+    if (sound?.type === 'roll' || mode === 'roll') {
+        // ドラムロール: 押下で起こり→ループ開始（離上は releaseHoldPlayback → endRollPlayback）
+        await startRollPlayback(soundId, soundButtonElement);
+    } else if (mode === 'muteHold' && state.activeAudios[soundId]?.muted) {
+        // muteHold は押している間に消音を解除する
+        setSoundMuted(soundId, false);
+    } else if (!state.activeAudios[soundId]) {
+        // 未再生なら通常の初期化・再生（paused 状態なら resumeSound へ進む）
         await handleSoundButtonClick(soundId, soundButtonElement);
     }
+
+    // blur/visibilitychange が await 中に発生した場合も、開始直後に解放する。
     if (!_holdInputs.get(soundId)?.size && state.activeAudios[soundId]) {
-        stopSound(soundId, soundButtonElement);
+        releaseHoldPlayback(soundId, soundButtonElement);
     }
+}
+
+function releaseHoldPlayback(soundId, soundButtonElement = null) {
+    if (!state.activeAudios[soundId]) return;
+    // 離した時の動作はモード依存: momentary=停止、pauseHold=一時停止、muteHold=消音、roll=終わり→締め
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const mode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'momentary';
+    if (sound?.type === 'roll' || mode === 'roll') endRollPlayback(soundId);
+    else if (mode === 'pauseHold') pauseSound(soundId, soundButtonElement);
+    else if (mode === 'muteHold') setSoundMuted(soundId, true);
+    else stopSound(soundId, soundButtonElement);
 }
 
 function endHoldPlayback(soundId, inputId, soundButtonElement = null) {
@@ -852,7 +957,15 @@ function endHoldPlayback(soundId, inputId, soundButtonElement = null) {
     inputs.delete(inputId);
     if (inputs.size) return;
     _holdInputs.delete(soundId);
-    if (state.activeAudios[soundId]) stopSound(soundId, soundButtonElement);
+    releaseHoldPlayback(soundId, soundButtonElement);
+}
+
+// keyup/blurを取り逃しても、ホールド系の音源が鳴りっぱなし・消音しっぱなしにならないようにする。
+function releaseAllHoldInputs() {
+    const heldSoundIds = [..._holdInputs.keys()];
+    _holdInputs.clear();
+    _keyboardHoldSounds.clear();
+    heldSoundIds.forEach(soundId => releaseHoldPlayback(soundId));
 }
 
 async function handleSoundButtonClick(soundId, soundButtonElement) {
@@ -867,11 +980,30 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
         return;
     }
 
+    // ドラムロールは押下〜離上で起こり→ループ→終わり→締めを再生する
+    if (soundData?.type === 'roll') {
+        await startRollPlayback(soundId, soundButtonElement);
+        return;
+    }
+
     if (state.activeAudios[soundId]) {
-        const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-        const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
+        const triggerMode = TRIGGER_MODES.includes(soundData?.triggerMode) ? soundData.triggerMode : 'toggle';
         if (triggerMode === 'toggle' && state.isOptHeld) {
             pauseSound(soundId, soundButtonElement);
+        } else if (triggerMode === 'sustain') {
+            // Option+クリックは全ボイス停止の回避手段、通常時は重ね再生
+            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
+            else await startSustainLayer(soundId);
+        } else if (triggerMode === 'pause') {
+            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
+            else pauseSound(soundId, soundButtonElement);
+        } else if (triggerMode === 'mute') {
+            if (state.isOptHeld) stopSound(soundId, soundButtonElement);
+            else setSoundMuted(soundId, !state.activeAudios[soundId].muted);
+        } else if (triggerMode === 'pauseHold') {
+            // 押下時は再生を続け、離した時に一時停止する（startHoldPlayback 経由）
+        } else if (triggerMode === 'muteHold') {
+            if (state.activeAudios[soundId].muted) setSoundMuted(soundId, false);
         } else {
             stopSound(soundId, soundButtonElement);
         }
@@ -914,7 +1046,7 @@ function handleIndividualVolumeChange(soundId, volume) {
     if (!soundData) return;
     soundData.volume = volume;
     const activeAudio = state.activeAudios[soundId];
-    if (activeAudio?.individualGain && !activeAudio.isFadingOut) {
+    if (activeAudio?.individualGain && !activeAudio.isFadingOut && !activeAudio.muted) { // ミュート中は音量だけ更新し、ゲインは解除時に反映
         activeAudio.individualGain.gain.setTargetAtTime(volume, state.audioContext.currentTime, 0.01);
     }
     debouncedSaveCurrentSceneSounds(`volumeChange-${soundId}`);
@@ -923,6 +1055,7 @@ function handleIndividualVolumeChange(soundId, volume) {
 function handleProgressBarClick(event, soundId, soundButtonElement) {
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo) return;
+    if (audioInfo.isRoll) return; // ロールはパート連結再生のためシーク不可
 
     const progressBar = soundButtonElement.querySelector('.progress-bar');
     if (!progressBar) return;
@@ -1116,6 +1249,7 @@ function renderSoundboard() {
             } else if (isSoundPaused(sound.id)) {
                 updateButtonUI(sound.id, buttonElement, false, true);
             }
+            updateSustainLayerBadge(sound.id, getSustainLayerCount(sound.id));
         });
     }
     checkEmptyState(sounds.length);
@@ -1158,14 +1292,17 @@ function createSoundButton(sound) {
     };
 
     const durationText = sound.duration ? `0:00 / ${formatTime(sound.duration)}` : '0:00 / --:--';
+    const isRoll = sound.type === 'roll';
 
-    const triggerIndicatorText = triggerMode === 'momentary' ? 'HOLD' : (triggerMode === 'retrigger' ? 'RETRIG' : '');
+    // パッド右上の動作インジケーター（モードの次動作を示す。sustain はボイス数に置き換わる）
+    const TRIGGER_INDICATOR_TEXTS = { momentary: 'HOLD', retrigger: 'RETRIG', sustain: 'LAYER', pause: 'PAUSE', pauseHold: 'HOLD+PAUSE', mute: 'MUTE', muteHold: 'HOLD+MUTE', roll: 'ROLL' };
+    const triggerIndicatorText = TRIGGER_INDICATOR_TEXTS[triggerMode] ?? '';
 
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
         <span class="trigger-indicator">${triggerIndicatorText}</span>
         <div class="button-content">
-            <i class="fas fa-play sound-icon"></i>
+            <i class="${isRoll ? 'fas fa-drum' : 'fas fa-play'} sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>
             <div class="time-display">${durationText}</div>
         </div>
@@ -1184,14 +1321,15 @@ function createSoundButton(sound) {
     const setTouchFlag = () => { touchFlag = true; setTimeout(() => touchFlag = false, 150); };
 
     const isControlTarget = target => target instanceof Element && target.closest('.loop-button, .volume-control, .progress-bar, .delete-button, .settings-button');
+    // ホールド系モード（momentary/pauseHold/muteHold）は押下〜離上で動作する
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
-        if (triggerMode === 'momentary' && !state.isSortableEnabled && e.button === 0) {
+        if (HOLD_TRIGGER_MODES.includes(triggerMode) && !state.isSortableEnabled && e.button === 0) {
             e.preventDefault();
             const inputId = `pointer:${e.pointerId}`;
             _toggleHandled.add(sound.id);
-            buttonWrapper.setPointerCapture?.(e.pointerId);
+            try { buttonWrapper.setPointerCapture?.(e.pointerId); } catch (_) { /* pointer capture は環境によって失敗しても再生を続ける */ }
             startHoldPlayback(sound.id, buttonWrapper, inputId);
             const release = () => endHoldPlayback(sound.id, inputId, buttonWrapper);
             buttonWrapper.addEventListener('pointerup', release, { once: true });
@@ -1209,7 +1347,7 @@ function createSoundButton(sound) {
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
-        if ((triggerMode === 'momentary' && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
+        if ((HOLD_TRIGGER_MODES.includes(triggerMode) && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
             return;
@@ -1227,13 +1365,18 @@ function createSoundButton(sound) {
         if (_toggleHandled.delete(sound.id)) return;
         if (!touchFlag && !isDraggingViaTouch) {
             if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
-            else if (triggerMode !== 'momentary') handleSoundButtonClick(sound.id, buttonWrapper);
+            else if (!HOLD_TRIGGER_MODES.includes(triggerMode)) handleSoundButtonClick(sound.id, buttonWrapper);
         }
     });
 
     const loopButton = buttonWrapper.querySelector('.loop-button');
-    loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
-    loopButton.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) toggleLoop(sound.id, loopButton, buttonWrapper); });
+    if (isRoll) {
+        // ロールはパート構成でループが決まるため、通常のループ切替ボタンは使わない
+        loopButton.style.display = 'none';
+    } else {
+        loopButton.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); toggleLoop(sound.id, loopButton, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
+        loopButton.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) toggleLoop(sound.id, loopButton, buttonWrapper); });
+    }
 
     const volumeSlider = buttonWrapper.querySelector('input[type="range"]');
     volumeSlider.addEventListener('input', e => { e.stopPropagation(); handleIndividualVolumeChange(sound.id, parseFloat(e.target.value)); e.target.title = `音量: ${Math.round(parseFloat(e.target.value) * 100)}%`; });
@@ -1241,6 +1384,10 @@ function createSoundButton(sound) {
     volumeSlider.addEventListener('touchstart', e => { e.stopPropagation(); clearTimeout(longPressTimeoutId); }, { passive: true });
 
     const progressBar = buttonWrapper.querySelector('.progress-bar');
+    if (isRoll) {
+        // ロールはパート単位の短いサイクルでプログレスバーが忙しく動くため表示しない（シークも不可）
+        progressBar.style.display = 'none';
+    }
     progressBar.addEventListener('touchend', e => { if (!isDraggingViaTouch) { e.preventDefault(); e.stopPropagation(); handleProgressBarClick(e.changedTouches[0], sound.id, buttonWrapper); setTouchFlag(); } clearTimeout(longPressTimeoutId); }, { passive: false });
     progressBar.addEventListener('click', e => { e.stopPropagation(); if (!touchFlag && !isDraggingViaTouch) handleProgressBarClick(e, sound.id, buttonWrapper); });
 
