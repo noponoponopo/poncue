@@ -69,6 +69,28 @@ export function normalizeSoundTriggerMode(sound) {
     return sound;
 }
 
+function normalizeSceneShortcuts(shortcuts, sounds = []) {
+    if (!shortcuts || typeof shortcuts !== 'object' || Array.isArray(shortcuts)) return {};
+    const soundIds = new Set(sounds.map(sound => sound.id));
+    return Object.fromEntries(
+        Object.entries(shortcuts).filter(([shortcut, soundId]) =>
+            typeof shortcut === 'string' && shortcut && typeof soundId === 'string' && soundIds.has(soundId)
+        )
+    );
+}
+
+async function migrateSceneShortcuts() {
+    const legacyShortcuts = state.shortcuts;
+    for (const scene of Object.values(state.scenes)) {
+        const hasSceneShortcuts = Object.prototype.hasOwnProperty.call(scene, 'shortcuts');
+        const source = hasSceneShortcuts ? scene.shortcuts : legacyShortcuts;
+        const shortcuts = normalizeSceneShortcuts(source, scene.sounds);
+        if (hasSceneShortcuts && JSON.stringify(source) === JSON.stringify(shortcuts)) continue;
+        scene.shortcuts = shortcuts;
+        await saveCurrentSceneSounds('migration-scene-shortcuts', scene.id);
+    }
+}
+
 // --- V1からV2へのデータ移行処理 ---
 async function checkForAndMigrateV1Data() {
     const migrationDone = localStorage.getItem('pon_v1_migration_complete');
@@ -157,6 +179,7 @@ export async function initializeApp() {
     await checkForAndMigrateV1Data();
 
     await Promise.all([loadSettings(), loadScenesFromDB()]);
+    await migrateSceneShortcuts();
 
     // --- Roll schema migration: 単一ループ形式を複数ループ配列へ寄せる ---
     for (const sceneId in state.scenes) {
@@ -337,7 +360,7 @@ export async function initializeApp() {
             sceneIdToSelect = sceneIds[0];
         } else {
             const defaultSceneId = generateUniqueId('scn');
-            const defaultScene = { id: defaultSceneId, name: "Default Scene", sounds: [] };
+            const defaultScene = { id: defaultSceneId, name: "Default Scene", sounds: [], shortcuts: {} };
             await dbRequest(SCENES_STORE_NAME, 'readwrite', 'put', defaultScene);
             state.scenes[defaultSceneId] = defaultScene;
             sceneIdToSelect = defaultSceneId;
@@ -566,6 +589,7 @@ export async function selectScene(sceneId) {
             }));
         }
     }
+    updateState({ shortcuts: state.scenes[sceneId]?.shortcuts ?? {} });
 
     const sceneColor = state.scenes[sceneId]?.color;
     const iconStyle = sceneColor ? ` style="color: ${sceneColor};"` : '';
@@ -869,14 +893,10 @@ export async function removeSound(soundId) {    if (state.decodedAudioBuffers[so
 
     const [removedSound] = scene.sounds.splice(soundIndex, 1);
 
-    // 削除したサウンドに割り当てられていたキーを解放し、設定にも反映する。
-    let shortcutsChanged = false;
+    // 削除したサウンドに割り当てられていた、このシーン内のキーを解放する。
     for (const [shortcut, assignedSoundId] of Object.entries(state.shortcuts)) {
-        if (assignedSoundId !== soundId) continue;
-        delete state.shortcuts[shortcut];
-        shortcutsChanged = true;
+        if (assignedSoundId === soundId) delete state.shortcuts[shortcut];
     }
-    if (shortcutsChanged) await saveSetting('shortcuts', state.shortcuts);
     
     await saveCurrentSceneSounds(`removeSound-${soundId}`);
     renderers.renderSoundboard();
@@ -1100,6 +1120,7 @@ async function handleZipImport(file) {
             normalizeRollSound(sound);
         }
 
+        importedScene.shortcuts = normalizeSceneShortcuts(importedScene.shortcuts, importedScene.sounds);
         state.scenes[importedScene.id] = importedScene;
         await dbRequest(SCENES_STORE_NAME, 'readwrite', 'put', importedScene);
 
@@ -1161,6 +1182,7 @@ async function handleLegacyJsonImport(file) {
                 }
             }
             
+            importedScene.shortcuts = normalizeSceneShortcuts(importedScene.shortcuts, importedScene.sounds);
             state.scenes[importedScene.id] = importedScene;
             await dbRequest(SCENES_STORE_NAME, 'readwrite', 'put', importedScene);
             importedCount++;

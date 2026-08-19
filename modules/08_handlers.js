@@ -559,7 +559,7 @@ async function handleModalAddScene() {
     const sceneName = await showPrompt(`新しいシーンの名前:`, `新しいシーン`, `Scene ${Object.keys(state.scenes).length + 1}`);
     if (sceneName?.trim()) {
         const newSceneId = generateUniqueId('scn');
-        const newSceneData = { id: newSceneId, name: sceneName.trim(), color: null, sounds: [] };
+        const newSceneData = { id: newSceneId, name: sceneName.trim(), color: null, sounds: [], shortcuts: {} };
         state.scenes[newSceneId] = newSceneData;
         await dbRequest('scenes', 'readwrite', 'put', newSceneData);
         populateSceneModalList();
@@ -705,7 +705,6 @@ async function handleSoundSettings(soundId) {
             }
             state.shortcuts[newShortcut] = soundId;
         }
-        await saveSetting('shortcuts', state.shortcuts);
 
         if (TRIGGER_MODES.includes(newTriggerMode)) {
             sound.triggerMode = newTriggerMode;
@@ -797,7 +796,7 @@ async function handleRollSettings(soundId) {
     if (shortcut) {
         state.shortcuts[shortcut] = saved.id;
     }
-    await saveSetting('shortcuts', state.shortcuts);
+    await saveCurrentSceneSounds(`rollShortcut-${saved.id}`);
     // ショートカット確定後にパッドとキーボードビューへ割り当てを反映する
     renderers.renderSoundboard();
 

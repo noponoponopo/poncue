@@ -83,7 +83,7 @@ export const state = {
     // Custom Modal Promise
     confirmResolve: null,
 
-    // Shortcuts
+    // Shortcuts for the current scene
     shortcuts: {},
 };
 
