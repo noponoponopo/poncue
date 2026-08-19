@@ -613,6 +613,15 @@ export async function removeSound(soundId) {
     if (soundIndex === -1) return;
 
     const [removedSound] = scene.sounds.splice(soundIndex, 1);
+
+    // 削除したサウンドに割り当てられていたキーを解放し、設定にも反映する。
+    let shortcutsChanged = false;
+    for (const [shortcut, assignedSoundId] of Object.entries(state.shortcuts)) {
+        if (assignedSoundId !== soundId) continue;
+        delete state.shortcuts[shortcut];
+        shortcutsChanged = true;
+    }
+    if (shortcutsChanged) await saveSetting('shortcuts', state.shortcuts);
     
     await saveCurrentSceneSounds(`removeSound-${soundId}`);
     renderers.renderSoundboard();
