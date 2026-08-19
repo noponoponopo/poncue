@@ -852,7 +852,8 @@ async function handleKeyDown(event) {
         if (!soundButtonElement) return;
         const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
         const triggerMode = TRIGGER_MODES.includes(sound?.triggerMode) ? sound.triggerMode : 'toggle';
-        if (HOLD_TRIGGER_MODES.includes(triggerMode)) {
+        const isHoldTrigger = sound?.type === 'roll' || HOLD_TRIGGER_MODES.includes(triggerMode);
+        if (isHoldTrigger) {
             if (!event.repeat) {
                 const inputId = getKeyboardHoldInputId(event, normalizedKey);
                 _keyboardHoldSounds.set(inputId, soundId);
@@ -885,7 +886,7 @@ function handleKeyUp(event) {
     if (heldSoundId) {
         _keyboardHoldSounds.delete(inputId);
         const heldSound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === heldSoundId);
-        if (wasTrackedHold || HOLD_TRIGGER_MODES.includes(heldSound?.triggerMode)) {
+        if (wasTrackedHold || heldSound?.type === 'roll' || HOLD_TRIGGER_MODES.includes(heldSound?.triggerMode)) {
             endHoldPlayback(heldSoundId, inputId);
         }
     }
@@ -1267,6 +1268,7 @@ function createSoundButton(sound) {
     buttonWrapper.title = sound.name;
     if (sound.loop) buttonWrapper.classList.add('loop-on');
     const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
+    const isHoldTrigger = sound.type === 'roll' || HOLD_TRIGGER_MODES.includes(triggerMode);
     if (triggerMode !== 'toggle') {
         buttonWrapper.classList.add(`trigger-${triggerMode}`);
     }
@@ -1325,7 +1327,7 @@ function createSoundButton(sound) {
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
-        if (HOLD_TRIGGER_MODES.includes(triggerMode) && !state.isSortableEnabled && e.button === 0) {
+        if (isHoldTrigger && !state.isSortableEnabled && e.button === 0) {
             e.preventDefault();
             const inputId = `pointer:${e.pointerId}`;
             _toggleHandled.add(sound.id);
@@ -1347,7 +1349,7 @@ function createSoundButton(sound) {
     });
     buttonWrapper.addEventListener('touchend', e => {
         if (isControlTarget(e.target)) return;
-        if ((HOLD_TRIGGER_MODES.includes(triggerMode) && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
+        if ((isHoldTrigger && !state.isSortableEnabled) || _longPressHandled.delete(sound.id)) {
             e.preventDefault();
             _toggleHandled.add(sound.id);
             return;
@@ -1365,7 +1367,7 @@ function createSoundButton(sound) {
         if (_toggleHandled.delete(sound.id)) return;
         if (!touchFlag && !isDraggingViaTouch) {
             if (triggerMode === 'retrigger') startRetriggerPlayback(sound.id, buttonWrapper);
-            else if (!HOLD_TRIGGER_MODES.includes(triggerMode)) handleSoundButtonClick(sound.id, buttonWrapper);
+            else if (!isHoldTrigger) handleSoundButtonClick(sound.id, buttonWrapper);
         }
     });
 
