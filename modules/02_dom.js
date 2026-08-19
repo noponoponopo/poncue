@@ -16,6 +16,7 @@ export function initDom() {
         rollFileInput: 'roll-file-input',
         pauseAllBtn: 'pause-all-btn',
         stopAllBtn: 'stop-all-btn',
+        recordBtn: 'record-btn',
         showModeBtn: 'show-mode-btn',
         keyboardViewBtn: 'keyboard-view-btn',
         keyboardView: 'keyboard-view',

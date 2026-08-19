@@ -374,6 +374,41 @@
       transform: scale(0.98);
     }
 
+    button#record-btn {
+      background: transparent;
+      color: var(--danger-color);
+      border: 1px solid var(--danger-color);
+      padding: 7px 14px;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 76px;
+      justify-content: center;
+    }
+
+    button#record-btn:hover:not(:disabled),
+    button#record-btn.is-recording {
+      color: white;
+      background-color: var(--danger-color);
+    }
+
+    button#record-btn.is-recording i {
+      animation: recording-pulse 1.25s ease-in-out infinite;
+    }
+
+    button#record-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    @keyframes recording-pulse {
+      50% { opacity: 0.35; }
+    }
+
     .switch {
       position: relative;
       display: inline-block;
@@ -2469,6 +2504,11 @@
       #add-roll-btn {
         padding: 10px;
         min-width: 38px;
+      }
+
+      button#record-btn {
+        min-width: 68px;
+        padding: 9px 8px;
       }
 
       button#add-sound-btn span,

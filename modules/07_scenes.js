@@ -11,6 +11,11 @@ import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_S
 export const renderers = {
     renderSoundboard: () => {},
 };
+const sceneDeletionGenerations = new Map();
+
+export function markSceneDeleted(sceneId) {
+    sceneDeletionGenerations.set(sceneId, (sceneDeletionGenerations.get(sceneId) || 0) + 1);
+}
 
 // --- ヘルパー関数 ---
 function blobToDataURL(blob) {
@@ -877,6 +882,93 @@ export async function saveRollSound(soundId, settings) {
     scene.sounds.push(newSound);
     await saveCurrentSceneSounds("saveRollSound");
     renderers.renderSoundboard();
+    return newSound;
+}
+
+export async function addAudioBlobToScene(blob, name, sceneId = state.currentSceneId) {
+    const scene = state.scenes[sceneId];
+    if (!scene) throw new Error('録音を保存するシーンが見つかりません。');
+    const deletionGeneration = sceneDeletionGenerations.get(sceneId) || 0;
+    const assertSceneAvailable = () => {
+        if (!state.scenes[sceneId] || (sceneDeletionGenerations.get(sceneId) || 0) !== deletionGeneration) {
+            throw new Error('録音を保存するシーンが削除されました。');
+        }
+    };
+    if (!(blob instanceof Blob) || blob.size === 0) throw new Error('録音データが空です。');
+    if (blob.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+        throw new Error(`録音データが${MAX_FILE_SIZE_MB}MBを超えています。`);
+    }
+
+    let audioBuffer;
+    try {
+        audioBuffer = await state.audioContext.decodeAudioData(await blob.arrayBuffer());
+    } catch (error) {
+        throw new Error('録音データを音声として読み込めませんでした。');
+    }
+    assertSceneAvailable();
+
+    const audioId = generateUniqueId('aud');
+    const newSound = {
+        id: generateUniqueId('snd'),
+        name,
+        loop: false,
+        volume: 1.0,
+        pan: 0,
+        audioId,
+        triggerMode: DEFAULT_TRIGGER_MODE,
+        fadeInDuration: 0.0,
+        fadeOutDuration: 0.0,
+        fadeInEasing: DEFAULT_FADE_EASING,
+        fadeOutEasing: DEFAULT_FADE_EASING,
+        reverse: false,
+        playbackRate: 1.0,
+        preservePitch: false,
+        effects: { enabled: false },
+        duration: audioBuffer.duration
+    };
+
+    let audioStored = false;
+    let soundAdded = false;
+    let targetScene = null;
+    const removeAddedSound = sceneToRollback => {
+        if (!sceneToRollback) return;
+        const soundIndex = sceneToRollback.sounds.findIndex(sound => sound.id === newSound.id);
+        if (soundIndex !== -1) sceneToRollback.sounds.splice(soundIndex, 1);
+    };
+    try {
+        assertSceneAvailable();
+        await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'put', { id: audioId, blob });
+        audioStored = true;
+        assertSceneAvailable();
+        targetScene = state.scenes[sceneId];
+        targetScene.sounds.push(newSound);
+        soundAdded = true;
+        assertSceneAvailable();
+        await saveCurrentSceneSounds('addAudioBlobToScene', sceneId);
+        assertSceneAvailable();
+    } catch (error) {
+        if (soundAdded) {
+            removeAddedSound(targetScene);
+            const currentScene = state.scenes[sceneId];
+            if (currentScene !== targetScene) removeAddedSound(currentScene);
+            if (currentScene) {
+                await saveCurrentSceneSounds('addAudioBlobToScene-rollback', sceneId);
+            } else {
+                await dbRequest(SCENES_STORE_NAME, 'readwrite', 'delete', sceneId);
+            }
+        }
+        if (audioStored) {
+            await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', audioId).catch(() => {});
+        }
+        throw error;
+    }
+
+    if (sceneId === state.currentSceneId) {
+        if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+            state.decodedAudioBuffers[newSound.id] = audioBuffer;
+        }
+        renderers.renderSoundboard();
+    }
     return newSound;
 }
 

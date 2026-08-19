@@ -6,14 +6,15 @@ import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, analyzeAndApplySilenceTrim, clearSilenceTrim, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
 import {
-    selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect,
-    removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId,
+    selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect, addAudioBlobToScene,
+    removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId, markSceneDeleted,
     renderers, // renderers object
     exportSceneAsZip, // New export function
     updatePadSizeCSS, saveAudioOutputSettings, saveRollSound // Import updatePadSizeCSS
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, HOLD_TRIGGER_MODES, SCROLL_PREVENT_KEYS, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
 import { renderKeyboardView, setKeyboardKeyPressed, getLayoutOptions, clearAllKeyboardKeyPressed } from './11_keyboard_view.js';
+import { downloadRecording, getMasterRecordingStatus, isMasterRecordingSupported, startMasterRecording, stopMasterRecording } from './11_recording.js';
 
 // --- Debounce Utility ---
 function debounce(func, delay) {
@@ -28,6 +29,9 @@ function debounce(func, delay) {
 // Debounced version of saveCurrentSceneSounds
 const debouncedSaveCurrentSceneSounds = debounce(saveCurrentSceneSounds, 300);
 let resizeFrameId = null;
+let recordingTimerId = null;
+let recordingSceneId = null;
+let recordingFinalization = null;
 
 // --- Event Listener Setup ---
 export function setupEventListeners() {
@@ -92,6 +96,11 @@ export function setupEventListeners() {
     dom.keyboardView?.addEventListener('pointerup', handleVirtualKeyUp);
     dom.keyboardView?.addEventListener('pointercancel', handleVirtualKeyUp);
     dom.fileInput?.addEventListener('change', handleAudioFileSelect);
+    dom.recordBtn?.addEventListener('click', handleRecordingToggle);
+    if (dom.recordBtn && !isMasterRecordingSupported()) {
+        dom.recordBtn.disabled = true;
+        dom.recordBtn.title = 'このブラウザはマスター出力の録音に対応していません';
+    }
     updateKeyboardViewVisibility();
 
     // Scene Settings Modal
@@ -234,6 +243,104 @@ function triggerShortcutUp(shortcut, inputId) {
     const sound = state.scenes[state.currentSceneId]?.sounds.find(item => item.id === soundId);
     if (HOLD_TRIGGER_MODES.includes(sound?.triggerMode)) endHoldPlayback(soundId, inputId);
 }
+
+function formatRecordingTime(milliseconds) {
+    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(totalSeconds % 3600 / 60);
+    const seconds = totalSeconds % 60;
+    return hours > 0
+        ? [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':')
+        : [minutes, seconds].map(value => String(value).padStart(2, '0')).join(':');
+}
+
+function updateRecordingButton() {
+    if (!dom.recordBtn) return;
+    const status = getMasterRecordingStatus();
+    dom.recordBtn.classList.toggle('is-recording', status.isRecording);
+    dom.recordBtn.setAttribute('aria-pressed', String(status.isRecording));
+    dom.recordBtn.setAttribute('aria-label', status.isRecording ? 'マスター出力の録音を停止' : 'マスター出力の録音を開始');
+    const label = dom.recordBtn.querySelector('.record-label');
+    if (label) label.textContent = status.isRecording ? formatRecordingTime(Date.now() - status.startedAt) : '録音';
+}
+
+async function finalizeRecording(completion, sceneId) {
+    let completedBlob = null;
+    let completedName = null;
+    let recordingError = null;
+    let uiFinalized = false;
+    const beginFinalization = () => {
+        if (uiFinalized) return;
+        uiFinalized = true;
+        clearInterval(recordingTimerId);
+        recordingTimerId = null;
+        if (dom.recordBtn) dom.recordBtn.disabled = true;
+        updateRecordingButton();
+    };
+
+    try {
+        const result = await completion;
+        completedBlob = result.blob.size > 0 ? result.blob : null;
+        recordingError = result.error;
+        beginFinalization();
+        const timestamp = new Date().toLocaleString('ja-JP', { hour12: false }).replace(/[/:]/g, '-').replace(/\s/g, '_');
+        completedName = `録音_${timestamp}`;
+        if (recordingError) throw recordingError;
+        await addAudioBlobToScene(completedBlob, completedName, sceneId);
+        if (await showConfirm(`「${completedName}」をシーンに保存しました。音声ファイルもダウンロードしますか？`, '録音完了')) {
+            downloadRecording(completedBlob, completedName);
+        }
+    } catch (error) {
+        beginFinalization();
+        if (completedBlob) {
+            downloadRecording(completedBlob, completedName || '録音');
+            const message = recordingError
+                ? `録音中にエラーが発生したため、取得できた録音データをダウンロードしました。\n${error.message || ''}`
+                : `シーンへの保存に失敗したため、録音ファイルをダウンロードしました。\n${error.message || ''}`;
+            await showAlert(message.trim(), '録音エラー');
+        } else {
+            await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
+        }
+    } finally {
+        if (recordingSceneId === sceneId) recordingSceneId = null;
+        if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
+    }
+}
+
+async function handleRecordingToggle() {
+    if (dom.recordBtn?.disabled) return;
+    dom.recordBtn.disabled = true;
+    try {
+        if (!getMasterRecordingStatus().isRecording) {
+            const sceneId = state.currentSceneId;
+            if (!sceneId) throw new Error('録音を保存するシーンが選択されていません。');
+            await resumeAudioContext();
+            const completion = startMasterRecording();
+            recordingSceneId = sceneId;
+            updateRecordingButton();
+            recordingTimerId = window.setInterval(updateRecordingButton, 250);
+            recordingFinalization = finalizeRecording(completion, sceneId);
+            if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
+            return;
+        }
+
+        stopMasterRecording();
+        if (recordingFinalization) await recordingFinalization;
+    } catch (error) {
+        clearInterval(recordingTimerId);
+        recordingTimerId = null;
+        recordingSceneId = null;
+        updateRecordingButton();
+        await showAlert(error.message || '録音処理に失敗しました。', '録音エラー');
+        if (dom.recordBtn && isMasterRecordingSupported()) dom.recordBtn.disabled = false;
+    }
+}
+
+window.addEventListener('beforeunload', event => {
+    if (!getMasterRecordingStatus().isRecording) return;
+    event.preventDefault();
+    event.returnValue = '';
+});
 
 
 // --- Show Mode (Fullscreen) ---
@@ -591,7 +698,13 @@ async function handleModalDeleteScene(sceneId) {
     const confirmed = await showConfirm(`シーン「${sceneName}」を削除しますか？この操作は取り消せません。`, 'シーンの削除');
     if (confirmed) {
         const sceneToDelete = state.scenes[sceneId];
-        for (const sound of sceneToDelete.sounds) {
+        if (!sceneToDelete) return;
+        const soundsToDelete = [...sceneToDelete.sounds];
+        markSceneDeleted(sceneId);
+        delete state.scenes[sceneId];
+        await dbRequest('scenes', 'readwrite', 'delete', sceneId);
+
+        for (const sound of soundsToDelete) {
             if (sound.audioId) {
                 try {
                     await dbRequest('audio_files', 'readwrite', 'delete', sound.audioId);
@@ -600,9 +713,6 @@ async function handleModalDeleteScene(sceneId) {
                 }
             }
         }
-
-        delete state.scenes[sceneId];
-        await dbRequest('scenes', 'readwrite', 'delete', sceneId);
         
         populateSceneModalList();
         

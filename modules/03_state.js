@@ -14,6 +14,7 @@ export const state = {
     masterGainNode: null,
     outputLimiterNode: null,
     outputSafetyLimiterNode: null,
+    recordingDestinationNode: null,
     masterAnalyserL: null,
     masterAnalyserR: null,
     masterMeterDataL: null,

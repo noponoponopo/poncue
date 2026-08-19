@@ -18,6 +18,7 @@ const urlsToCache = [
   './modules/09_effects.js',
   './modules/10_tone_transport.js',
   './modules/11_keyboard_view.js',
+  './modules/11_recording.js',
   // External resources
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap'
