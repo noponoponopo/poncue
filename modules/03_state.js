@@ -7,6 +7,7 @@ export const state = {
     // Scene and Sound Data
     scenes: {},
     currentSceneId: null,
+    sceneGeneration: 0, // invalidates pending audio loads when the selected scene changes
     
     // Audio related state
     audioContext: null,
@@ -15,25 +16,16 @@ export const state = {
     outputLimiterNode: null,
     outputSafetyLimiterNode: null,
     recordingDestinationNode: null,
-    masterAnalyserL: null,
-    masterAnalyserR: null,
-    masterMeterDataL: null,
-    masterMeterDataR: null,
+    masterChain: null, // AudioWorklet マスターChain (09_effects.createMasterChain)
     masterMeterFrameId: null,
     masterPeakL: 0,
     masterPeakR: 0,
-    masterEqNode: null,
     masterEq: { low: 0, mid: 0, high: 0 },
-    masterCompNode: null,
     masterComp: { threshold: 0, ratio: 1 },
-    masterDelayNode: null,
-    masterDelayReturn: null,
     masterDelay: { time: 0.18, feedback: 0, level: 0 },
     masterPanNode: null,
     masterPan: { value: 0 },
-    masterDistortionNode: null,
     masterDistortion: { amount: 0 },
-    masterReverbNode: null,
     masterReverb: { decay: 2.0, wet: 0 },
     masterLimiter: { threshold: -1 },
     activeAudios: {}, // { audioElement, sourceNode, ... }
@@ -97,6 +89,13 @@ export function setAudioContext(context, gainNode, limiterNode = null, inputNode
     state.masterInputNode = inputNode;
     state.masterGainNode = gainNode;
     state.outputLimiterNode = limiterNode;
+    if (!context) {
+        state.outputLimiterNode = null;
+        state.outputSafetyLimiterNode = null;
+        state.masterChain = null;
+        state.masterPanNode = null;
+        state.recordingDestinationNode = null;
+    }
 }
 
 export function setDb(dbInstance) {

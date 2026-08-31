@@ -1,69 +1,98 @@
 # Audio Architecture
 
-このアプリは、音声の安定供給と操作への応答性を最優先にする。
+このアプリは、音声の安定供給と操作への応答性を優先する。音質に関わる選択は、測定値を提示した上で決める。
 
 ## Current Audio Path
 
-高パフォーマンスモードでは、音声は事前に `AudioBuffer` へ decode される。
-パッド操作時は `AudioBufferSourceNode.start()` までの処理を短く保つ。
+### HIGH_PERFORMANCE
+
+音声は事前に `AudioBuffer` へ decode される。通常のパッドはネイティブの
+`AudioBufferSourceNode` で再生し、速度とピッチを同時に変える。速度変更時に
+`preservePitch` が有効な音源だけ `Tone.GrainPlayer` をフォールバックに使う。
 
 ```text
-AudioBufferSourceNode
+AudioBufferSourceNode / GrainPlayer
+  -> StereoPannerNode
   -> individualGain
-  -> EffectRack
+  -> pon-voice-front (AudioWorklet: EQ3 -> Compressor -> Distortion)
+  -> pon-voice-back  (AudioWorklet: Reverb mix -> Delay -> Limiter -> Meter)
+  -> masterInput
+  -> pon-master-front (AudioWorklet: Distortion -> EQ3 -> Compressor)
+  -> pon-master-back  (AudioWorklet: Reverb mix -> Delay)
   -> masterGain
-  -> outputLimiter
-  -> destination
+  -> pon-master-meter (AudioWorklet: meter tap)
+  -> StereoPannerNode
+  -> pon-master-limit (AudioWorklet: Limiter -> Safety Limiter)
+  -> destination / MediaStreamDestination
 ```
 
-`EffectRack` は `modules/09_effects.js` にある。Tone.js ベースで、Filter / FeedbackDelay / Compressor を持つ。
+リバーブの `ConvolverNode` は、現在の Tone.js と同じ畳み込み音を維持するため
+Worklet の前後に残す。Worklet へは wet return を入力する。録音、出力先選択、
+AudioContext のライフサイクル、デコードはブラウザのネイティブ機能として残る。
+ドライと wet return のミックスは等パワー (constant-power) クロスフェード
+(`dry·cos(rw·π/2) + wet·sin(rw·π/2)`)。無相関なドライと残響の体感音量を
+ミックス位置によらず一定に保つ業界標準方式で、旧 Tone.Reverb の線形クロスフェード
+(中央で -3dB 落ちる) から意図的に変更した。
 
-### Uniform Latency
 
-全音は必ず同じ Tone ノード群を通る。エフェクト OFF でも dry だけが近道せず、
-`UNIFORM_COMPENSATION_SECONDS` の固定遅延を経由する。
-これにより、エフェクト処理による遅延が発生しても全音が同じだけ遅れ、位相が揃う。
+### LOW_MEMORY
 
-## Continuity Rules
+`<audio>` -> `MediaElementSourceNode` -> 同じ `pon-voice` rack を通る。再生データは要素に任せる。
+波形表示が必要な初回だけ一時的に decode し、AudioBuffer は保持せずピーク配列だけをキャッシュする。reverse は反転
+`AudioBuffer` が必要なので BufferSource 経路を使う。
 
-音の不自然な段差を避けるため、次の操作はすべて短いランプを通す。
+ロールのパート連結は、従来どおり複数の `AudioBufferSourceNode` をオーディオ
+クロックで先行スケジュールする。sustain レイヤーもそれぞれ独立した voice rack
+を持つ。
 
-- 再生開始
-- 停止
-- シーク
-- 音量変更
-- エフェクトの ON/OFF
-- エフェクト値の変更
+## Latency and Continuity
 
-設定値は `AudioParam.setTargetAtTime()` または指数ランプで変化させる。
-ノードの再接続で音色を切り替えない。
+旧実装の `UNIFORM_COMPENSATION_SECONDS`(6ms) は廃止した。Worklet 内の
+Compressor/Limiter は先読みを持たず、固定の補償遅延を追加しない。これにより
+ネイティブ `DynamicsCompressorNode` の固定先読みと補償遅延を削減する。
 
-## Interaction Modes
+これは「全段の位相が同じ」という意味ではない。EQ の IIR フィルターには周波数
+依存の位相変化があり、Reverb の pre-delay と Delay のエコー時間は効果そのもの
+として残る。保証する対象は、エフェクト設定によって変動する**固定の追加遅延が
+ないこと**である。
 
-操作モードはシーン設定から切り替える。
+先頭サンプル位置の一致（設定によらない固定遅延の不在）は、エフェクト設定ごとの
+インパルス応答で確認済み。`baseLatency` / `outputLatency` は再生デバイスごとに
+異なり、全てのデバイスで10ms以下をソフトウェアだけで保証することはできない。
+50ms判定は実機の `baseLatency + outputLatency` との合算で行う。
 
-- クリック: ドラッグ並び替えを無効化し、`pointerdown` で最速再生する。
-- ドラッグ: 並び替えを有効化し、誤発火を避けるため通常クリック再生に戻す。
+フェード、音量、パン、エフェクト値は AudioParam または Worklet 内の10ms相当の
+スムージングを使う。ネイティブ BufferSource の trim 終端はオーディオクロックで
+停止を予約し、メインスレッドのタイマー遅延を受けない。
 
-## Tone.js / WASM Policy
+## AudioWorklet DSP
 
-Tone.js は EffectRack と Transport に使用している。
-即時再生の発火自体は Web Audio API の `AudioBufferSourceNode.start()` 直叩きで最短を保ち、
-Tone.js はその後段のエフェクト・時間管理層として機能する。
+`modules/worklets/pon-dsp.js` に全プロセッサを登録する。EQ3 は Tone の
+`MultibandSplit` 構成、Distortion は Tone の4096点カーブ、Delay はフィードバック
+付き補間ディレイを実装する。左右チャンネルのフィルター状態は独立している。
+メーターは Worklet 内で256サンプル RMSを計算し、UIへ定期的に送る。
 
-Transport、タイムコード、複数PC同期は `modules/10_tone_transport.js` 経由で Tone.Transport を使う。
+コンプレッサーとリミッターは Web Audio の gain computer を基準にしたゼロ先読み
+実装である。ネイティブ `DynamicsCompressorNode` の make-up gain は現状適用して
+いない。これは音量・質感に関わるため、固定する前に実機で差分を確認して決める。
 
-WASM は標準ノードで表現できない独自 DSP、LTC 解析、高品質ピッチシフト、タイムストレッチが必要になった時に AudioWorklet と組み合わせて導入する。
+## Quality Decisions Pending
 
-## Future Extension Points
+次の項目は実装上の既定値を置いているが、音質の判断は行わない。
 
-将来の同期・冗長化は、音声エンジンに直接混ぜず、別モジュールとして追加する。
+- Compressor/Limiter: ゼロ先読みのままにするか、先読みを何ms許容するか
+- Compressor: ネイティブの parameter-dependent make-up gain を再現するか
+- Voice `wet`: 現行仕様どおり、serial effect では wet/dry 合計を1にするか、wetを
+  実際のブレンド量として修正するか
+- preservePitch: GrainPlayer、`<audio>.preservesPitch`、Worklet のストレッチのどれを
+  標準とするか
+- Reverb: ネイティブ ConvolverNode を維持するか、Worklet 内の畳み込みへ移すか
+
+## Modules
 
 ```text
-modules/06_audio.js           immediate playback, latency meter
-modules/09_effects.js         Tone.js effect rack (uniform latency)
+modules/06_audio.js           playback, lifecycle, latency samples, UI integration
+modules/09_effects.js         Worklet rack, native Convolver wiring, master controls
+modules/worklets/pon-dsp.js   AudioWorklet DSP processors
 modules/10_tone_transport.js  Tone Transport, clock snapshot, cue scheduling
-sync/clock-sync.js            peer clock offset and drift (future)
-sync/cue-protocol.js          scene/sound cue messages (future)
-sync/redundancy.js            primary/secondary behavior (future)
 ```

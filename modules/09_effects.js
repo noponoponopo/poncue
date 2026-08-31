@@ -1,27 +1,52 @@
 // modules/09_effects.js
 //
-// Tone.js based effect rack with serial chain.
+// AudioWorklet-based effect rack with serial chain.
 //
-// Serial chain contract:
-//   input → compensation → EQ3 → Compressor → Distortion → Reverb → [dry + delay mix] → limiter/bypass → output
+// Serial chain contract (identical to the previous Tone.js rack):
+//   input → EQ3 → Compressor → Distortion → Reverb → [dry + delay mix] → limiter/bypass → output
+//
+// Physical graph per rack (no added fixed group delay — the previous native
+// DynamicsCompressorNode lookahead and 6ms uniform compensation
+// delay are gone; IIR phase and intentional effect delays remain):
+//
+//   entry ──► pon-voice-front ──┬────────────────────────► pon-voice-back(in0)
+//              (EQ3→Comp→Dist)  └─► [ConvolverNode] ────► pon-voice-back(in1)
+//                                    (only while reverb wet > 0)
+//   pon-voice-back ──► exit
+//
+// The ConvolverNode is the same native node type the previous rack used, so
+// the reverb tail (including browser-side IR normalization) is unchanged.
+// Its impulse response is generated with the exact Tone.js Reverb.generate()
+// algorithm (white noise, exponential approach to 0 over `decay`, `preDelay`
+// silence prefix), but only when reverb is first enabled or decay/preDelay
+// changes — previously every playSound re-rendered the IR 3 times.
 //
 // Every effect feeds the next. Disabling an effect makes it transparent
-// (flat EQ, unity compressor, wet=0 for distortion/reverb) rather
-// than removing it from the chain. The delay taps from the reverb output,
-// so echoes are always shaped by EQ, compressor, distortion and reverb.
-//
-// Uniform latency: every signal passes through the compensation delay,
-// so dry and wet stay time-aligned regardless of effect settings.
-//
-// Latency note: PitchShift is intentionally excluded — real-time pitch
-// shifting requires a processing window (typically 50ms+) that violates
-// the sub-20ms latency budget. Distortion (WaveShaper) and Reverb
-// (ConvolverNode) are sample-accurate and add no inherent delay.
+// (flat EQ, unity compressor, wet=0 for distortion/reverb) rather than
+// removing it from the chain. The delay taps from the reverb output, so
+// echoes are always shaped by EQ, compressor, distortion and reverb.
 
-import * as Tone from 'tone';
-import { AUDIO_PARAM_RAMP_SECONDS, DEFAULT_EFFECT_SETTINGS } from './01_config.js';
+import { DEFAULT_EFFECT_SETTINGS } from './01_config.js';
 
-export const UNIFORM_COMPENSATION_SECONDS = 0.006;
+// The context the racks are built in. Set by initAudioContext().
+let sharedContext = null;
+let workletModulePromise = null;
+
+export function setEffectsContext(audioContext) {
+    if (sharedContext === audioContext && audioContext) return;
+    sharedContext = audioContext;
+    workletModulePromise = null;
+}
+
+// Loads the worklet module into the shared context (once).
+export function ensureWorkletModule(audioContext = sharedContext) {
+    if (!audioContext) return Promise.reject(new Error('AudioContext not ready'));
+    if (!workletModulePromise || sharedContext !== audioContext) {
+        const workletUrl = new URL('./worklets/pon-dsp.js', import.meta.url);
+        workletModulePromise = audioContext.audioWorklet.addModule(workletUrl);
+    }
+    return workletModulePromise;
+}
 
 function clamp(value, min, max) {
     const number = Number(value);
@@ -29,17 +54,77 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, number));
 }
 
-function rampParam(param, value, seconds = AUDIO_PARAM_RAMP_SECONDS) {
-    if (!param) return;
-    const ctx = param.context || Tone.getContext();
-    const now = ctx.currentTime;
-    try {
-        param.cancelScheduledValues(now);
-        param.setTargetAtTime(value, now, seconds);
-    } catch (e) {
-        try { param.value = value; } catch (_) { /* param not settable */ }
-    }
+let rackCounter = 0;
+
+function wirePort(port, target, extraOnMessage) {
+    port.onmessage = (event) => {
+        const data = event.data;
+        if (data && data.type === 'meter' && target) {
+            target.rmsL = data.rmsL;
+            target.rmsR = data.rmsR;
+        }
+        extraOnMessage?.(data);
+    };
 }
+
+// ---------------------------------------------------------------------------
+// Tone.js Reverb IR generation — exact algorithm port (white noise, exp decay)
+// ---------------------------------------------------------------------------
+
+export function generateReverbImpulse(audioContext, decay, preDelay) {
+    const sampleRate = audioContext.sampleRate;
+    const length = Math.max(1, Math.floor((decay + preDelay) * sampleRate));
+    const ir = audioContext.createBuffer(2, length, sampleRate);
+    const preDelaySamples = Math.min(length, Math.floor(preDelay * sampleRate));
+    // Tone.Param.exponentialApproachValueAtTime uses a logarithmic approach
+    // for 90% of the requested ramp, then a final 10% linear segment.
+    const timeConstant = Math.log(decay + 1) / Math.log(200);
+    const approachDuration = decay * 0.9;
+    const approachEndGain = Math.exp(-approachDuration / timeConstant);
+    for (let channel = 0; channel < 2; channel++) {
+        const data = ir.getChannelData(channel);
+        for (let i = preDelaySamples; i < length; i++) {
+            const t = i / sampleRate - preDelay;
+            let envelope;
+            if (t <= 0) {
+                envelope = 1;
+            } else if (t < approachDuration) {
+                envelope = Math.exp(-t / timeConstant);
+            } else {
+                envelope = approachEndGain * (1 - (t - approachDuration) / (decay * 0.1));
+            }
+            data[i] = (Math.random() * 2 - 1) * Math.max(0, envelope);
+        }
+    }
+    return ir;
+}
+
+const REVERB_IR_DEBOUNCE_MS = 50;
+
+function requestReverbImpulse(owner, audioContext, decay, preDelay) {
+    const key = `${decay}:${preDelay}`;
+    if (owner.impulse && owner.impulseDecay === decay && owner.impulsePreDelay === preDelay) return;
+    owner.pendingImpulse = { decay, preDelay, key };
+    clearTimeout(owner.reverbGenerationTimer);
+    owner.reverbGenerationTimer = setTimeout(() => {
+        owner.reverbGenerationTimer = null;
+        const pending = owner.pendingImpulse;
+        if (!pending || pending.key !== key || owner.disposed) return;
+        // The timer coalesces rapid knob input; the expensive allocation is not
+        // performed in the pointer/input event itself.
+        const impulse = generateReverbImpulse(audioContext, pending.decay, pending.preDelay);
+        owner.pendingImpulse = null;
+        if (!owner.convolver || !owner.convolverActive || owner.disposed) return;
+        owner.impulse = impulse;
+        owner.impulseDecay = pending.decay;
+        owner.impulsePreDelay = pending.preDelay;
+        owner.convolver.buffer = impulse;
+    }, REVERB_IR_DEBOUNCE_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Settings normalization (unchanged public behavior)
+// ---------------------------------------------------------------------------
 
 export function normalizeEffectSettings(settings = {}) {
     const base = DEFAULT_EFFECT_SETTINGS;
@@ -89,146 +174,309 @@ export function normalizeEffectSettings(settings = {}) {
     };
 }
 
-export function createEffectRack(settings = {}) {
-    const input = new Tone.Gain(1);
-    const compensation = new Tone.Delay(UNIFORM_COMPENSATION_SECONDS, UNIFORM_COMPENSATION_SECONDS * 2);
-    const eq3 = new Tone.EQ3({ low: 0, mid: 0, high: 0, lowFrequency: 400, highFrequency: 2500 });
-    const compressor = new Tone.Compressor({ threshold: 0, ratio: 1, attack: 0.003, release: 0.12 });
-    const distortionNode = new Tone.Distortion({ distortion: 0.4, wet: 0 });
-    const reverbNode = new Tone.Reverb({ decay: 2.0, preDelay: 0.01, wet: 0 });
-    const dryGain = new Tone.Gain(1);
-    const wetGain = new Tone.Gain(0);
-    const feedbackDelay = new Tone.FeedbackDelay({ delayTime: 0.18, feedback: 0, maxDelay: 2 });
-    const delayReturn = new Tone.Gain(0);
-    const output = new Tone.Gain(1);
-    const limiter = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0.001, release: 0.08 });
-    const limiterSafety = new Tone.Compressor({ threshold: -1, ratio: 20, knee: 0, attack: 0, release: 0.03 });
-    const limiterDry = new Tone.Gain(1);
-    const limiterWet = new Tone.Gain(0);
-    const finalOutput = new Tone.Gain(1);
+// ---------------------------------------------------------------------------
+// Rack construction
+// ---------------------------------------------------------------------------
 
-    // Serial chain: input → compensation → EQ3 → Compressor → Distortion → Reverb
-    input.connect(compensation);
-    compensation.connect(eq3);
-    eq3.connect(compressor);
-    compressor.connect(distortionNode);
-    distortionNode.connect(reverbNode);
-
-    // Dry tap: from reverb output (post-EQ/Comp/Distortion/Reverb)
-    reverbNode.connect(dryGain);
-    dryGain.connect(output);
-
-    // Wet (EQ+Comp+Distortion+Reverb) level control
-    reverbNode.connect(wetGain);
-    wetGain.connect(output);
-
-    // Delay taps from reverb output — echoes are always shaped by the full chain
-    reverbNode.connect(feedbackDelay);
-    feedbackDelay.connect(delayReturn);
-    delayReturn.connect(output);
-
-    output.connect(limiterDry);
-    output.connect(limiter);
-    limiterDry.connect(finalOutput);
-    limiter.connect(limiterSafety);
-    limiterSafety.connect(limiterWet);
-    limiterWet.connect(finalOutput);
-
-    const rack = {
-        input, output, compensation,
-        eq3, compressor,
-        distortionNode, reverbNode,
-        dryGain, wetGain,
-        feedbackDelay, delayReturn, limiter, limiterSafety, limiterDry, limiterWet, finalOutput,
-        entry: input.input,
-        exit: finalOutput.output
-    };
-
-    applyEffectSettings(rack, settings, null, true);
-    return rack;
+function makeWorkletNode(audioContext, processorName, nodeId, settings, numberOfInputs = 1) {
+    return new AudioWorkletNode(audioContext, processorName, {
+        numberOfInputs,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        processorOptions: { nodeId, settings }
+    });
 }
 
-export function applyEffectSettings(rack, settings, _audioContext = null, immediate = false) {
+// Reverb wiring: the native ConvolverNode is created on first use and its IR
+// is regenerated only when decay/preDelay actually change (debounced).
+function updateReverbWiring(rack, normalized) {
+    const audioContext = sharedContext;
+    const reverbActive = normalized.enabled && normalized.reverb.enabled && normalized.reverb.wet > 0;
+    if (!reverbActive) {
+        clearTimeout(rack.reverbGenerationTimer);
+        rack.reverbGenerationTimer = null;
+        rack.pendingImpulse = null;
+        if (rack.convolver) {
+            // Keep the node but starve it — the back worklet mixes it out (rw → 0).
+            // Disconnecting the dry feed is not needed; input silence lets the
+            // browser skip most convolution work.
+            try { rack.front.disconnect(rack.convolver); } catch (e) { /* not connected */ }
+            rack.convolverActive = false;
+        }
+        return;
+    }
+
+    if (!rack.convolver) {
+        rack.convolver = audioContext.createConvolver(); // normalize=true, same as Tone.Reverb
+        rack.convolver.connect(rack.back, 0, 1);         // wet return → back input 1
+    }
+    if (!rack.convolverActive) {
+        rack.front.connect(rack.convolver);
+        rack.convolverActive = true;
+    }
+
+    const decay = normalized.reverb.decay;
+    const preDelay = normalized.reverb.preDelay;
+    requestReverbImpulse(rack, audioContext, decay, preDelay);
+}
+
+export function createEffectRack(settings = {}) {
+    const audioContext = sharedContext;
+    if (!audioContext) throw new Error('AudioContext not initialized');
+    if (!audioContext.audioWorklet) throw new Error('AudioWorklet not supported');
+    // ensureWorkletModule must have resolved before racks are created
+    // (initAudioContext awaits it).
+
+    const normalized = normalizeEffectSettings(settings);
+    const rackId = `v${++rackCounter}`;
+    let front = null;
+    let back = null;
+    let rack = null;
+    try {
+        front = makeWorkletNode(audioContext, 'pon-voice-front', `${rackId}-f`, frontSettings(normalized));
+        back = makeWorkletNode(audioContext, 'pon-voice-back', `${rackId}-b`, backSettings(normalized), 2);
+        front.connect(back, 0, 0); // dry path (post EQ/comp/dist) → back input 0
+
+        rack = {
+            input: front,
+            output: back,
+            // Keep the old rack contract used by the playback code.
+            entry: front,
+            exit: back,
+            front,
+            back,
+            convolver: null,
+            disposed: false,
+            pendingImpulse: null,
+            reverbGenerationTimer: null,
+            convolverActive: false,
+            impulse: null,
+            impulseDecay: null,
+            impulsePreDelay: null,
+            meterId: rackId,
+            meter: { rmsL: 0, rmsR: 0 },
+            settings: normalized
+        };
+        wirePort(back.port, rack.meter);
+        updateReverbWiring(rack, normalized);
+        return rack;
+    } catch (error) {
+        disposeEffectRack(rack || { front, back });
+        throw error;
+    }
+}
+
+export function disposeMasterChain(chain) {
+    if (!chain) return;
+    chain.disposed = true;
+    clearTimeout(chain.reverbGenerationTimer);
+    try { chain.front?.disconnect(); } catch (e) { /* ignore */ }
+    try { chain.back?.disconnect(); } catch (e) { /* ignore */ }
+    try { chain.limit?.disconnect(); } catch (e) { /* ignore */ }
+    try { chain.meterNode?.disconnect(); } catch (e) { /* ignore */ }
+    try { chain.convolver?.disconnect(); } catch (e) { /* ignore */ }
+    try { chain.front?.port.close(); } catch (e) { /* ignore */ }
+    try { chain.back?.port.close(); } catch (e) { /* ignore */ }
+    try { chain.limit?.port.close(); } catch (e) { /* ignore */ }
+    try { chain.meterNode?.port.close(); } catch (e) { /* ignore */ }
+    chain.pendingImpulse = null;
+    chain.convolver = null;
+    chain.impulse = null;
+}
+
+function frontSettings(normalized) {
+    return {
+        enabled: normalized.enabled,
+        eq: normalized.eq,
+        compressor: normalized.compressor,
+        distortion: normalized.distortion
+    };
+}
+
+function backSettings(normalized) {
+    const eqActive = normalized.enabled && normalized.eq.enabled;
+    const compActive = normalized.enabled && normalized.compressor.enabled;
+    const distActive = normalized.enabled && normalized.distortion.enabled;
+    const delayActive = normalized.enabled && normalized.delay.enabled;
+    const reverbActive = normalized.enabled && normalized.reverb.enabled;
+    return {
+        enabled: normalized.enabled,
+        wet: normalized.wet,
+        hasSerialEffect: eqActive || compActive || distActive,
+        hasAnyEffect: normalized.enabled && ((eqActive || compActive || distActive) || delayActive || reverbActive),
+        reverbWet: reverbActive ? normalized.reverb.wet : 0,
+        delay: normalized.delay,
+        limiter: normalized.limiter
+    };
+}
+
+export function applyEffectSettings(rack, settings, _audioContext = null, _immediate = false) {
     if (!rack) return;
     const normalized = normalizeEffectSettings(settings);
-    const ramp = immediate ? 0.001 : AUDIO_PARAM_RAMP_SECONDS;
-    // 親トグルがoffの時は、子エフェクトのenabledに関わらず全て無効化する
-    // (UI側でも制御するが、音響ロジックでも確実にガードする)
-    const masterEnabled = normalized.enabled;
-
-    // EQ3: disabled = flat (0 dB all bands)
-    const eqActive = masterEnabled && normalized.eq.enabled;
-    rampParam(rack.eq3.low, eqActive ? normalized.eq.low : 0, ramp);
-    rampParam(rack.eq3.mid, eqActive ? normalized.eq.mid : 0, ramp);
-    rampParam(rack.eq3.high, eqActive ? normalized.eq.high : 0, ramp);
-    try {
-        rack.eq3.lowFrequency.value = normalized.eq.lowFrequency;
-        rack.eq3.highFrequency.value = normalized.eq.highFrequency;
-    } catch (e) { /* frequency signals are set directly */ }
-
-    // Compressor: disabled = unity (ratio 1, no reduction)
-    const compActive = masterEnabled && normalized.compressor.enabled;
-    rampParam(rack.compressor.threshold, compActive ? normalized.compressor.threshold : 0, ramp);
-    rampParam(rack.compressor.ratio, compActive ? normalized.compressor.ratio : 1, ramp);
-
-    // Distortion: disabled = wet 0 (bypass)
-    const distortionActive = masterEnabled && normalized.distortion.enabled;
-    rampParam(rack.distortionNode.wet, distortionActive ? 1 : 0, ramp);
-    if (distortionActive) {
-        try { rack.distortionNode.distortion = normalized.distortion.amount; } catch (e) { /* amount set directly */ }
-    }
-
-    // Reverb: disabled = wet 0 (bypass). decay/preDelay set directly (async generate, immediate .value is fine)
-    const reverbActive = masterEnabled && normalized.reverb.enabled;
-    try {
-        rack.reverbNode.decay = normalized.reverb.decay;
-        rack.reverbNode.preDelay = normalized.reverb.preDelay;
-    } catch (e) { /* decay/preDelay set directly */ }
-    rampParam(rack.reverbNode.wet, reverbActive ? normalized.reverb.wet : 0, ramp);
-
-    // Delay: taps from reverb output, disabled = zero return
-    const delayActive = masterEnabled && normalized.delay.enabled;
-    rampParam(rack.feedbackDelay.delayTime, normalized.delay.time, ramp);
-    rampParam(rack.feedbackDelay.feedback, delayActive ? normalized.delay.feedback : 0, ramp);
-    rampParam(rack.delayReturn.gain, delayActive ? normalized.delay.level * normalized.wet : 0, ramp);
-
-    // Limiter: 親トグル連動。thresholdは常に保持(有効化時に即座に効くように)
-    const limiterActive = masterEnabled && normalized.limiter.enabled;
-    rampParam(rack.limiter.threshold, normalized.limiter.threshold, ramp);
-    rampParam(rack.limiterSafety.threshold, normalized.limiter.threshold, ramp);
-    rampParam(rack.limiterDry.gain, limiterActive ? 0 : 1, ramp);
-    rampParam(rack.limiterWet.gain, limiterActive ? 1 : 0, ramp);
-
-    // Dry / wet balance
-    // dryGain is always active — it carries the post-chain signal at a
-    // level that depends on whether serial effects (EQ/Comp/Distortion)
-    // are engaged. wetGain boosts the same signal further when those are active.
-    // Reverb mixes internally via its own wet param, so it is not part of wetGain.
-    const hasSerialEffect = eqActive || compActive || distortionActive;
-    const anyEffect = masterEnabled && (hasSerialEffect || delayActive || reverbActive);
-
-    if (anyEffect) {
-        const wetLevel = normalized.wet;
-        // dryGain carries (1 - wet) of the signal so total doesn't double
-        rampParam(rack.dryGain.gain, 1 - Math.min(wetLevel, 0.95), ramp);
-        rampParam(rack.wetGain.gain, hasSerialEffect ? wetLevel : 0, ramp);
-    } else {
-        rampParam(rack.dryGain.gain, 1, ramp);
-        rampParam(rack.wetGain.gain, 0, ramp);
-    }
+    rack.settings = normalized;
+    rack.front.port.postMessage({ type: 'settings', settings: frontSettings(normalized) });
+    rack.back.port.postMessage({ type: 'settings', settings: backSettings(normalized) });
+    updateReverbWiring(rack, normalized);
 }
 
 export function disposeEffectRack(rack) {
     if (!rack) return;
-    const nodes = [
-        rack.input, rack.output, rack.compensation,
-        rack.eq3, rack.compressor,
-        rack.distortionNode, rack.reverbNode,
-        rack.dryGain, rack.wetGain,
-        rack.feedbackDelay, rack.delayReturn,
-        rack.limiter, rack.limiterSafety, rack.limiterDry, rack.limiterWet, rack.finalOutput
-    ];
-    for (const node of nodes) {
-        try { node?.dispose(); } catch (e) { /* ignore */ }
+    rack.disposed = true;
+    clearTimeout(rack.reverbGenerationTimer);
+    try { rack.front?.disconnect(); } catch (e) { /* ignore */ }
+    try { rack.back?.disconnect(); } catch (e) { /* ignore */ }
+    try { rack.convolver?.disconnect(); } catch (e) { /* ignore */ }
+    try { rack.front?.port.close(); } catch (e) { /* ignore */ }
+    try { rack.back?.port.close(); } catch (e) { /* ignore */ }
+    rack.convolver = null;
+    rack.impulse = null;
+    rack.pendingImpulse = null;
+}
+
+// ---------------------------------------------------------------------------
+// Master chain
+// ---------------------------------------------------------------------------
+//
+// graph: masterInput → pon-master-front (Dist→EQ3→Comp) ─┬─► pon-master-back(in0)
+//                                                        └─► [Convolver] ─► back(in1)
+//        back → masterGain → masterPan → pon-master-limit → destination / recorder
+//
+// Returns an object mirroring the previous master nodes' control surface.
+
+export async function createMasterChain(audioContext, initialState = {}) {
+    await ensureWorkletModule(audioContext);
+
+    const masterId = 'master';
+    let front = null;
+    let back = null;
+    let limit = null;
+    let meter = null;
+    let chain = null;
+    try {
+        front = makeWorkletNode(audioContext, 'pon-master-front', `${masterId}-f`, masterFrontSettings(initialState));
+        back = makeWorkletNode(audioContext, 'pon-master-back', `${masterId}-b`, masterBackSettings(initialState), 2);
+        limit = makeWorkletNode(audioContext, 'pon-master-limit', `${masterId}-l`, { threshold: initialState.limiterThreshold ?? -1 });
+        meter = makeWorkletNode(audioContext, 'pon-master-meter', `${masterId}-m`, {});
+        front.connect(back, 0, 0);
+
+        chain = {
+            input: front,
+            output: limit,
+            front,
+            back,
+            limit,
+            meterNode: meter,
+            convolver: null,
+            disposed: false,
+            pendingImpulse: null,
+            reverbGenerationTimer: null,
+            convolverActive: false,
+            impulse: null,
+            impulseDecay: null,
+            impulsePreDelay: null,
+            meter: { rmsL: 0, rmsR: 0 },
+            frontState: {
+                eqLow: initialState.eqLow ?? 0,
+                eqMid: initialState.eqMid ?? 0,
+                eqHigh: initialState.eqHigh ?? 0,
+                compThreshold: initialState.compThreshold ?? 0,
+                compRatio: initialState.compRatio ?? 1,
+                distortionAmount: initialState.distortionAmount ?? 0
+            },
+            backState: {
+                reverbWet: initialState.reverbWet ?? 0,
+                delayTime: initialState.delayTime ?? 0.18,
+                delayFeedback: initialState.delayFeedback ?? 0,
+                delayLevel: initialState.delayLevel ?? 0
+            }
+        };
+        wirePort(meter.port, chain.meter);
+        chain.updateReverb = (reverbState) => updateMasterReverb(chain, audioContext, reverbState);
+        chain.updateReverb({ decay: initialState.reverbDecay ?? 2.0, preDelay: 0.01, wet: initialState.reverbWet ?? 0 });
+        return chain;
+    } catch (error) {
+        disposeMasterChain(chain || { front, back, limit, meterNode: meter });
+        throw error;
     }
+}
+function masterFrontSettings(initialState) {
+    return {
+        // Master EQ/compressor are always "engaged" nodes — transparency comes
+        // from their values (0dB bands, ratio 1), exactly like the previous chain.
+        eq: {
+            enabled: true,
+            low: initialState.eqLow ?? 0,
+            mid: initialState.eqMid ?? 0,
+            high: initialState.eqHigh ?? 0,
+            lowFrequency: 400,
+            highFrequency: 2500
+        },
+        compressor: {
+            enabled: true,
+            threshold: initialState.compThreshold ?? 0,
+            ratio: initialState.compRatio ?? 1
+        },
+        distortionAmount: initialState.distortionAmount ?? 0
+    };
+}
+
+function masterBackSettings(initialState) {
+    return {
+        reverbWet: initialState.reverbWet ?? 0,
+        delayTime: initialState.delayTime ?? 0.18,
+        delayFeedback: initialState.delayFeedback ?? 0,
+        delayLevel: initialState.delayLevel ?? 0
+    };
+}
+
+function updateMasterReverb(chain, audioContext, reverbState) {
+    const wet = clamp(reverbState?.wet ?? 0, 0, 1);
+    chain.backState = { ...(chain.backState || {}), reverbWet: wet };
+    const reverbActive = wet > 0;
+    if (!reverbActive) {
+        clearTimeout(chain.reverbGenerationTimer);
+        chain.reverbGenerationTimer = null;
+        chain.pendingImpulse = null;
+        if (chain.convolver) {
+            try { chain.front.disconnect(chain.convolver); } catch (e) { /* not connected */ }
+            chain.convolverActive = false;
+        }
+        chain.back.port.postMessage({ type: 'settings', settings: masterBackSettings(chain.backState) });
+        return;
+    }
+    if (!chain.convolver) {
+        chain.convolver = audioContext.createConvolver();
+        chain.convolver.connect(chain.back, 0, 1);
+    }
+    if (!chain.convolverActive) {
+        chain.front.connect(chain.convolver);
+        chain.convolverActive = true;
+    }
+    const decay = clamp(reverbState?.decay ?? 2.0, 0.1, 10);
+    const preDelay = clamp(reverbState?.preDelay ?? 0.01, 0, 0.1);
+    requestReverbImpulse(chain, audioContext, decay, preDelay);
+    chain.back.port.postMessage({ type: 'settings', settings: masterBackSettings(chain.backState) });
+}
+
+// Partial master updates (used by setMasterParam). Partials are merged onto
+// the last known state so every message carries complete stage settings.
+export function applyMasterChainSettings(chain, partial) {
+    if (!chain) return;
+    chain.frontState = { ...(chain.frontState || {}), ...partial };
+    chain.front.port.postMessage({ type: 'settings', settings: masterFrontSettings(chain.frontState) });
+}
+
+export function applyMasterChainDelay(chain, partial) {
+    if (!chain) return;
+    chain.backState = { ...(chain.backState || {}), ...partial };
+    chain.back.port.postMessage({ type: 'settings', settings: masterBackSettings(chain.backState) });
+}
+
+export function applyMasterChainReverb(chain, reverbState) {
+    chain?.updateReverb?.(reverbState);
+}
+
+export function applyMasterChainLimiter(chain, threshold) {
+    if (!chain) return;
+    chain.limit.port.postMessage({ type: 'settings', settings: { threshold } });
 }

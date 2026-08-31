@@ -4,90 +4,87 @@ import { state, setAudioContext, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize } from './05_ui.js';
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
-import { ANALYSER_FFT_SIZE, WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS } from './01_config.js';
+import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS } from './01_config.js';
 import { dbRequest } from './04_db.js';
-import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings } from './09_effects.js';
+import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings, setEffectsContext, ensureWorkletModule, createMasterChain, disposeMasterChain, applyMasterChainSettings, applyMasterChainDelay, applyMasterChainReverb, applyMasterChainLimiter } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
 import { setKeyboardKeyProgress } from './11_keyboard_view.js';
 import * as Tone from 'tone';
 
 // --- AudioContext Management ---
+let _audioInitPromise = null;
+
+// 並行呼び出し時は同一の初期化Promiseを共有する(async化に伴い必須)。
 export function initAudioContext() {
-    if (state.audioContext) { return state.audioContext.state === 'running'; }
+    if (state.audioContext) { return Promise.resolve(state.audioContext.state === 'running'); }
+    if (!_audioInitPromise) {
+        _audioInitPromise = initAudioContextInner().then(result => {
+            if (!result) _audioInitPromise = null;
+            return result;
+        }).catch(e => {
+            _audioInitPromise = null;
+            throw e;
+        });
+    }
+    return _audioInitPromise;
+}
+
+async function initAudioContextInner() {
     if (!window.AudioContext && !window.webkitAudioContext) {
         renderFallbackUI("Web Audio API非対応ブラウザです。");
         disableAppControls();
         return false;
     }
+    let audioContext = null;
+    let masterChain = null;
     try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+        if (!audioContext.audioWorklet || !window.AudioWorkletNode) {
+            renderFallbackUI("このブラウザは AudioWorklet に対応していません。");
+            disableAppControls();
+            try { await audioContext.close(); } catch (_) { /* ignore */ }
+            setAudioContext(null, null, null, null);
+            return false;
+        }
+        setEffectsContext(audioContext);
+        // 全エフェクトは AudioWorklet プロセッサで動くため、最初にモジュールを登録する
+        await ensureWorkletModule(audioContext);
+
+        masterChain = await createMasterChain(audioContext, {
+            eqLow: state.masterEq.low,
+            eqMid: state.masterEq.mid,
+            eqHigh: state.masterEq.high,
+            compThreshold: state.masterComp.threshold,
+            compRatio: state.masterComp.ratio,
+            distortionAmount: state.masterDistortion.amount,
+            reverbDecay: state.masterReverb.decay,
+            reverbWet: state.masterReverb.wet,
+            delayTime: state.masterDelay.time,
+            delayFeedback: state.masterDelay.feedback,
+            delayLevel: state.masterDelay.level,
+            limiterThreshold: state.masterLimiter.threshold
+        });
+
         const masterInputNode = audioContext.createGain();
         const masterGainNode = audioContext.createGain();
         masterGainNode.gain.setValueAtTime(state.masterVolume, audioContext.currentTime);
-
-        // Put distortion first so a neutral master EQ/compressor cannot alter
-        // the waveform before this nonlinear stage.
-        // Master chain: Distortion → EQ3 → Compressor → Reverb → [dry + delay] → volume → limiter
-        attachToneContext(audioContext);
-        const eqBridgeIn = new Tone.Gain(1);
-        const masterEqNode = new Tone.EQ3({ low: state.masterEq.low, mid: state.masterEq.mid, high: state.masterEq.high, lowFrequency: 400, highFrequency: 2500 });
-        masterInputNode.connect(eqBridgeIn.input);
-
-        const masterDistortionNode = new Tone.Distortion({ distortion: state.masterDistortion.amount, wet: state.masterDistortion.amount > 0 ? 1 : 0 });
-        eqBridgeIn.connect(masterDistortionNode);
-        masterDistortionNode.connect(masterEqNode);
-
-        const masterCompNode = new Tone.Compressor({ threshold: state.masterComp.threshold, ratio: state.masterComp.ratio, attack: 0.003, release: 0.12 });
-        masterEqNode.connect(masterCompNode);
-
-        // Reverb is transparent at its default wet value of zero.
-        const masterReverbNode = new Tone.Reverb({ decay: state.masterReverb.decay, preDelay: 0.01, wet: state.masterReverb.wet });
-        masterCompNode.connect(masterReverbNode);
-
-        const masterDryGain = new Tone.Gain(1);
-        const masterDelayNode = new Tone.FeedbackDelay({ delayTime: state.masterDelay.time, feedback: state.masterDelay.feedback, maxDelay: 2 });
-        const masterDelayReturn = new Tone.Gain(state.masterDelay.level);
-        const masterMixOut = new Tone.Gain(1);
-        const outputLimiterNode = new Tone.Compressor({ threshold: state.masterLimiter.threshold, ratio: 20, knee: 0, attack: 0.001, release: 0.08 });
-        const outputSafetyLimiterNode = new Tone.Compressor({ threshold: state.masterLimiter.threshold, ratio: 20, knee: 0, attack: 0, release: 0.03 });
-        // Delay taps from reverb output — echoes are always shaped by the full chain
-        masterReverbNode.connect(masterDryGain);
-        masterReverbNode.connect(masterDelayNode);
-        masterDelayNode.connect(masterDelayReturn);
-        masterDryGain.connect(masterMixOut);
-        masterDelayReturn.connect(masterMixOut);
-
         const masterPanNode = audioContext.createStereoPanner();
         masterPanNode.pan.setValueAtTime(Number.isFinite(state.masterPan.value) ? state.masterPan.value : 0, audioContext.currentTime);
-        masterMixOut.output.connect(masterGainNode);
-        masterGainNode.connect(masterPanNode);
-        masterPanNode.connect(outputLimiterNode.input);
-        outputLimiterNode.connect(outputSafetyLimiterNode);
-        outputSafetyLimiterNode.output.connect(audioContext.destination);
         const recordingDestinationNode = audioContext.createMediaStreamDestination();
-        outputSafetyLimiterNode.output.connect(recordingDestinationNode);
-        updateState({ masterEqNode, masterCompNode, masterDistortionNode, masterReverbNode, masterDelayNode, masterDelayReturn, masterPanNode, outputSafetyLimiterNode, recordingDestinationNode });
 
-        setAudioContext(audioContext, masterGainNode, outputLimiterNode, masterInputNode);
-
-        // Master meter: tap from masterGainNode (read-only analysers)
-        const masterSplitter = audioContext.createChannelSplitter(2);
-        const masterAnalyserL = audioContext.createAnalyser();
-        const masterAnalyserR = audioContext.createAnalyser();
-        masterAnalyserL.fftSize = 256;
-        masterAnalyserR.fftSize = 256;
-        masterAnalyserL.smoothingTimeConstant = 0.6;
-        masterAnalyserR.smoothingTimeConstant = 0.6;
-        masterGainNode.connect(masterSplitter);
-        masterSplitter.connect(masterAnalyserL, 0);
-        masterSplitter.connect(masterAnalyserR, 1);
-        updateState({
-            masterAnalyserL, masterAnalyserR,
-            masterMeterDataL: new Uint8Array(masterAnalyserL.fftSize),
-            masterMeterDataR: new Uint8Array(masterAnalyserR.fftSize)
-        });
+        // wiring: input → master-front → (convolver) → master-back → volume → meter → pan → limit → 出力/録音
+        masterInputNode.connect(masterChain.input);
+        masterChain.back.connect(masterGainNode);
+        masterGainNode.connect(masterChain.meterNode);
+        masterChain.meterNode.connect(masterPanNode);
+        masterPanNode.connect(masterChain.limit);
+        masterChain.limit.connect(audioContext.destination);
+        masterChain.limit.connect(recordingDestinationNode);
 
         attachToneContext(audioContext);
+        updateState({ masterChain, masterPanNode, recordingDestinationNode });
+        setAudioContext(audioContext, masterGainNode, masterChain.limit, masterInputNode);
+
         startMasterMeter();
         if (audioContext.state === 'suspended') {
             // AudioContext is suspended. Needs user interaction to resume.
@@ -95,6 +92,9 @@ export function initAudioContext() {
         return true;
     } catch (e) {
         console.error('AudioContext initialization failed:', e);
+        disposeMasterChain(masterChain);
+        setEffectsContext(null);
+        try { await audioContext?.close(); } catch (_) { /* ignore */ }
         renderFallbackUI("Web Audio API の初期化に失敗しました。");
         disableAppControls();
         setAudioContext(null, null, null, null);
@@ -105,54 +105,38 @@ export function initAudioContext() {
 export function setMasterParam(dottedKey, value) {
     const [group, param] = dottedKey.split('.');
     const stateKey = `master${group[0].toUpperCase()}${group.slice(1)}`;
-    const nodeKey = `${stateKey}Node`;
     const stateObj = state[stateKey];
-    const node = state[nodeKey];
     if (!stateObj || !param) return;
 
     stateObj[param] = value;
+    const chain = state.masterChain;
+    if (!chain || !state.audioContext) return;
 
-    if (node && state.audioContext) {
-        try {
-            if (group === 'eq') {
-                node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-            } else if (group === 'comp') {
-                node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-            } else if (group === 'delay') {
-                if (param === 'level') {
-                    state.masterDelayReturn?.gain?.setTargetAtTime?.(value, state.audioContext.currentTime, 0.01);
-                } else if (param === 'time') {
-                    node.delayTime.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-                } else {
-                    node[param].setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-                }
-            } else if (group === 'pan') {
-                node.pan.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-            } else if (group === 'distortion') {
-                if (param === 'amount') {
-                    try { node.distortion = value; } catch (e) { /* amount set directly */ }
-                    node.wet.setTargetAtTime(value > 0 ? 1 : 0, state.audioContext.currentTime, 0.01);
-                }
-            } else if (group === 'reverb') {
-                if (param === 'decay') {
-                    try { node.decay = value; } catch (e) { /* decay triggers async regen */ }
-                } else if (param === 'wet') {
-                    node.wet.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
-                }
+    try {
+        if (group === 'eq') {
+            applyMasterChainSettings(chain, { eqLow: state.masterEq.low, eqMid: state.masterEq.mid, eqHigh: state.masterEq.high });
+        } else if (group === 'comp') {
+            applyMasterChainSettings(chain, { compThreshold: state.masterComp.threshold, compRatio: state.masterComp.ratio });
+        } else if (group === 'delay') {
+            applyMasterChainDelay(chain, { delayTime: state.masterDelay.time, delayFeedback: state.masterDelay.feedback, delayLevel: state.masterDelay.level });
+        } else if (group === 'pan') {
+            state.masterPanNode?.pan.setTargetAtTime(value, state.audioContext.currentTime, 0.01);
+        } else if (group === 'distortion' && param === 'amount') {
+            applyMasterChainSettings(chain, { distortionAmount: value });
+        } else if (group === 'reverb') {
+            if (param === 'decay') {
+                applyMasterChainReverb(chain, { decay: value, preDelay: 0.01, wet: state.masterReverb.wet });
+            } else if (param === 'wet') {
+                applyMasterChainReverb(chain, { decay: state.masterReverb.decay, preDelay: 0.01, wet: value });
             }
-        } catch (e) { /* param not rampable */ }
-    }
+        }
+    } catch (e) { /* param not rampable */ }
 }
 
 export function setMasterLimiterThreshold(value) {
     const threshold = Math.min(0, Math.max(-12, Number(value)));
     state.masterLimiter.threshold = threshold;
-    if (state.outputLimiterNode?.threshold) {
-        state.outputLimiterNode.threshold.rampTo(threshold, 0.01);
-    }
-    if (state.outputSafetyLimiterNode?.threshold) {
-        state.outputSafetyLimiterNode.threshold.rampTo(threshold, 0.01);
-    }
+    applyMasterChainLimiter(state.masterChain, threshold);
 }
 
 /**
@@ -292,6 +276,15 @@ function getCurrentSourcePosition(audioInfo) {
         + (state.audioContext.currentTime - audioInfo.playbackPositionContextTime) * audioInfo.playbackRate;
 }
 
+// 聴こえる出力は ctx の出力レイテンシ分だけ遅れる。表示系（波形・進捗）は
+// ソースクロックではなく「いま聴こえている位置」に合わせるため、その分を差し引く。
+function getAudibleLatencySeconds() {
+    const ctx = state.audioContext;
+    if (!ctx) return 0;
+    const base = Number.isFinite(ctx.baseLatency) ? ctx.baseLatency : 0;
+    const output = Number.isFinite(ctx.outputLatency) ? ctx.outputLatency : 0;
+    return Math.max(0, base + output);
+}
 function formatPlaybackTime(seconds) {
     const safeSeconds = Number.isFinite(seconds) && seconds >= 0 ? seconds : 0;
     const minutes = Math.floor(safeSeconds / 60);
@@ -359,6 +352,7 @@ export function getTrimBounds(sound, duration, reversed = false) {
 
 function scheduleTrimBoundaryForVoice(voice, soundData, onAudioElementBoundary, isCurrent = () => true) {
     if (!voice || !soundData || !Number.isFinite(voice.trimEnd)) return;
+    if (voice.isFadingOut || !isCurrent()) return;
 
     clearTimeout(voice.trimBoundaryTimeoutId);
     voice.trimBoundaryTimeoutId = null;
@@ -381,6 +375,17 @@ function scheduleTrimBoundaryForVoice(voice, soundData, onAudioElementBoundary, 
         }
     };
 
+    const isNativeSource = !voice.audioElement && !(voice.sourceNode instanceof Tone.GrainPlayer);
+    if (isNativeSource) {
+        // ネイティブソースはオーディオクロックで終端停止を予約する(メインスレッド遅延の影響を受けない)。
+        const stopTime = state.audioContext.currentTime + Math.max(0, remaining) / rate;
+        try {
+            if (remaining <= 0.005) voice.sourceNode?.stop();
+            else voice.sourceNode?.stop(stopTime);
+        } catch (_) { /* source may have ended */ }
+        return;
+    }
+
     if (remaining <= 0.005) {
         handleBoundary();
         return;
@@ -393,6 +398,40 @@ function scheduleTrimBoundaryForVoice(voice, soundData, onAudioElementBoundary, 
     voice.trimBoundaryTimeoutId = timeoutId;
 }
 
+// ネイティブ AudioBufferSourceNode は再起動できないため、ループ位置から新しい
+// ソースを作り直す(GrainPlayer.restart 相当)。旧ソースは即時停止する。
+function restartNativeSource(audioInfo, soundData, position) {
+    if (!audioInfo?.audioBuffer || !state.audioContext) return;
+    const ctx = state.audioContext;
+    try { audioInfo.sourceNode.onended = null; } catch (e) { /* ignore */ }
+    try { audioInfo.sourceNode.stop(); } catch (e) { /* ignore */ }
+    try { audioInfo.sourceNode.disconnect(); } catch (e) { /* ignore */ }
+
+    const sound = soundData || state.scenes[state.currentSceneId]?.sounds.find(item => item.id === audioInfo.soundId);
+    const sourceNode = ctx.createBufferSource();
+    sourceNode.buffer = audioInfo.audioBuffer;
+    sourceNode.loop = Boolean(sound?.loop);
+    sourceNode.loopStart = audioInfo.trimStart;
+    sourceNode.loopEnd = audioInfo.trimEnd;
+    sourceNode.playbackRate.value = audioInfo.playbackRate;
+    sourceNode.connect(audioInfo.pannerNode);
+    const onEnd = () => {
+        const current = state.activeAudios[audioInfo.soundId];
+        if (current && !current.isFadingOut && !(sound?.loop)) {
+            cleanupAfterStop(audioInfo.soundId, null);
+        }
+    };
+    sourceNode.onended = onEnd;
+    sourceNode.start(0, position);
+    audioInfo.sourceNode = sourceNode;
+    audioInfo.playbackPosition = position;
+    audioInfo.playbackPositionContextTime = ctx.currentTime;
+}
+
+function soundDataForLoopRestart(soundId) {
+    return state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
+}
+
 function scheduleTrimBoundary(soundId) {
     const audioInfo = state.activeAudios[soundId];
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(sound => sound.id === soundId);
@@ -402,6 +441,40 @@ function scheduleTrimBoundary(soundId) {
         () => cleanupAfterStop(soundId, null),
         () => state.activeAudios[soundId] === audioInfo
     );
+}
+
+// 再生中に preservePitch の条件が変わった場合も、現行の再生位置を
+// 維持したまま適切なソース種別へ切り替える。
+function replaceBufferPlaybackSource(audioInfo, soundData, position, playbackRate) {
+    if (!audioInfo?.audioBuffer || !state.audioContext || audioInfo.audioElement) return false;
+    const ctx = state.audioContext;
+    const oldSource = audioInfo.sourceNode;
+    try { oldSource.onended = null; } catch (e) { /* ignore */ }
+    try { if ('onstop' in oldSource) oldSource.onstop = null; } catch (e) { /* ignore */ }
+    try { oldSource.stop(); } catch (e) { /* source may have ended */ }
+    try { oldSource.disconnect(); } catch (e) { /* ignore */ }
+    if (oldSource instanceof Tone.GrainPlayer) {
+        try { oldSource.dispose(); } catch (e) { /* ignore */ }
+    }
+
+    const sourceNode = createBufferPlaybackSource(audioInfo.audioBuffer, soundData, playbackRate);
+    sourceNode.loopStart = audioInfo.trimStart;
+    sourceNode.loopEnd = audioInfo.trimEnd;
+    sourceNode.connect(audioInfo.pannerNode);
+    const onEnd = () => {
+        const current = state.activeAudios[audioInfo.soundId];
+        if (current === audioInfo && !current.isFadingOut && !soundData.loop) {
+            cleanupAfterStop(audioInfo.soundId, null);
+        }
+    };
+    if ('onended' in sourceNode) sourceNode.onended = onEnd;
+    else sourceNode.onstop = onEnd;
+    sourceNode.start(ctx.currentTime, position);
+    audioInfo.sourceNode = sourceNode;
+    audioInfo.playbackPosition = position;
+    audioInfo.playbackPositionContextTime = ctx.currentTime;
+    audioInfo.playbackRate = playbackRate;
+    return true;
 }
 
 function cancelNaturalFadeOut(audioInfo, now) {
@@ -464,9 +537,55 @@ function scheduleNaturalFadeOutFor(voice, soundData) {
 }
 
 // playSound / sustain レイヤー共通の音源ノード生成。
-// LOW_MEMORY では <audio> 要素、それ以外（または逆再生時）は GrainPlayer を返す。
+// LOW_MEMORY では <audio> 要素、それ以外は通常 BufferSource、速度変更時のピッチ保持だけ GrainPlayer を返す。
 // 戻り値は { sourceNode, audioElement, objectUrl, audioBuffer } または { error }。
-async function createSoundSourceNodes(soundData) {
+
+function needsPitchPreserve(soundData, playbackRate) {
+    return Boolean(soundData?.preservePitch) && Math.abs(playbackRate - 1) > 1e-6;
+}
+
+function createBufferPlaybackSource(audioBuffer, soundData, playbackRate) {
+    if (needsPitchPreserve(soundData, playbackRate)) {
+        return new Tone.GrainPlayer({
+            url: audioBuffer,
+            loop: Boolean(soundData.loop),
+            playbackRate,
+            detune: 0
+        });
+    }
+    const sourceNode = state.audioContext.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.loop = Boolean(soundData.loop);
+    sourceNode.playbackRate.value = playbackRate;
+    return sourceNode;
+}
+
+function waitForMediaMetadata(audioElement) {
+    if (!audioElement || audioElement.readyState >= 1 || Number.isFinite(audioElement.duration)) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+        const cleanup = () => {
+            audioElement.removeEventListener('loadedmetadata', onLoaded);
+            audioElement.removeEventListener('error', onError);
+        };
+        const onLoaded = () => { cleanup(); resolve(); };
+        const onError = () => {
+            cleanup();
+            reject(audioElement.error || new Error('Audio metadata could not be loaded'));
+        };
+        audioElement.addEventListener('loadedmetadata', onLoaded, { once: true });
+        audioElement.addEventListener('error', onError, { once: true });
+        try { audioElement.load(); } catch (error) { cleanup(); reject(error); }
+    });
+}
+
+async function setMediaElementPosition(audioElement, position) {
+    await waitForMediaMetadata(audioElement);
+    if (!Number.isFinite(position)) return;
+    audioElement.currentTime = Math.max(0, position);
+}
+async function createSoundSourceNodes(soundData, expectedGeneration = state.sceneGeneration) {
     const wantsReverse = !!soundData.reverse;
     // reverse の場合は LOW_MEMORY でも BufferSource を使用（反転バッファが必要なため）
     const useBufferSource = state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY || wantsReverse;
@@ -484,15 +603,20 @@ async function createSoundSourceNodes(soundData) {
         audioElement.preload = 'auto';
         const sourceNode = state.audioContext.createMediaElementSource(audioElement);
 
-        // For waveform, we still need the buffer
-        let audioBuffer = null;
-        try {
-            const arrayBuffer = await blob.arrayBuffer();
-            audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-        } catch (decodeError) {
-            console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
+        // LOW_MEMORY では再生中に AudioBuffer を保持しない。波形が必要な場合だけ
+        // 初回再生時に一時デコードし、ピーク配列だけをキャッシュして即座に破棄する。
+        let waveformPeaks = state.waveformPeaksCache[soundData.id]?.peaks || null;
+        if (!waveformPeaks) {
+            try {
+                const arrayBuffer = await blob.arrayBuffer();
+                const decoded = await state.audioContext.decodeAudioData(arrayBuffer);
+                waveformPeaks = precomputeWaveformPeaks(decoded);
+                state.waveformPeaksCache[soundData.id] = { buffer: null, peaks: waveformPeaks };
+            } catch (decodeError) {
+                console.error("Error decoding audio for waveform in LOW_MEMORY mode:", decodeError);
+            }
         }
-        return { sourceNode, audioElement, objectUrl, audioBuffer };
+        return { sourceNode, audioElement, objectUrl, audioBuffer: null, waveformPeaks };
     }
 
     // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
@@ -505,7 +629,7 @@ async function createSoundSourceNodes(soundData) {
         try {
             const arrayBuffer = await blob.arrayBuffer();
             baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-            state.decodedAudioBuffers[soundData.id] = baseBuffer;
+            if (expectedGeneration === state.sceneGeneration) state.decodedAudioBuffers[soundData.id] = baseBuffer;
         } catch (decodeError) {
             console.error("Error decoding audio for reverse:", decodeError);
         }
@@ -516,13 +640,11 @@ async function createSoundSourceNodes(soundData) {
         : baseBuffer;
 
     if (!audioBuffer) return { error: `サウンド「${soundData.name}」の音声データがキャッシュされていません。` };
+
     const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
-    const sourceNode = new Tone.GrainPlayer({
-        url: audioBuffer,
-        loop: soundData.loop,
-        playbackRate,
-        detune: soundData.preservePitch ? 0 : 1200 * Math.log2(playbackRate)
-    });
+    // ピッチ保持は速度変更時のみ意味を持ち、該当時だけ粒合成を使う。
+    // それ以外は生 AudioBufferSourceNode で再生する(メインスレッド非依存・群遅延ゼロ)。
+    const sourceNode = createBufferPlaybackSource(audioBuffer, soundData, playbackRate);
     return { sourceNode, audioElement: null, objectUrl: null, audioBuffer };
 }
 
@@ -530,11 +652,41 @@ async function createSoundSourceNodes(soundData) {
 // 前に発生するため、ロード中の再クリックが同じ soundId の再生を二重に開始し得る。
 // この間の soundId を記録して直列化し、二重再生と停止不能な孤立プレイヤーを防ぐ。
 const _startingSoundIds = new Set();
+const _pendingStopIds = new Set();
+const _pendingRollReleases = new Set();
+const _cancelStartingRollIds = new Set();
+const _pendingSustainStarts = new Map();
+
+function cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl, individualGain, pannerNode, effectRack } = {}) {
+    try { if (sourceNode && 'onended' in sourceNode) sourceNode.onended = null; } catch (e) { /* ignore */ }
+    try { if (sourceNode && 'onstop' in sourceNode) sourceNode.onstop = null; } catch (e) { /* ignore */ }
+    try { sourceNode?.stop?.(); } catch (e) { /* source may not have started */ }
+    try { sourceNode?.disconnect?.(); } catch (e) { /* ignore */ }
+    if (sourceNode instanceof Tone.GrainPlayer) {
+        try { sourceNode.dispose(); } catch (e) { /* ignore */ }
+    }
+    try { audioElement?.pause?.(); } catch (e) { /* ignore */ }
+    if (audioElement) {
+        try { audioElement.src = ''; audioElement.load(); } catch (e) { /* ignore */ }
+    }
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    try { individualGain?.disconnect?.(); } catch (e) { /* ignore */ }
+    try { pannerNode?.disconnect?.(); } catch (e) { /* ignore */ }
+    disposeEffectRack(effectRack);
+}
+
+function isCurrentSceneRequest(sceneId, sceneGeneration, soundId) {
+    return state.currentSceneId === sceneId
+        && state.sceneGeneration === sceneGeneration
+        && Boolean(state.scenes[sceneId]?.sounds.some(sound => sound.id === soundId));
+}
 
 export async function playSound(soundId, soundButtonElement, clickTime = null, startOffset = null) {
     if (!state.audioContext || state.audioContext.state !== 'running') { return; }
 
-    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const sceneId = state.currentSceneId;
+    const sceneGeneration = state.sceneGeneration;
+    const soundData = state.scenes[sceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.audioId) { if (state.showErrorPopups) showAlert("サウンドデータが見つかりません。"); return; }
 
     // 同一サウンドの再生開始が並走すると二重再生（片方は停止不能な孤立プレイヤー）になるため、
@@ -549,56 +701,62 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
     let audioElement = null;
     let objectUrl = null;
     let audioBuffer = null;
+    let waveformPeaks = null;
+    let pannerNode = null;
+    let individualGain = null;
+    let effectRack = null;
 
     let trimStart = 0;
     let trimEnd = 0;
     let playbackStart = 0;
     try {
-        const created = await createSoundSourceNodes(soundData);
+        const created = await createSoundSourceNodes(soundData, sceneGeneration);
         if (created.error) {
             if (state.showErrorPopups) showAlert(created.error);
             return;
         }
-        ({ sourceNode, audioElement, objectUrl, audioBuffer } = created);
-        const sourceDuration = audioBuffer?.duration || soundData.duration;
+        ({ sourceNode, audioElement, objectUrl, audioBuffer, waveformPeaks } = created);
+        if (!isCurrentSceneRequest(sceneId, sceneGeneration, soundId)) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return;
+        }
+        if (audioElement) await waitForMediaMetadata(audioElement);
+        const sourceDuration = audioBuffer?.duration || audioElement?.duration || soundData.duration;
         const trim = getTrimBounds(soundData, sourceDuration, Boolean(soundData.reverse));
         trimStart = trim.start;
         trimEnd = trim.end;
         playbackStart = Math.min(trimEnd, Math.max(trimStart, startOffset ?? trimStart));
         if (audioElement) {
             audioElement.loop = false;
-            audioElement.currentTime = playbackStart;
-        } else if (sourceNode instanceof Tone.GrainPlayer) {
+            await setMediaElementPosition(audioElement, playbackStart);
+        } else {
             sourceNode.loopStart = trimStart;
             sourceNode.loopEnd = trimEnd;
         }
+        if (_pendingStopIds.delete(soundId)) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return;
+        }
+        if (!isCurrentSceneRequest(sceneId, sceneGeneration, soundId)) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return;
+        }
 
-        const pannerNode = state.audioContext.createStereoPanner();
+        pannerNode = state.audioContext.createStereoPanner();
         pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
-        const individualGain = state.audioContext.createGain();
-        const effectRack = createEffectRack(soundData.effects);
-        const splitter = state.audioContext.createChannelSplitter(2);
-        const analyserL = state.audioContext.createAnalyser();
-        const analyserR = state.audioContext.createAnalyser();
-
-        let fftSizeMeter = state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE ? ANALYSER_FFT_SIZE : 32;
-        Object.assign(analyserL, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
-        Object.assign(analyserR, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
+        individualGain = state.audioContext.createGain();
+        effectRack = createEffectRack(soundData.effects);
 
         sourceNode.connect(pannerNode);
         pannerNode.connect(individualGain);
         individualGain.connect(effectRack.entry);
-        effectRack.exit.connect(splitter);
-        splitter.connect(analyserL, 0);
-        splitter.connect(analyserR, 1);
         effectRack.exit.connect(state.masterInputNode);
 
         individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
 
         state.activeAudios[soundId] = {
             audioElement, sourceNode, pannerNode, individualGain, effectRack,
-            analyserL, analyserR, dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
-            splitter, audioBuffer, waveformPeaks: getWaveformPeaks(soundId, audioBuffer),
+            audioBuffer, waveformPeaks: waveformPeaks || getWaveformPeaks(soundId, audioBuffer),
             meterAnimationFrameId: null, progressBarInterval: null, isFadingOut: false, objectUrl: objectUrl,
             muted: false,
             progressPercent: 0,
@@ -610,6 +768,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             trimStart, trimEnd, trimBoundaryTimeoutId: null,
             fadeInEndTime: null, naturalFadeStartTime: null,
             soundId: soundId,
+            sceneId,
+            sceneGeneration,
             peakL: 0, peakR: 0
         };
         if (audioElement) {
@@ -635,6 +795,13 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
                 stopSound(soundId, soundButtonElement, false);
             };
             audioElement.play().then(() => {
+                const currentAudio = state.activeAudios[soundId];
+                if (currentAudio?.sceneGeneration !== sceneGeneration
+                    || !isCurrentSceneRequest(sceneId, sceneGeneration, soundId)) {
+                    cleanupAfterStop(soundId, soundButtonElement);
+                    return;
+                }
+                recordStartMetric(soundId, clickTime, performance.now());
                 updateButtonUI(soundId, soundButtonElement, true);
                 updatePauseAllButton();
                 createMeterElement(soundId, soundData.name);
@@ -668,9 +835,14 @@ ${err.message}`);
     } catch (err) {
         console.error("Error in playSound:", err);
         if (state.showErrorPopups) showAlert('サウンドの再生準備中に予期せぬエラーが発生しました。');
-        cleanupAfterStop(soundId, soundButtonElement);
+        if (state.activeAudios[soundId]) {
+            cleanupAfterStop(soundId, soundButtonElement);
+        } else {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl, individualGain, pannerNode, effectRack });
+        }
     } finally {
         _startingSoundIds.delete(soundId);
+        _pendingStopIds.delete(soundId);
     }
 }
 
@@ -678,6 +850,15 @@ export function stopSound(soundId, soundButtonElement = null, useFadeOut = true)
     stopSustainLayers(soundId, useFadeOut); // sustain モードの重ね再生ボイスも道連れに停止
     const audioInfo = state.activeAudios[soundId];
     if (!audioInfo) {
+        if (_startingSoundIds.has(soundId)) {
+            _pendingStopIds.add(soundId);
+            return;
+        }
+        if (_startingRollIds.has(soundId)) {
+            _cancelStartingRollIds.add(soundId);
+            _pendingRollReleases.delete(soundId);
+            return;
+        }
         if (!state.pausedSounds[soundId]) return;
         delete state.pausedSounds[soundId];
         if (!soundButtonElement) soundButtonElement = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
@@ -740,6 +921,10 @@ export function stopAllSounds(fadeOut = true) {
     // 本体が自然終了済みでレイヤーだけ残っているケース（stopSound 経由で消えない）への対応
     Object.keys(state.sustainLayers).forEach(id => stopSustainLayers(id, fadeOut));
     Object.keys(state.pausedSounds).forEach(id => stopSound(id, null, false));
+    for (const id of _startingSoundIds) _pendingStopIds.add(id);
+    for (const id of _startingRollIds) _cancelStartingRollIds.add(id);
+    for (const id of _startingRollIds) _pendingRollReleases.delete(id);
+    for (const id of _pendingSustainStarts.keys()) stopSustainLayers(id, fadeOut);
 }
 
 // 即時停止（フェードなし）。retrigger の頭出し再再生で使用。
@@ -747,7 +932,12 @@ export function stopAllSounds(fadeOut = true) {
 export function forceStopSound(soundId, soundButtonElement = null) {
     stopSustainLayers(soundId, false);
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo) return;
+    if (!audioInfo) {
+        if (_startingSoundIds.has(soundId)) _pendingStopIds.add(soundId);
+        if (_startingRollIds.has(soundId)) _cancelStartingRollIds.add(soundId);
+        _pendingRollReleases.delete(soundId);
+        return;
+    }
     if (audioInfo.meterAnimationFrameId) cancelAnimationFrame(audioInfo.meterAnimationFrameId);
     if (audioInfo.progressBarInterval) clearInterval(audioInfo.progressBarInterval);
     try {
@@ -768,8 +958,9 @@ export function rollPartCacheKey(soundId, part) {
 
 // パート音声の AudioBuffer を取得。キャッシュが無ければDBのblobからデコードする。
 // ロールはパート切替の無音隙を防ぐため、パフォーマンスモードに関わらず必ずバッファ再生する。
-async function getRollPartBuffer(cacheKey, audioId, soundName) {
+async function getRollPartBuffer(cacheKey, audioId, soundName, expectedGeneration = state.sceneGeneration) {
     if (!audioId || !state.audioContext) return null;
+    if (expectedGeneration !== state.sceneGeneration) return null;
     if (state.decodedAudioBuffers[cacheKey]) return state.decodedAudioBuffers[cacheKey];
     try {
         const audioRecord = await dbRequest('audio_files', 'readonly', 'get', audioId);
@@ -777,7 +968,9 @@ async function getRollPartBuffer(cacheKey, audioId, soundName) {
         if (!blob) return null;
         const arrayBuffer = await blob.arrayBuffer();
         const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-        state.decodedAudioBuffers[cacheKey] = audioBuffer;
+        if (expectedGeneration === state.sceneGeneration) {
+            state.decodedAudioBuffers[cacheKey] = audioBuffer;
+        }
         return audioBuffer;
     } catch (error) {
         console.error(`Failed to decode roll part "${cacheKey}" of ${soundName}:`, error);
@@ -786,16 +979,16 @@ async function getRollPartBuffer(cacheKey, audioId, soundName) {
 }
 
 // シーン選択時の事前デコード。LOW_MEMORY は初回再生時にデコードする。
-export async function preloadRollParts(soundData) {
-    if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) return;
+export async function preloadRollParts(soundData, expectedGeneration = state.sceneGeneration) {
+    if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY || expectedGeneration !== state.sceneGeneration) return;
     const rollParts = soundData?.rollParts || {};
     const tasks = [];
-    if (rollParts.intro) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'intro'), rollParts.intro, soundData.name));
+    if (rollParts.intro) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'intro'), rollParts.intro, soundData.name, expectedGeneration));
     (rollParts.loops || []).forEach((audioId, index) => {
-        if (audioId) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, `loop:${index}`), audioId, soundData.name));
+        if (audioId) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, `loop:${index}`), audioId, soundData.name, expectedGeneration));
     });
-    if (rollParts.end) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'end'), rollParts.end, soundData.name));
-    if (rollParts.finish) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'finish'), rollParts.finish, soundData.name));
+    if (rollParts.end) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'end'), rollParts.end, soundData.name, expectedGeneration));
+    if (rollParts.finish) tasks.push(getRollPartBuffer(rollPartCacheKey(soundData.id, 'finish'), rollParts.finish, soundData.name, expectedGeneration));
     await Promise.all(tasks);
 }
 
@@ -921,7 +1114,20 @@ function pumpRoll(soundId) {
 
 // ロール再生を開始する。押下開始（キー/パッド/キーボードビュー）から呼ばれる。
 // 起こり（無ければ省略）から始まり、ループパート群を登録順に循環させて鳴らし続ける。
+const _startingRollIds = new Set();
+
 export async function startRollPlayback(soundId, soundButtonElement, clickTime = null) {
+    if (_startingRollIds.has(soundId)) return true;
+    _startingRollIds.add(soundId);
+    try {
+        return await startRollPlaybackInternal(soundId, soundButtonElement, clickTime);
+    } finally {
+        _startingRollIds.delete(soundId);
+        _pendingRollReleases.delete(soundId);
+        _cancelStartingRollIds.delete(soundId);
+    }
+}
+async function startRollPlaybackInternal(soundId, soundButtonElement, clickTime = null) {
     if (!state.audioContext) return false;
     if (state.audioContext.state !== 'running') await resumeAudioContext();
     if (state.audioContext.state !== 'running') {
@@ -930,8 +1136,9 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
         return false;
     }
     delete state.pausedSounds[soundId];
-
-    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const sceneId = state.currentSceneId;
+    const sceneGeneration = state.sceneGeneration;
+    const soundData = state.scenes[sceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.rollParts) return false;
 
     const active = state.activeAudios[soundId];
@@ -946,49 +1153,49 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
 
     // パートバッファを先に全て用意する（起こり→ループ切替の隙を防ぐ）
     const partIds = soundData.rollParts;
-    const introBuffer = partIds.intro ? await getRollPartBuffer(rollPartCacheKey(soundId, 'intro'), partIds.intro, soundData.name) : null;
+    const introBuffer = partIds.intro ? await getRollPartBuffer(rollPartCacheKey(soundId, 'intro'), partIds.intro, soundData.name, sceneGeneration) : null;
     const loopBuffers = [];
     for (let index = 0; index < (partIds.loops || []).length; index++) {
         const audioId = partIds.loops[index];
         if (!audioId) continue;
-        const buffer = await getRollPartBuffer(rollPartCacheKey(soundId, `loop:${index}`), audioId, soundData.name);
+        const buffer = await getRollPartBuffer(rollPartCacheKey(soundId, `loop:${index}`), audioId, soundData.name, sceneGeneration);
         if (buffer) loopBuffers.push(buffer);
     }
-    const endBuffer = partIds.end ? await getRollPartBuffer(rollPartCacheKey(soundId, 'end'), partIds.end, soundData.name) : null;
-    const finishBuffer = partIds.finish ? await getRollPartBuffer(rollPartCacheKey(soundId, 'finish'), partIds.finish, soundData.name) : null;
+    const endBuffer = partIds.end ? await getRollPartBuffer(rollPartCacheKey(soundId, 'end'), partIds.end, soundData.name, sceneGeneration) : null;
+    const finishBuffer = partIds.finish ? await getRollPartBuffer(rollPartCacheKey(soundId, 'finish'), partIds.finish, soundData.name, sceneGeneration) : null;
 
+    // デコード待ちの間にシーン切替・削除があった場合は中断する
+    if (_cancelStartingRollIds.has(soundId) || !isCurrentSceneRequest(sceneId, sceneGeneration, soundId)) return false;
     if (!loopBuffers.length) {
         if (state.showErrorPopups) showAlert(`サウンド「${soundData.name}」のループ音声を読み込めません。`);
         return false;
     }
-    // デコード待ちの間にシーン切替・削除があった場合は中断する
-    if (!state.scenes[state.currentSceneId]?.sounds.some(s => s.id === soundId)) return false;
 
     const ctx = state.audioContext;
-    const pannerNode = ctx.createStereoPanner();
-    pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, ctx.currentTime);
-    const individualGain = ctx.createGain();
-    const effectRack = createEffectRack(soundData.effects);
-    const splitter = ctx.createChannelSplitter(2);
-    const analyserL = ctx.createAnalyser();
-    const analyserR = ctx.createAnalyser();
-
-    let fftSizeMeter = state.performanceMode === PERFORMANCE_MODE.HIGH_PERFORMANCE ? ANALYSER_FFT_SIZE : 32;
-    Object.assign(analyserL, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
-    Object.assign(analyserR, { fftSize: fftSizeMeter, smoothingTimeConstant: 0.6 });
-
-    pannerNode.connect(individualGain);
-    individualGain.connect(effectRack.entry);
-    effectRack.exit.connect(splitter);
-    splitter.connect(analyserL, 0);
-    splitter.connect(analyserR, 1);
-    effectRack.exit.connect(state.masterInputNode);
+    let pannerNode = null;
+    let individualGain = null;
+    let effectRack = null;
+    try {
+        pannerNode = ctx.createStereoPanner();
+        pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, ctx.currentTime);
+        individualGain = ctx.createGain();
+        effectRack = createEffectRack(soundData.effects);
+        pannerNode.connect(individualGain);
+        individualGain.connect(effectRack.entry);
+        effectRack.exit.connect(state.masterInputNode);
+    } catch (err) {
+        console.error("Error creating roll voice:", err);
+        cleanupUnregisteredVoice({ individualGain, pannerNode, effectRack });
+        return false;
+    }
     individualGain.gain.setValueAtTime(0.0001, ctx.currentTime);
 
     const now = ctx.currentTime;
     const audioInfo = {
         isRoll: true,
         soundId: soundId,
+        sceneId,
+        sceneGeneration,
         audioElement: null, objectUrl: null, sourceNode: null,
         introBuffer, loopBuffers, endBuffer, finishBuffer,
         scheduled: [],           // チェーンのパート再生キュー（時刻順）
@@ -999,8 +1206,7 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
         rollSchedulerId: null,
         rollReleaseTime: null,
         rollReleased: false,
-        pannerNode, individualGain, effectRack, splitter, analyserL, analyserR,
-        dataL: new Uint8Array(analyserL.fftSize), dataR: new Uint8Array(analyserR.fftSize),
+        pannerNode, individualGain, effectRack,
         audioBuffer: introBuffer ?? loopBuffers[0],
         waveformPeaks: null,
         meterAnimationFrameId: null, progressBarInterval: null,
@@ -1010,6 +1216,7 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
         peakL: 0, peakR: 0
     };
     state.activeAudios[soundId] = audioInfo;
+    if (_pendingRollReleases.delete(soundId)) endRollPlayback(soundId);
 
     // 最初のパート（起こり or ループ）を即時スケジュールし、以降は先読みポーリングで継ぐ
     pumpRoll(soundId);
@@ -1028,7 +1235,10 @@ export async function startRollPlayback(soundId, soundButtonElement, clickTime =
 // ロールを離上する。鳴っているパートは最後まで再生し、その境界から終わり→締めへ遷移する。
 export function endRollPlayback(soundId) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo?.isRoll || audioInfo.rollReleased || audioInfo.isFadingOut) return;
+    if (!audioInfo?.isRoll || audioInfo.rollReleased || audioInfo.isFadingOut) {
+        if (!audioInfo && _startingRollIds.has(soundId) && !_cancelStartingRollIds.has(soundId)) _pendingRollReleases.add(soundId);
+        return;
+    }
 
     const ctx = state.audioContext;
     if (!ctx) return;
@@ -1058,7 +1268,7 @@ export function endRollPlayback(soundId) {
     if (!audioInfo.tailBuffers.length) {
         // 終わりも締めも無いロールは現在パートの自然終了で完了する
         if (audioInfo.rollSchedulerId) { clearInterval(audioInfo.rollSchedulerId); audioInfo.rollSchedulerId = null; }
-        if (!current) {
+        if (!current || current.endTime <= now) {
             cleanupAfterStop(soundId, null);
             return;
         }
@@ -1089,48 +1299,85 @@ export function getSustainLayerCount(soundId) {
 // 開始に成功したら true を返す。
 export async function startSustainLayer(soundId, startOffset = 0) {
     if (!state.audioContext || state.audioContext.state !== 'running') return false;
-    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    const sceneId = state.currentSceneId;
+    const sceneGeneration = state.sceneGeneration;
+    const soundData = state.scenes[sceneId]?.sounds.find(s => s.id === soundId);
     if (!soundData?.audioId) return false;
 
-    let sourceNode, audioElement, objectUrl, audioBuffer;
+    const startToken = { cancelled: false };
+    let pendingStarts = _pendingSustainStarts.get(soundId);
+    if (!pendingStarts) _pendingSustainStarts.set(soundId, pendingStarts = new Set());
+    pendingStarts.add(startToken);
+    const startStillValid = () => !startToken.cancelled && isCurrentSceneRequest(sceneId, sceneGeneration, soundId);
     try {
-        const created = await createSoundSourceNodes(soundData);
+
+    let sourceNode, audioElement, objectUrl, audioBuffer;
+    let waveformPeaks = null;
+    let pannerNode = null;
+    let individualGain = null;
+    let effectRack = null;
+    let layer = null;
+    let trimStart = 0;
+    let trimEnd = 0;
+    let playbackStart = 0;
+    try {
+        const created = await createSoundSourceNodes(soundData, sceneGeneration);
         if (created.error) {
             if (state.showErrorPopups) showAlert(created.error);
             return false;
         }
-        ({ sourceNode, audioElement, objectUrl, audioBuffer } = created);
-        const sourceDuration = audioBuffer?.duration || soundData.duration;
+        ({ sourceNode, audioElement, objectUrl, audioBuffer, waveformPeaks } = created);
+        if (!startStillValid()) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return false;
+        }
+        if (audioElement) await waitForMediaMetadata(audioElement);
+        if (!startStillValid()) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return false;
+        }
+        const sourceDuration = audioBuffer?.duration || audioElement?.duration || soundData.duration;
         const trim = getTrimBounds(soundData, sourceDuration, Boolean(soundData.reverse));
-        const trimStart = trim.start;
-        const trimEnd = trim.end;
-        const playbackStart = Math.min(trimEnd, Math.max(trimStart, startOffset ?? trimStart));
+        trimStart = trim.start;
+        trimEnd = trim.end;
+        playbackStart = Math.min(trimEnd, Math.max(trimStart, startOffset ?? trimStart));
         if (audioElement) {
             audioElement.loop = false;
-            audioElement.currentTime = playbackStart;
-        } else if (sourceNode instanceof Tone.GrainPlayer) {
+            await setMediaElementPosition(audioElement, playbackStart);
+            if (!startStillValid()) {
+                cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+                return false;
+            }
+        } else {
             sourceNode.loopStart = trimStart;
             sourceNode.loopEnd = trimEnd;
         }
+        if (!startStillValid()) {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl });
+            return false;
+        }
     } catch (err) {
         console.error("Error in startSustainLayer:", err);
+        cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl, individualGain, pannerNode, effectRack });
         return false;
     }
 
     try {
-        const pannerNode = state.audioContext.createStereoPanner();
+        pannerNode = state.audioContext.createStereoPanner();
         pannerNode.pan.setValueAtTime(Number.isFinite(soundData.pan) ? soundData.pan : 0, state.audioContext.currentTime);
-        const individualGain = state.audioContext.createGain();
-        const effectRack = createEffectRack(soundData.effects);
+        individualGain = state.audioContext.createGain();
+        effectRack = createEffectRack(soundData.effects);
         individualGain.gain.setValueAtTime(0.0001, state.audioContext.currentTime);
         sourceNode.connect(pannerNode);
         pannerNode.connect(individualGain);
         individualGain.connect(effectRack.entry);
         effectRack.exit.connect(state.masterInputNode);
 
-        const layer = {
+        layer = {
             soundId, sourceNode, audioElement, objectUrl, audioBuffer,
-            waveformPeaks: getWaveformPeaks(soundId, audioBuffer),
+            sceneId,
+            sceneGeneration,
+            waveformPeaks: waveformPeaks || getWaveformPeaks(soundId, audioBuffer),
             pannerNode, individualGain, effectRack,
             playbackPosition: playbackStart,
             playbackPositionContextTime: state.audioContext.currentTime,
@@ -1152,7 +1399,11 @@ export async function startSustainLayer(soundId, startOffset = 0) {
         if (audioElement) { // LOW_MEMORY
             audioElement.onended = finishLayer;
             audioElement.onerror = finishLayer;
-            audioElement.currentTime = playbackStart;
+            await setMediaElementPosition(audioElement, playbackStart);
+            if (!startStillValid()) {
+                cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl, individualGain, pannerNode, effectRack });
+                return false;
+            }
         } else {
             if ('onended' in sourceNode) sourceNode.onended = finishLayer;
             else sourceNode.onstop = finishLayer;
@@ -1172,6 +1423,10 @@ export async function startSustainLayer(soundId, startOffset = 0) {
                 disposeSustainLayer(soundId, layer, false);
                 return false;
             }
+            if (!startStillValid()) {
+                disposeSustainLayer(soundId, layer, false);
+                return false;
+            }
         }
         scheduleTrimBoundaryForVoice(
             layer,
@@ -1186,7 +1441,17 @@ export async function startSustainLayer(soundId, startOffset = 0) {
         return true;
     } catch (err) {
         console.error("Error in startSustainLayer:", err);
+        if (layer && state.sustainLayers[soundId]?.includes(layer)) {
+            disposeSustainLayer(soundId, layer, false);
+        } else {
+            cleanupUnregisteredVoice({ sourceNode, audioElement, objectUrl, individualGain, pannerNode, effectRack });
+        }
         return false;
+    }
+    } finally {
+        const starts = _pendingSustainStarts.get(soundId);
+        starts?.delete(startToken);
+        if (starts?.size === 0) _pendingSustainStarts.delete(soundId);
     }
 }
 
@@ -1233,6 +1498,8 @@ function disposeSustainLayer(soundId, layer, useFadeOut) {
 }
 
 export function stopSustainLayers(soundId, useFadeOut = true) {
+    const pending = _pendingSustainStarts.get(soundId);
+    pending?.forEach(token => { token.cancelled = true; });
     const layers = state.sustainLayers[soundId];
     if (!layers) return;
     [...layers].forEach(layer => disposeSustainLayer(soundId, layer, useFadeOut));
@@ -1404,14 +1671,14 @@ export function updateActiveSoundLoop(soundId, loop) {
         ? trimStart + (((position - trimStart) % duration) + duration) % duration
         : trimStart;
 
-    if (isGrainPlayer && !loop && duration > 0) {
-        // GrainPlayer は loop=false への変更時に累積位置を見て即時停止するため、
-        // 現在の周回の終端まで再生してから停止する。
-        const remaining = (trimEnd - loopPosition) / Math.max(0.001, audioInfo.playbackRate);
+    const isBufferSource = !isGrainPlayer && !audioInfo.audioElement;
+    if (!audioInfo.audioElement && !loop && duration > 0) {
+        // ループ解除: 現在の周回の終端まで再生してから停止する。
+        // 終端での実際の停止は scheduleTrimBoundary がオーディオクロックで予約する。
         audioInfo.stopAfterLoop = true;
-        audioInfo.loopStopTime = now + remaining;
-        audioInfo.sourceNode.stop(audioInfo.loopStopTime);
+        audioInfo.loopStopTime = now + (trimEnd - loopPosition) / Math.max(0.001, audioInfo.playbackRate);
         position = loopPosition;
+        if (isGrainPlayer) audioInfo.sourceNode.stop(audioInfo.loopStopTime);
     } else if (isGrainPlayer && loop && audioInfo.stopAfterLoop) {
         // 解除直後に再度ONにした場合は、終端停止の予約をリスタートで打ち消す。
         audioInfo.sourceNode.loopStart = trimStart;
@@ -1420,6 +1687,14 @@ export function updateActiveSoundLoop(soundId, loop) {
         audioInfo.sourceNode.restart(now, loopPosition);
         audioInfo.stopAfterLoop = false;
         audioInfo.loopStopTime = null;
+        audioInfo.playbackPosition = loopPosition;
+        audioInfo.playbackPositionContextTime = now;
+        position = loopPosition;
+    } else if (isBufferSource && loop && audioInfo.stopAfterLoop) {
+        // ネイティブソースの終端停止予約は取消不能なため、ループ位置から再生成する。
+        audioInfo.stopAfterLoop = false;
+        audioInfo.loopStopTime = null;
+        restartNativeSource(audioInfo, soundDataForLoopRestart(soundId), loopPosition);
         audioInfo.playbackPosition = loopPosition;
         audioInfo.playbackPositionContextTime = now;
         position = loopPosition;
@@ -1432,10 +1707,10 @@ export function updateActiveSoundLoop(soundId, loop) {
     if (audioInfo.audioElement) {
         // Native looping cannot honor a non-zero trim start, so boundaries are handled manually.
         audioInfo.audioElement.loop = false;
-    } else if (isGrainPlayer) {
+    } else {
         audioInfo.sourceNode.loopStart = trimStart;
         audioInfo.sourceNode.loopEnd = trimEnd;
-        if (loop) audioInfo.sourceNode.loop = true;
+        audioInfo.sourceNode.loop = Boolean(loop);
     }
 
     if (duration > 0) {
@@ -1486,33 +1761,40 @@ export function updateActiveSoundPan(soundId) {
 }
 
 export function updateActiveSoundSpeed(soundId) {
-    const audioInfo = state.activeAudios[soundId];
-    const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
-    if (!audioInfo || !soundData || !state.audioContext) return;
-    if (audioInfo.isRoll) return; // ロールはパート間の継ぎ目を保つため常に等速再生
-    const rate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
-    if (!audioInfo.audioElement) {
-        const now = state.audioContext.currentTime;
-        audioInfo.playbackPosition += (now - audioInfo.playbackPositionContextTime) * audioInfo.playbackRate;
-        audioInfo.playbackPositionContextTime = now;
-        audioInfo.playbackRate = rate;
-    }
-    if (audioInfo.audioElement) {
-        audioInfo.audioElement.preservesPitch = Boolean(soundData.preservePitch);
-        audioInfo.audioElement.playbackRate = rate;
-    } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
-        audioInfo.sourceNode.playbackRate = rate;
-        audioInfo.sourceNode.detune = soundData.preservePitch ? 0 : 1200 * Math.log2(rate);
-    } else if (audioInfo.sourceNode?.playbackRate) {
-        try {
-            audioInfo.sourceNode.playbackRate.setTargetAtTime(rate, state.audioContext.currentTime, 0.05);
-        } catch (e) {
-            try { audioInfo.sourceNode.playbackRate.value = rate; } catch (_) { /* ignore */ }
-        }
-    }
-    scheduleNaturalFadeOut(soundId);
-    scheduleTrimBoundary(soundId);
-}
+           const audioInfo = state.activeAudios[soundId];
+           const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+           if (!audioInfo || !soundData || !state.audioContext) return;
+           if (audioInfo.isRoll) return; // ロールはパート間の継ぎ目を保つため常に等速再生
+           const rate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
+           if (!audioInfo.audioElement) {
+               const now = state.audioContext.currentTime;
+               const currentPosition = getCurrentSourcePosition(audioInfo);
+               audioInfo.playbackPosition = currentPosition;
+               audioInfo.playbackPositionContextTime = now;
+               const shouldUseGrain = needsPitchPreserve(soundData, rate);
+               const isGrainPlayer = audioInfo.sourceNode instanceof Tone.GrainPlayer;
+               if (audioInfo.audioBuffer && isGrainPlayer !== shouldUseGrain) {
+                   const restartPosition = normalizeVoicePosition(audioInfo, soundData) ?? currentPosition;
+                   replaceBufferPlaybackSource(audioInfo, soundData, restartPosition, rate);
+               } else if (audioInfo.sourceNode instanceof Tone.GrainPlayer) {
+                   audioInfo.sourceNode.playbackRate = rate;
+                   audioInfo.sourceNode.detune = soundData.preservePitch ? 0 : 1200 * Math.log2(rate);
+                   audioInfo.playbackRate = rate;
+               } else if (audioInfo.sourceNode?.playbackRate) {
+                   try {
+                       audioInfo.sourceNode.playbackRate.setTargetAtTime(rate, now, 0.05);
+                   } catch (e) {
+                       try { audioInfo.sourceNode.playbackRate.value = rate; } catch (_) { /* ignore */ }
+                   }
+                   audioInfo.playbackRate = rate;
+               }
+           } else {
+               audioInfo.audioElement.preservesPitch = Boolean(soundData.preservePitch);
+               audioInfo.audioElement.playbackRate = rate;
+           }
+           scheduleNaturalFadeOut(soundId);
+           scheduleTrimBoundary(soundId);
+       }
 
 function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
     const audioInfo = state.activeAudios[soundId];
@@ -1546,7 +1828,6 @@ function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
         try { audioInfo.individualGain?.disconnect(); } catch (e) { /* ignore */ }
         try { audioInfo.pannerNode?.disconnect(); } catch (e) { /* ignore */ }
         disposeEffectRack(audioInfo.effectRack);
-        try { audioInfo.splitter?.disconnect(); } catch (e) { /* ignore */ }
 
         delete state.activeAudios[soundId];
         // 本体が自然終了しても、残っているレイヤー数をバッジへ反映する。
@@ -1590,16 +1871,19 @@ export function getReversedAudioBuffer(soundId, originalBuffer) {
     return reversed;
 }
 
-export async function getAudioBufferFromDataUrl(soundId, dataUrl) {
+export async function getAudioBufferFromDataUrl(soundId, dataUrl, expectedGeneration = null) {
     if (!state.audioContext) return null;
     if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) return null;
+    if (expectedGeneration !== null && expectedGeneration !== state.sceneGeneration) return null;
     if (state.decodedAudioBuffers[soundId]) return state.decodedAudioBuffers[soundId];
-    
+
     try {
         const fetchResponse = await fetch(dataUrl);
         const arrayBuffer = await fetchResponse.arrayBuffer();
         const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-        state.decodedAudioBuffers[soundId] = audioBuffer;
+        if (expectedGeneration === null || expectedGeneration === state.sceneGeneration) {
+            state.decodedAudioBuffers[soundId] = audioBuffer;
+        }
         return audioBuffer;
     } catch (error) {
         return null;
@@ -1813,7 +2097,8 @@ function startProgressBarUpdate(soundId, soundButtonElement) {
         const timeDisplay = soundButtonElement?.querySelector('.time-display');
         if (!soundButtonElement || !timeDisplay) return;
 
-        const sourcePosition = getCurrentSourcePosition(audioInfo);
+        const sourcePosition = getCurrentSourcePosition(audioInfo)
+            - getAudibleLatencySeconds() * audioInfo.playbackRate;
         const elapsed = sourcePosition - trimStart;
         const currentTime = soundData?.loop || audioInfo.stopAfterLoop
             ? ((elapsed % duration) + duration) % duration
@@ -1843,7 +2128,6 @@ function startMeterUpdate(soundId) {
     const rightPeak = meterElement?.querySelector('.meter-bar.right .meter-peak');
     if (!leftValue || !rightValue) return;
 
-    const { analyserL, analyserR, dataL, dataR } = audioInfo;
     let lastTime = performance.now();
 
     // Piecewise scale: -60..-12 dB → 0..55%, -12..0 dB → 55..100%.
@@ -1872,18 +2156,10 @@ function startMeterUpdate(soundId) {
         const dt = Math.min(0.1, (now - lastTime) / 1000);
         lastTime = now;
 
-        analyserL.getByteTimeDomainData(dataL);
-        analyserR.getByteTimeDomainData(dataR);
-
-        let sumL = 0, sumR = 0;
-        for (let i = 0; i < dataL.length; i++) {
-            const vL = (dataL[i] - 128) / 128;
-            const vR = (dataR[i] - 128) / 128;
-            sumL += vL * vL;
-            sumR += vR * vR;
-        }
-        const pctL = dbToPct(Math.sqrt(sumL / dataL.length));
-        const pctR = dbToPct(Math.sqrt(sumR / dataR.length));
+        // Worklet が計測した RMS (256サンプル窓) を参照する
+        const meterValues = audioInfo.effectRack?.meter || { rmsL: 0, rmsR: 0 };
+        const pctL = dbToPct(meterValues.rmsL);
+        const pctR = dbToPct(meterValues.rmsR);
 
         leftValue.style.clipPath = `inset(${100 - pctL}% 0 0 0)`;
         rightValue.style.clipPath = `inset(${100 - pctR}% 0 0 0)`;
@@ -1902,7 +2178,7 @@ function startMeterUpdate(soundId) {
 }
 
 export function startMasterMeter() {
-    if (state.masterMeterFrameId || !state.masterAnalyserL || !state.audioContext) return;
+    if (state.masterMeterFrameId || !state.masterChain || !state.audioContext) return;
     const meterElement = dom.levelMeterArea?.querySelector('.master-meter');
     const leftValue = meterElement?.querySelector('.meter-bar.left .meter-value');
     const rightValue = meterElement?.querySelector('.meter-bar.right .meter-value');
@@ -1910,8 +2186,6 @@ export function startMasterMeter() {
     const rightPeak = meterElement?.querySelector('.meter-bar.right .meter-peak');
     if (!leftValue || !rightValue) return;
 
-    const dataL = state.masterMeterDataL;
-    const dataR = state.masterMeterDataR;
     let lastTime = performance.now();
 
     // Piecewise scale: -60..-12 dB → 0..55%, -12..0 dB → 55..100%.
@@ -1929,18 +2203,9 @@ export function startMasterMeter() {
         const dt = Math.min(0.1, (now - lastTime) / 1000);
         lastTime = now;
 
-        state.masterAnalyserL.getByteTimeDomainData(dataL);
-        state.masterAnalyserR.getByteTimeDomainData(dataR);
-
-        let sumL = 0, sumR = 0;
-        for (let i = 0; i < dataL.length; i++) {
-            const vL = (dataL[i] - 128) / 128;
-            const vR = (dataR[i] - 128) / 128;
-            sumL += vL * vL;
-            sumR += vR * vR;
-        }
-        const pctL = dbToPct(Math.sqrt(sumL / dataL.length));
-        const pctR = dbToPct(Math.sqrt(sumR / dataR.length));
+        const meterValues = state.masterChain?.meter || { rmsL: 0, rmsR: 0 };
+        const pctL = dbToPct(meterValues.rmsL);
+        const pctR = dbToPct(meterValues.rmsR);
 
         leftValue.style.clipPath = `inset(${100 - pctL}% 0 0 0)`;
         rightValue.style.clipPath = `inset(${100 - pctR}% 0 0 0)`;
@@ -1989,9 +2254,12 @@ function precomputeWaveformPeaks(audioBuffer) {
     const channelData = audioBuffer.getChannelData(0);
     const sampleRate = audioBuffer.sampleRate;
     const duration = audioBuffer.duration;
-    const peaksPerSecond = 500;
+    // ピーク間隔は整数サンプルで確定し、実効レイトを保存する。44.1kHz など
+    // sampleRate/500 が割り切れない場合、固定値 500 で索引すると時間のたびに
+    // ズレが累積する(4分で約0.54秒)ため、必ず実効値を使う。
+    const samplesPerPeak = Math.max(1, Math.round(sampleRate / 500));
+    const peaksPerSecond = sampleRate / samplesPerPeak;
     const totalPeaks = Math.max(1, Math.ceil(duration * peaksPerSecond));
-    const samplesPerPeak = Math.max(1, Math.floor(sampleRate / peaksPerSecond));
     const peaks = new Float32Array(totalPeaks * 2);
 
     for (let p = 0; p < totalPeaks; p++) {
@@ -2072,6 +2340,7 @@ function startWaveformDisplayLoop() {
         // maps to the same x every frame until the waveform advances
         // by a full pixel. Eliminates per-frame peak shimmer.
         const secondsPerPixel = WAVEFORM_SECONDS_AHEAD / canvasWidth;
+        const audibleLatencySeconds = getAudibleLatencySeconds();
 
         for (let x = 0; x < columns; x++) {
             let summedMinPeak = 0;
@@ -2082,18 +2351,20 @@ function startWaveformDisplayLoop() {
 
             for (const audioInfo of voices) {
                 const { audioBuffer, waveformPeaks, individualGain } = audioInfo;
-                if (!audioBuffer || !waveformPeaks) continue;
+                if (!waveformPeaks) continue;
 
                 const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === audioInfo.soundId);
                 if (!soundData) continue;
 
                 const gainValue = individualGain.gain.value;
                 const trimStart = Number.isFinite(audioInfo.trimStart) ? audioInfo.trimStart : 0;
-                const trimEnd = Number.isFinite(audioInfo.trimEnd) ? audioInfo.trimEnd : audioBuffer.duration;
+                const fullDuration = audioBuffer?.duration || waveformPeaks.duration || soundData.duration;
+                const trimEnd = Number.isFinite(audioInfo.trimEnd) ? audioInfo.trimEnd : fullDuration;
                 const duration = trimEnd - trimStart;
                 if (duration <= 0) continue;
-                const rawBaseTime = getCurrentSourcePosition(audioInfo);
                 const playbackRate = getCurrentPlaybackRate(audioInfo);
+                // 描画基準は「いま聴こえている位置」。出力レイテンシ分の先読みを差し引く。
+                const rawBaseTime = getCurrentSourcePosition(audioInfo) - audibleLatencySeconds * playbackRate;
 
                 // The canvas always represents the next five seconds of real playback.
                 const sourceSecondsPerPixel = secondsPerPixel * playbackRate;

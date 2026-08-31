@@ -700,17 +700,23 @@ async function handleModalDeleteScene(sceneId) {
         const sceneToDelete = state.scenes[sceneId];
         if (!sceneToDelete) return;
         const soundsToDelete = [...sceneToDelete.sounds];
+        const audioIdsToDelete = new Set();
+        for (const sound of soundsToDelete) {
+            if (sound.audioId) audioIdsToDelete.add(sound.audioId);
+            const parts = sound.rollParts || {};
+            for (const audioId of [parts.intro, parts.end, parts.finish, ...(parts.loops || [])]) {
+                if (audioId) audioIdsToDelete.add(audioId);
+            }
+        }
         markSceneDeleted(sceneId);
         delete state.scenes[sceneId];
         await dbRequest('scenes', 'readwrite', 'delete', sceneId);
 
-        for (const sound of soundsToDelete) {
-            if (sound.audioId) {
-                try {
-                    await dbRequest('audio_files', 'readwrite', 'delete', sound.audioId);
-                } catch (err) {
-                    // Error deleting audio blob
-                }
+        for (const audioId of audioIdsToDelete) {
+            try {
+                await dbRequest('audio_files', 'readwrite', 'delete', audioId);
+            } catch (err) {
+                // Error deleting audio blob
             }
         }
         
@@ -1121,7 +1127,7 @@ function releaseAllHoldInputs() {
 
 async function handleSoundButtonClick(soundId, soundButtonElement) {
     const clickTime = performance.now(); // Capture timestamp at click
-    if (!state.audioContext) { if (!initAudioContext()) { showAlert("オーディオ機能の初期化に失敗。", "エラー"); return; } }
+    if (!state.audioContext) { if (!(await initAudioContext())) { showAlert("オーディオ機能の初期化に失敗。", "エラー"); return; } }
     await resumeAudioContext();
     if (state.audioContext.state !== 'running') { showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知"); return; }
 
@@ -1167,7 +1173,7 @@ async function handleSoundButtonClick(soundId, soundButtonElement) {
 // リトリガーモード用の再生開始。再生中なら即時停止（フェードなし）して頭出し再生。
 async function startRetriggerPlayback(soundId, soundButtonElement) {
     const clickTime = performance.now();
-    if (!state.audioContext) { if (!initAudioContext()) { return; } }
+    if (!state.audioContext) { if (!(await initAudioContext())) { return; } }
     await resumeAudioContext();
     if (state.audioContext?.state !== 'running') { return; }
     // Option押下中は頭出し再生ではなく一時停止/再開（全モード共通の挙動）

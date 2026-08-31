@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "vite build && node scripts/build-service-worker.mjs",
     "preview": "vite preview --host 127.0.0.1",
-    "check": "for f in script.js service-worker.js modules/*.js; do node --check \"$f\" || exit 1; done",
+    "check": "for f in script.js service-worker.js modules/*.js modules/worklets/*.js scripts/*.mjs; do node --check \"$f\" || exit 1; done",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

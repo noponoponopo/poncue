@@ -1,24 +1,10 @@
-const VERSION = '3.13.0';
+const VERSION = '3.15.0';
 const CACHE_NAME = `ponndashi-cache-v${VERSION}`;
 
 const urlsToCache = [
   './',
   './index.html',
-  './script.js',
-  './style.css',
-  './manifest.json',
-  './modules/01_config.js',
-  './modules/02_dom.js',
-  './modules/03_state.js',
-  './modules/04_db.js',
-  './modules/05_ui.js',
-  './modules/06_audio.js',
-  './modules/07_scenes.js',
-  './modules/08_handlers.js',
-  './modules/09_effects.js',
-  './modules/10_tone_transport.js',
-  './modules/11_keyboard_view.js',
-  './modules/11_recording.js',
+  // @poncue-build-assets
   // External resources
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap'
@@ -29,7 +15,10 @@ self.addEventListener('install', event => {
     caches.open(CACHE_NAME)
       .then(cache => {
         const requests = urlsToCache.map(url => new Request(url, { cache: 'reload' }));
-        return cache.addAll(requests);
+        // The build script injects every generated Vite asset (including the worklet).
+        // Cache each available asset independently so one optional external URL
+        // cannot abort SW installation.
+        return Promise.all(requests.map(request => cache.add(request).catch(() => null)));
       })
       .then(() => self.skipWaiting())
   );

@@ -172,7 +172,7 @@ async function checkForAndMigrateV1Data() {
 
 // --- 初期化 ---
 export async function initializeApp() {
-    if (!initAudioContext()) {
+    if (!(await initAudioContext())) {
         throw new Error("Critical: Failed to initialize AudioContext.");
     }
     
@@ -561,6 +561,8 @@ async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
 }
 
 export async function selectScene(sceneId) {
+    const sceneGeneration = state.sceneGeneration + 1;
+    updateState({ sceneGeneration });
     stopAllSounds(false);
     updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {}, waveformPeaksCache: {} });
     triggerWaveformUpdate();
@@ -579,20 +581,22 @@ export async function selectScene(sceneId) {
     updateState({ currentSceneId: sceneId });
     
     const sceneWithData = await getSceneWithPopulatedDataUrls(sceneId);
+    if (sceneGeneration !== state.sceneGeneration || state.currentSceneId !== sceneId) return;
     if (sceneWithData) {
         state.scenes[sceneId] = sceneWithData;
         if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) { // Only pre-decode if not in low memory mode
             await Promise.all(sceneWithData.sounds.map(async sound => {
                 if (sound.type === 'roll') {
                     // ロールはパート単位で事前デコードする
-                    await preloadRollParts(sound);
+                    await preloadRollParts(sound, sceneGeneration);
                     return;
                 }
                 if (!sound.dataUrl) return;
-                const audioBuffer = await getAudioBufferFromDataUrl(sound.id, sound.dataUrl);
+                const audioBuffer = await getAudioBufferFromDataUrl(sound.id, sound.dataUrl, sceneGeneration);
                 if (!audioBuffer) sound.error = 'Audio decode failed';
             }));
         }
+        if (sceneGeneration !== state.sceneGeneration || state.currentSceneId !== sceneId) return;
     }
     updateState({ shortcuts: state.scenes[sceneId]?.shortcuts ?? {} });
 
@@ -752,12 +756,14 @@ export async function saveRollSound(soundId, settings) {
     const existingSound = soundId ? scene.sounds.find(s => s.id === soundId) : null;
     if (soundId && !existingSound) return null;
 
+    const createdAudioIds = new Set();
     // パートスロットを保存済み音声参照に解決する（新規FileはDBへ保存し、長さも測る）
     const resolveSlot = async (slot) => {
         if (!slot) return null;
         if (slot.file) {
             const audioId = generateUniqueId('aud');
             await dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'put', { id: audioId, blob: slot.file });
+            createdAudioIds.add(audioId);
             let duration = 0;
             try {
                 duration = await readAudioDuration(slot.file);
@@ -776,15 +782,27 @@ export async function saveRollSound(soundId, settings) {
         return null;
     };
 
-    const intro = await resolveSlot(settings.parts?.intro);
-    const end = await resolveSlot(settings.parts?.end);
-    const finish = await resolveSlot(settings.parts?.finish);
+    const discardCreatedAudio = () => Promise.all([...createdAudioIds].map(audioId =>
+        dbRequest(AUDIO_FILES_STORE_NAME, 'readwrite', 'delete', audioId).catch(() => {})
+    ));
+    let intro;
+    let end;
+    let finish;
     const loops = [];
-    for (const slot of (settings.parts?.loops || [])) {
-        const resolved = await resolveSlot(slot);
-        if (resolved) loops.push(resolved);
+    try {
+        intro = await resolveSlot(settings.parts?.intro);
+        end = await resolveSlot(settings.parts?.end);
+        finish = await resolveSlot(settings.parts?.finish);
+        for (const slot of (settings.parts?.loops || [])) {
+            const resolved = await resolveSlot(slot);
+            if (resolved) loops.push(resolved);
+        }
+    } catch (error) {
+        await discardCreatedAudio();
+        throw error;
     }
     if (!loops.length) {
+        await discardCreatedAudio();
         showAlert("ループ音声を1つ以上指定してください。", 'エラー');
         return null;
     }
@@ -972,11 +990,21 @@ export async function addAudioBlobToScene(blob, name, sceneId = state.currentSce
     return newSound;
 }
 
-export async function removeSound(soundId) {    if (state.decodedAudioBuffers[soundId] && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
-        delete state.decodedAudioBuffers[soundId];
-        delete state.waveformPeaksCache[soundId];
-        triggerWaveformUpdate();
+export async function removeSound(soundId) {
+    let cacheChanged = false;
+    for (const cache of [state.decodedAudioBuffers, state.reversedAudioBuffers]) {
+        for (const key of Object.keys(cache)) {
+            if (key === soundId || key.startsWith(`${soundId}:`)) {
+                delete cache[key];
+                cacheChanged = true;
+            }
+        }
     }
+    if (state.waveformPeaksCache[soundId]) {
+        delete state.waveformPeaksCache[soundId];
+        cacheChanged = true;
+    }
+    if (cacheChanged) triggerWaveformUpdate();
     if (!state.currentSceneId) return;
 
     const scene = state.scenes[state.currentSceneId];
