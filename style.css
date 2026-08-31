@@ -1106,6 +1106,7 @@
 
     .effect-text-input {
       width: 100%;
+      grid-column: 2 / -1; /* label+inputのみの行で56px列に押し込めないよう右端まで広げる */
       padding: 4px 8px;
       border: 1px solid var(--border-color);
       border-radius: 4px;
@@ -1114,6 +1115,23 @@
       font-size: 0.85em;
     }
 
+    /* モーダル見出し内の名前編集（「… の設定」の…部分） */
+    .modal-title-name-input {
+      font: inherit;
+      color: inherit;
+      background: transparent;
+      border: none;
+      border-bottom: 1px dashed var(--border-color);
+      border-radius: 0;
+      padding: 0 2px;
+      margin-right: 6px;
+      max-width: 55%;
+    }
+    .modal-title-name-input:focus {
+      outline: none;
+      border-bottom-style: solid;
+      border-bottom-color: var(--text-color);
+    }
     .effect-select {
       grid-column: 2 / -1;
       width: 100%;

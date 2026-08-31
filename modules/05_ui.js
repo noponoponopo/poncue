@@ -148,7 +148,16 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             return;
         }
 
-        dom.customModalTitle.textContent = `${sound.name} の設定`;
+        dom.customModalTitle.textContent = '';
+        const titleNameInput = document.createElement('input');
+        titleNameInput.type = 'text';
+        titleNameInput.className = 'modal-title-name-input';
+        titleNameInput.value = sound.name;
+        titleNameInput.maxLength = 60;
+        titleNameInput.setAttribute('aria-label', 'サウンド名');
+        titleNameInput.style.width = `${Math.min(24, Math.max(4, sound.name.length + 2))}ch`;
+        dom.customModalTitle.appendChild(titleNameInput);
+        dom.customModalTitle.appendChild(document.createTextNode(' の設定'));
         const effectSettings = normalizeEffectSettings(sound.effects);
         const triggerMode = TRIGGER_MODES.includes(sound.triggerMode) ? sound.triggerMode : 'toggle';
         const initialPan = Number.isFinite(sound.pan) ? sound.pan : 0;
@@ -162,10 +171,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
-                <div class="effect-param-row">
-                    <label for="sound-name-input" class="effect-param-label">名前</label>
-                    <input type="text" id="sound-name-input" class="modal-input effect-text-input" value="${escapeHtml(sound.name)}" maxlength="60">
-                </div>
                 <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
@@ -270,7 +275,6 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         `;
 
         // --- DOM 参照(トグル系・テキスト系) ---
-        const soundNameInput = dom.customModalMessage.querySelector('#sound-name-input');
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
         const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
@@ -555,7 +559,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             cleanup();
             dom.customModalOverlay.classList.remove('active');
             resolve({
-                newName: soundNameInput.value.trim(),
+                newName: titleNameInput.value.trim(),
                 newShortcut, newTriggerMode, newColor,
                 newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing,
                 newPan: panKnob.getValue(),
