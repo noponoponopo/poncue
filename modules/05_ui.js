@@ -163,6 +163,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
                 <div class="effect-param-row">
+                    <label for="sound-name-input" class="effect-param-label">名前</label>
+                    <input type="text" id="sound-name-input" class="modal-input effect-text-input" value="${escapeHtml(sound.name)}" maxlength="60">
+                </div>
+                <div class="effect-param-row">
                     <label for="shortcut-input" class="effect-param-label">ショートカット</label>
                     <input type="text" id="shortcut-input" class="modal-input effect-text-input" readonly value="${currentShortcut}" placeholder="キーを押してください">
                 </div>
@@ -266,6 +270,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         `;
 
         // --- DOM 参照(トグル系・テキスト系) ---
+        const soundNameInput = dom.customModalMessage.querySelector('#sound-name-input');
         const shortcutInput = dom.customModalMessage.querySelector('#shortcut-input');
         const triggerModeInput = dom.customModalMessage.querySelector('#trigger-mode-input');
         const padColorInput = dom.customModalMessage.querySelector('#pad-color-input');
@@ -550,6 +555,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             cleanup();
             dom.customModalOverlay.classList.remove('active');
             resolve({
+                newName: soundNameInput.value.trim(),
                 newShortcut, newTriggerMode, newColor,
                 newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing,
                 newPan: panKnob.getValue(),

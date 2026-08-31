@@ -820,7 +820,12 @@ async function handleSoundSettings(soundId) {
     });
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
+        const { newName, newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
+
+        // 表示名の更新（空欄なら現状維持）
+        if (typeof newName === 'string' && newName && newName !== sound.name) {
+            sound.name = newName;
+        }
 
         // Update shortcut
         if (currentShortcut && state.shortcuts[currentShortcut] === soundId) {
