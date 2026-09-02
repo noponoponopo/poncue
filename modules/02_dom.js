@@ -58,7 +58,19 @@ export function initDom() {
         audioOutputSelect: 'audio-output-select',
         audioOutputRefreshBtn: 'audio-output-refresh-btn',
         audioOutputPickerBtn: 'audio-output-picker-btn',
-        audioOutputStatus: 'audio-output-status'
+        audioOutputStatus: 'audio-output-status',
+        // リモート操作
+        remoteBtn: 'remote-btn',
+        remoteOverlay: 'remote-overlay',
+        remoteCloseBtn: 'remote-close-btn',
+        remoteStatusText: 'remote-status-text',
+        remoteMeta: 'remote-meta',
+        remoteBody: 'remote-body',
+        remoteModeSelect: 'remote-mode-select',
+        remoteRoomInput: 'remote-room-input',
+        remoteRoomGenBtn: 'remote-room-gen-btn',
+        remotePanelBtn: 'remote-panel-btn',
+        remoteSettingStatus: 'remote-setting-status'
     };
 
     for (const key in elementMap) {

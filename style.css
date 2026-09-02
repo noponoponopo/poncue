@@ -2708,3 +2708,395 @@
     height: 16px; /* Adjust as needed */
   }
 }
+
+    /* ==============================
+       リモート操作 (12_remote.js)
+       ============================== */
+
+    .remote-setting {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--secondary-color);
+      font-size: 0.9em;
+    }
+
+    .remote-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .remote-controls select,
+    .remote-controls input[type="text"] {
+      min-width: 0;
+      padding: 8px 10px;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    .remote-controls select {
+      flex: 1 1 220px;
+    }
+
+    .remote-controls input[type="text"] {
+      flex: 1 1 130px;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .remote-controls button {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      color: var(--text-color);
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    /* ヘッダーのリモートボタンと状態ドット */
+    #remote-btn {
+      position: relative;
+    }
+
+    .remote-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-left: 4px;
+      border-radius: 50%;
+      background: var(--secondary-color);
+      vertical-align: middle;
+    }
+
+    .remote-dot.is-off {
+      background: var(--secondary-color);
+      opacity: 0.5;
+    }
+
+    .remote-dot.is-open {
+      background: var(--success-color);
+      box-shadow: 0 0 6px var(--success-color);
+    }
+
+    .remote-dot.is-busy {
+      background: var(--warning-color);
+      animation: remote-dot-blink 1s ease-in-out infinite;
+    }
+
+    .remote-dot.is-error {
+      background: var(--danger-color);
+    }
+
+    @keyframes remote-dot-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+
+    /* リモート操作パネル (オーバーレイ) */
+    #remote-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      background: var(--bg-color);
+      display: flex;
+      flex-direction: column;
+    }
+
+    #remote-overlay[hidden] {
+      display: none;
+    }
+
+    .remote-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+    }
+
+    .remote-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--card-bg);
+    }
+
+    .remote-title {
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .remote-title i {
+      color: var(--primary-color);
+    }
+
+    .remote-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85em;
+      color: var(--secondary-color);
+      white-space: nowrap;
+    }
+
+    .remote-status .remote-dot {
+      margin-left: 0;
+    }
+
+    .remote-meta {
+      flex: 1;
+      font-size: 0.8em;
+      color: var(--secondary-color);
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .remote-close-btn {
+      flex: 0 0 auto;
+      width: 34px;
+      height: 34px;
+      font-size: 1.2em;
+      line-height: 1;
+      color: var(--text-color);
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .remote-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .remote-hint {
+      color: var(--secondary-color);
+      font-size: 0.9em;
+      margin: 0;
+    }
+
+    /* ホストパネル: ルームID表示 */
+    .remote-room-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .remote-room-id {
+      font-family: ui-monospace, monospace;
+      font-size: 1.6em;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      padding: 10px 16px;
+      background: var(--card-bg);
+      border: 1px dashed var(--border-color);
+      border-radius: 10px;
+      user-select: all;
+    }
+
+    /* コントローラー: シーンチップ */
+    .remote-scenes {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      flex: 0 0 auto;
+    }
+
+    .remote-scene-chip {
+      flex: 0 0 auto;
+      padding: 8px 14px;
+      font-size: 0.9em;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .remote-scene-chip.active {
+      background: var(--primary-color);
+      border-color: var(--primary-color);
+      color: #fff;
+    }
+
+    /* コントローラー: パッドグリッド */
+    .remote-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .remote-pad {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      min-height: 84px;
+      padding: 10px 8px;
+      text-align: center;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      cursor: pointer;
+      overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .remote-pad:active {
+      transform: scale(0.97);
+    }
+
+    .remote-pad-name {
+      font-size: 0.85em;
+      font-weight: 600;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .remote-pad-key {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      font-size: 0.65em;
+      color: var(--secondary-color);
+      background: var(--control-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .remote-pad-mode {
+      font-size: 0.6em;
+      letter-spacing: 0.08em;
+      color: var(--secondary-color);
+    }
+
+    .remote-pad-layers {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      font-size: 0.65em;
+      font-weight: 700;
+      color: #fff;
+      background: var(--info-color);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .remote-pad.playing {
+      border-color: var(--primary-color);
+      background: color-mix(in srgb, var(--primary-color) 16%, var(--card-bg));
+    }
+
+    .remote-pad.paused {
+      border-color: var(--warning-color);
+      background: color-mix(in srgb, var(--warning-color) 14%, var(--card-bg));
+    }
+
+    .remote-pad.muted {
+      opacity: 0.55;
+    }
+
+    .remote-pad.loop-on::before {
+      content: 'LOOP';
+      position: absolute;
+      bottom: 6px;
+      right: 8px;
+      font-size: 0.55em;
+      font-weight: 700;
+      color: var(--success-color);
+    }
+
+    /* コントローラー: フッター操作 */
+    .remote-footer {
+      position: sticky;
+      bottom: 0;
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 10px 0;
+      background: var(--bg-color);
+      border-top: 1px solid var(--border-color);
+      flex: 0 0 auto;
+    }
+
+    .remote-btn-danger {
+      padding: 12px 20px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--danger-color);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    .remote-btn-secondary {
+      padding: 12px 16px;
+      color: var(--text-color);
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    .remote-vol {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 160px;
+      min-width: 140px;
+      font-size: 0.85em;
+      color: var(--secondary-color);
+    }
+
+    .remote-vol input[type="range"] {
+      flex: 1;
+      min-width: 0;
+    }
+
+    @media (max-width: 600px) {
+      .remote-grid {
+        grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+      }
+
+      .remote-pad {
+        min-height: 72px;
+      }
+
+      .remote-room-id {
+        font-size: 1.25em;
+      }
+
+      .remote-footer .remote-btn-danger,
+      .remote-footer .remote-btn-secondary {
+        padding: 12px 14px;
+      }
+    }

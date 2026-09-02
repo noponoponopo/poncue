@@ -3,6 +3,7 @@
 import { initDom, checkElements } from './modules/02_dom.js';
 import { initializeApp, disableAppControls, renderFallbackUI } from './modules/07_scenes.js';
 import { setupEventListeners } from './modules/08_handlers.js';
+import { initRemote } from './modules/12_remote.js';
 
 // --- MAIN EXECUTION ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -44,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeApp().then(() => {
         // 4. Setup event listeners after successful initialization
         setupEventListeners();
+        initRemote();
         console.log("Application initialized and ready.");
     }).catch(error => {
         console.error("--- Unhandled Application Initialization Error ---", error);

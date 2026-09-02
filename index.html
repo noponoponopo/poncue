@@ -67,6 +67,9 @@
           title="マスター音量 (ダブルクリックで100%)"
         ></div>
         <div id="master-limiter-control" class="header-limiter-control" aria-label="マスターリミッター"></div>
+        <button id="remote-btn" title="リモート操作" aria-label="リモート操作" aria-pressed="false">
+          <i class="fas fa-tower-broadcast"></i><span class="remote-dot"></span>
+        </button>
         <button id="scene-settings-btn" title="シーン設定">
           <i class="fas fa-cog"></i>
         </button>
@@ -266,6 +269,29 @@
               </div>
               <span id="audio-output-status" class="setting-status" role="status"></span>
             </div>
+            <div class="remote-setting">
+              <label for="remote-mode-select">リモート操作:</label>
+              <div class="remote-controls">
+                <select id="remote-mode-select" aria-label="リモート操作のモード">
+                  <option value="off">オフ</option>
+                  <option value="host">ホスト（この端末で再生）</option>
+                  <option value="controller">コントローラー（遠隔から操作）</option>
+                </select>
+                <input
+                  type="text"
+                  id="remote-room-input"
+                  placeholder="ルームID"
+                  maxlength="32"
+                  autocomplete="off"
+                  autocapitalize="characters"
+                  spellcheck="false"
+                  aria-label="リモート操作のルームID"
+                />
+                <button type="button" id="remote-room-gen-btn" title="新しいルームIDを生成">生成</button>
+                <button type="button" id="remote-panel-btn" title="リモート操作パネルを開く">パネル</button>
+              </div>
+              <span id="remote-setting-status" class="setting-status" role="status"></span>
+            </div>
           </div>
           <div class="io-controls">
             <button id="modal-import-btn" title="インポート">
@@ -281,6 +307,19 @@
             </button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- リモート操作パネル -->
+    <div id="remote-overlay" hidden>
+      <div class="remote-panel">
+        <header class="remote-header">
+          <span class="remote-title"><i class="fas fa-tower-broadcast"></i> リモート操作</span>
+          <span class="remote-status"><span class="remote-dot"></span><span id="remote-status-text">オフ</span></span>
+          <span id="remote-meta" class="remote-meta"></span>
+          <button id="remote-close-btn" class="remote-close-btn" aria-label="閉じる">×</button>
+        </header>
+        <div id="remote-body" class="remote-body"></div>
       </div>
     </div>
 

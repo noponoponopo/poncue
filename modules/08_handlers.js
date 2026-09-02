@@ -1604,3 +1604,7 @@ function checkEmptyState(soundCount, message = "") {
         if (messageElement) messageElement.remove();
     }
 }
+
+// リモート操作 (12_remote.js) からローカル再生パイプラインを呼び出すための公開。
+// 実体は再生・ホールド系トリガーの本体そのもの。remote からは DOM 要素の代わりに null を渡せる。
+export { startHoldPlayback, endHoldPlayback, startRetriggerPlayback, handleSoundButtonClick };

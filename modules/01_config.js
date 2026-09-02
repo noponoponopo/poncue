@@ -97,3 +97,22 @@ export const DEFAULT_EFFECT_SETTINGS = {
         threshold: -1
     }
 };
+
+// --- リモート操作 (cfws: ws.nopo.dev 経由の WebSocket 中継) ---
+export const REMOTE_WS_BASE = 'wss://ws.nopo.dev';
+export const REMOTE_SERVICE = 'poncue';
+// 心跳間隔。RTT計測とNAT/プロキシ経由の接続保持を兼ねる。無応答判定はその3倍。
+export const REMOTE_HEARTBEAT_MS = 5000;
+export const REMOTE_DEAD_AFTER_MS = REMOTE_HEARTBEAT_MS * 3;
+// 再接続バックオフ: 500ms から指数的に増加し 8s で頭打ち (±25% ジッター付き)。
+export const REMOTE_BACKOFF_BASE_MS = 500;
+export const REMOTE_BACKOFF_MAX_MS = 8000;
+// ホスト側の再生状態ポーリング。インジケーターの遅延はここ + RTT。
+export const REMOTE_STATE_POLL_MS = 50;
+// パッド/シーン一覧の最大送信数。
+export const REMOTE_MAX_PADS = 80;
+export const REMOTE_MAX_SCENES = 32;
+export const REMOTE_SETTINGS_KEY = 'poncue_remote';
+// 生成するルームIDの文字数 (紛らわしい文字を除く32字 alphabet)。
+export const REMOTE_ROOM_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+export const REMOTE_ROOM_LENGTH = 8;
