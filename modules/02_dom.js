@@ -63,6 +63,7 @@ export function initDom() {
         remoteBtn: 'remote-btn',
         remoteOverlay: 'remote-overlay',
         remoteCloseBtn: 'remote-close-btn',
+        remoteRoomChip: 'remote-room-chip',
         remoteStatusText: 'remote-status-text',
         remoteMeta: 'remote-meta',
         remoteBody: 'remote-body',

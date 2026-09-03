@@ -240,6 +240,14 @@ function startHeartbeat() {
             try { ws.close(4000, 'heartbeat-timeout'); } catch (_) { /* noop */ }
             return;
         }
+        // ホストは毎心跳で自分の存在を再告知する。他ホストがいなくなったら
+        // conflict をリセットして「別ホスト検知」を自己治愈させる。
+        if (remote.mode === 'host') {
+            const hadConflict = remote.conflict;
+            remote.conflict = false;
+            send({ t: 'he', role: 'host' });
+            if (hadConflict) updateStatusUI();
+        }
         send({ t: 'pi', ts: Date.now() });
     }, REMOTE_HEARTBEAT_MS);
 }
@@ -373,6 +381,7 @@ function collectHostState() {
         h: isHoldTriggerSound(s) ? 1 : undefined,
         lp: s.loop ? 1 : undefined,
         k: shortcutByPad[s.id],
+        c: s.color || undefined,
     }));
 
     const ac = {};
@@ -461,6 +470,14 @@ function updateStatusUI() {
     // ヘッダーボタンとオーバーレイ内の状態ドットの両方に状態色を反映する
     setThemeStatusClass(document.querySelector('#remote-overlay .remote-dot'), remote.status);
     setThemeStatusClass(document.querySelector('#remote-btn .remote-dot'), remote.status);
+    if (dom.remoteRoomChip) {
+        if (remote.mode !== 'off' && remote.room) {
+            dom.remoteRoomChip.textContent = remote.room;
+            dom.remoteRoomChip.hidden = false;
+        } else {
+            dom.remoteRoomChip.hidden = true;
+        }
+    }
     if (dom.remoteSettingStatus) dom.remoteSettingStatus.textContent = `${statusLabel()}${remote.room ? ` / ${remote.room}` : ''}${metaLabel() ? ` / ${metaLabel()}` : ''}`;
     const hostRoomStatus = document.getElementById('remote-host-status');
     if (hostRoomStatus) hostRoomStatus.textContent = `${statusLabel()}${metaLabel() ? ` / ${metaLabel()}` : ''}${remote.conflict ? ' / ⚠ 別のホストも接続中' : ''}`;
@@ -493,6 +510,10 @@ function renderPanel() {
 
 function renderOffPanel() {
     const body = dom.remoteBody;
+    const wrap = document.createElement('div');
+    wrap.className = 'remote-empty';
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-tower-broadcast';
     const p = document.createElement('p');
     p.className = 'remote-hint';
     p.textContent = 'シーン設定の「リモート操作」でホストまたはコントローラーを選ぶと、この画面がリモコンになります。';
@@ -500,36 +521,44 @@ function renderOffPanel() {
     btn.className = 'remote-btn-secondary';
     btn.textContent = '設定を開く';
     btn.addEventListener('click', () => { closeOverlay(); dom.sceneSettingsBtn?.click(); });
-    body.append(p, btn);
+    wrap.append(icon, p, btn);
+    body.appendChild(wrap);
 }
 
 function renderHostPanel() {
     const body = dom.remoteBody;
+    const wrap = document.createElement('div');
+    wrap.className = 'remote-host';
+
     const label = document.createElement('p');
     label.className = 'remote-hint';
-    label.textContent = 'この端末がホストです。コントローラー側で同じルームIDを入力してください。';
-    const roomRow = document.createElement('div');
-    roomRow.className = 'remote-room-row';
+    label.textContent = 'コントローラー側で同じルームIDを入力してください。';
+
+    const roomCard = document.createElement('div');
+    roomCard.className = 'remote-room-card';
     const roomId = document.createElement('span');
     roomId.className = 'remote-room-id';
     roomId.textContent = remote.room || '—';
     const copyBtn = document.createElement('button');
     copyBtn.className = 'remote-btn-secondary';
-    copyBtn.textContent = 'コピー';
+    copyBtn.innerHTML = '<i class="fas fa-copy"></i> コピー';
     copyBtn.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(remote.room);
-            copyBtn.textContent = 'コピーしました';
+            copyBtn.innerHTML = '<i class="fas fa-check"></i> コピーしました';
         } catch (_) {
-            copyBtn.textContent = '失敗';
+            copyBtn.innerHTML = '<i class="fas fa-xmark"></i> 失敗';
         }
-        setTimeout(() => { copyBtn.textContent = 'コピー'; }, 1200);
+        setTimeout(() => { copyBtn.innerHTML = '<i class="fas fa-copy"></i> コピー'; }, 1200);
     });
-    roomRow.append(roomId, copyBtn);
+    roomCard.append(roomId, copyBtn);
+
     const status = document.createElement('p');
-    status.className = 'remote-hint';
+    status.className = 'remote-hint remote-host-status';
     status.id = 'remote-host-status';
-    body.append(label, roomRow, status);
+
+    wrap.append(label, roomCard, status);
+    body.appendChild(wrap);
     updateStatusUI();
 }
 
@@ -539,10 +568,15 @@ function renderControllerPanel() {
     body.innerHTML = '';
 
     if (!st) {
+        const wrap = document.createElement('div');
+        wrap.className = 'remote-empty';
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-spinner remote-wait-spin';
         const p = document.createElement('p');
         p.className = 'remote-hint';
         p.textContent = 'ホストの状態を待っています…';
-        body.appendChild(p);
+        wrap.append(icon, p);
+        body.appendChild(wrap);
         return;
     }
 
@@ -575,30 +609,35 @@ function renderControllerPanel() {
 
     const stopBtn = document.createElement('button');
     stopBtn.className = 'remote-btn-danger';
-    stopBtn.textContent = '全停止';
+    stopBtn.innerHTML = '<i class="fas fa-stop"></i> 全停止';
     stopBtn.addEventListener('click', () => send({ t: 'sa' }));
 
     const pauseBtn = document.createElement('button');
     pauseBtn.className = 'remote-btn-secondary';
-    pauseBtn.textContent = '一時停止/再開';
+    pauseBtn.innerHTML = '<i class="fas fa-pause"></i> 一時停止/再開';
     pauseBtn.addEventListener('click', () => send({ t: 'pa' }));
 
     const volWrap = document.createElement('label');
     volWrap.className = 'remote-vol';
-    const volText = document.createElement('span');
-    volText.textContent = '音量';
+    const volIcon = document.createElement('i');
+    volIcon.className = 'fas fa-volume-high';
     const vol = document.createElement('input');
     vol.type = 'range';
     vol.min = '0';
     vol.max = '1';
     vol.step = '0.01';
     vol.value = String(st.mv ?? 1);
+    const volValue = document.createElement('span');
+    volValue.className = 'remote-vol-value';
+    const volPercent = () => `${Math.round(Number(vol.value) * 100)}%`;
+    volValue.textContent = volPercent();
     vol.addEventListener('input', () => {
+        volValue.textContent = volPercent();
         clearTimeout(remote.volSendTimer);
         remote.volSendTimer = setTimeout(() => send({ t: 'vol', v: Number(vol.value) }), 60);
     });
     vol.addEventListener('change', () => send({ t: 'vol', v: Number(vol.value), save: 1 }));
-    volWrap.append(volText, vol);
+    volWrap.append(volIcon, vol, volValue);
 
     footer.append(stopBtn, pauseBtn, volWrap);
     body.appendChild(footer);
@@ -610,9 +649,18 @@ function createRemotePad(pad) {
     const btn = document.createElement('button');
     btn.className = 'remote-pad';
     btn.dataset.id = pad.i;
+    if (pad.c) {
+        btn.style.setProperty('--pad-color', pad.c);
+        btn.classList.add('has-color');
+    }
     if (pad.m !== 'toggle') btn.classList.add(`trigger-${pad.m}`);
     if (pad.h) btn.classList.add('hold');
     if (pad.lp) btn.classList.add('loop-on');
+
+    const isRoll = pad.m === 'roll';
+    const icon = document.createElement('i');
+    icon.className = `remote-pad-icon fas ${isRoll ? 'fa-drum' : 'fa-play'}`;
+    btn.appendChild(icon);
 
     const name = document.createElement('span');
     name.className = 'remote-pad-name';
@@ -638,9 +686,13 @@ function createRemotePad(pad) {
         btn.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 && e.pointerType === 'mouse') return;
             e.preventDefault();
+            btn.classList.add('pressing');
             try { btn.setPointerCapture?.(e.pointerId); } catch (_) { /* noop */ }
             send({ t: 'tg', id: pad.i, k: 'down', c: inputId });
-            const release = () => send({ t: 'tg', id: pad.i, k: 'up', c: inputId });
+            const release = () => {
+                btn.classList.remove('pressing');
+                send({ t: 'tg', id: pad.i, k: 'up', c: inputId });
+            };
             btn.addEventListener('pointerup', release, { once: true });
             btn.addEventListener('pointercancel', release, { once: true });
         });

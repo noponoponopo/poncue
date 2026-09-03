@@ -313,12 +313,13 @@
     <!-- リモート操作パネル -->
     <div id="remote-overlay" hidden>
       <div class="remote-panel">
-        <header class="remote-header">
+        <div class="remote-header">
           <span class="remote-title"><i class="fas fa-tower-broadcast"></i> リモート操作</span>
           <span class="remote-status"><span class="remote-dot"></span><span id="remote-status-text">オフ</span></span>
+          <span id="remote-room-chip" class="remote-room-chip" hidden></span>
           <span id="remote-meta" class="remote-meta"></span>
           <button id="remote-close-btn" class="remote-close-btn" aria-label="閉じる">×</button>
-        </header>
+        </div>
         <div id="remote-body" class="remote-body"></div>
       </div>
     </div>
