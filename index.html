@@ -275,7 +275,6 @@
                 <select id="remote-mode-select" aria-label="リモート操作のモード">
                   <option value="off">オフ</option>
                   <option value="host">ホスト（この端末で再生）</option>
-                  <option value="controller">コントローラー（遠隔から操作）</option>
                 </select>
                 <input
                   type="text"
@@ -290,6 +289,7 @@
                 <button type="button" id="remote-room-gen-btn" title="新しいルームIDを生成">生成</button>
                 <button type="button" id="remote-panel-btn" title="リモート操作パネルを開く">パネル</button>
               </div>
+              <span id="remote-hint" class="setting-status">コントローラーは /remote/ を開いてルームIDを入力</span>
               <span id="remote-setting-status" class="setting-status" role="status"></span>
             </div>
           </div>

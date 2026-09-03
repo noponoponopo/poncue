@@ -4,6 +4,7 @@ const CACHE_NAME = `ponndashi-cache-v${VERSION}`;
 const urlsToCache = [
   './',
   './index.html',
+  './remote/',
   // @poncue-build-assets
   // External resources
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
@@ -61,7 +62,10 @@ async function networkFirst(request, isNavigation) {
   } catch (error) {
     const cached = await cache.match(request, { ignoreSearch: isNavigation });
     if (cached) return cached;
-    if (isNavigation) return cache.match('./index.html');
+    if (isNavigation) {
+      const fallback = new URL(request.url).pathname.startsWith('/remote') ? './remote/' : './index.html';
+      return cache.match(fallback);
+    }
     throw error;
   }
 }

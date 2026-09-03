@@ -3282,3 +3282,53 @@
         font-size: 0.9em;
       }
     }
+
+    /* --- /remote/ 専用リモコンページ --- */
+
+    body.remote-page {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    .remote-connect-form {
+      display: flex;
+      align-items: stretch;
+      gap: 10px;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .remote-room-input {
+      flex: 1;
+      min-width: 0;
+      padding: 12px 14px;
+      font-family: ui-monospace, monospace;
+      font-size: 1.1em;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-align: center;
+      color: var(--text-color);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+    }
+
+    .remote-room-input:focus {
+      outline: none;
+      border-color: var(--primary-color);
+    }
+
+    .remote-connect-btn {
+      flex: 0 0 auto;
+    }
+
+    .remote-url {
+      font-family: ui-monospace, monospace;
+      font-weight: 600;
+      color: var(--primary-color);
+      user-select: all;
+    }
