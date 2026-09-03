@@ -6,12 +6,14 @@
     <meta name="theme-color" content="#121212" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>リモコン | ポン出し</title>
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
+    <!-- Font Awesome CDN -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -19,17 +21,213 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
 
+  <!-- メインアプリと同じ画面を流用する。音の再生はホスト側で行い、
+       実データ (波形・メーター等) に依存する要素だけ .remote-page CSS で隠す -->
   <body class="remote-page dark-mode">
-    <div class="remote-panel">
-      <div class="remote-header">
-        <span class="remote-title"><i class="fas fa-tower-broadcast"></i> リモコン</span>
-        <span class="remote-status"><span class="remote-dot"></span><span id="remote-status-text">未接続</span></span>
-        <button id="remote-room-chip" class="remote-room-chip" hidden title="タップでルームを変更"></button>
-        <span id="remote-meta" class="remote-meta"></span>
-        <button id="remote-theme-btn" class="remote-close-btn" aria-label="テーマ切り替え"></button>
+    <header>
+      <h1><i class="fas fa-headphones-alt"></i> ポン出し</h1>
+      <div class="controls">
+        <button id="pause-all-btn" title="再生中のサウンドを一時停止" aria-label="全てのサウンドを一時停止" disabled>
+          <i class="fas fa-pause"></i> <span>一時停止</span>
+        </button>
+        <button id="stop-all-btn" title="全て停止" aria-label="全てのサウンドを停止">
+          <i class="fas fa-stop"></i> <span>全停止</span>
+        </button>
+        <button id="record-btn" title="ホストのマスター出力を録音" aria-label="マスター出力の録音を開始" aria-pressed="false">
+          <i class="fas fa-circle"></i> <span class="record-label">録音</span>
+        </button>
+        <button id="show-mode-btn" title="本番モード切替" aria-label="本番モードの切替">
+          <i class="fas fa-expand"></i> <span>本番</span>
+        </button>
+        <button id="keyboard-view-btn" title="キーボードビュー" aria-label="キーボードビューを表示" aria-pressed="false">
+          <i class="fas fa-keyboard"></i> <span>キー</span>
+        </button>
+        <div
+          id="master-volume-control"
+          class="header-volume-control"
+          aria-label="マスター音量"
+          title="マスター音量 (ダブルクリックで100%)"
+        ></div>
+        <div id="master-limiter-control" class="header-limiter-control" aria-label="マスターリミッター"></div>
+        <button id="remote-btn" title="接続中のルーム" aria-label="リモート接続" aria-pressed="false">
+          <i class="fas fa-tower-broadcast"></i><span class="remote-dot"></span>
+        </button>
+        <button id="scene-settings-btn" title="シーン設定">
+          <i class="fas fa-cog"></i>
+        </button>
       </div>
-      <div id="remote-body" class="remote-body"></div>
+    </header>
+
+    <section id="keyboard-view" class="keyboard-view" aria-label="キーボードショートカット" hidden></section>
+
+    <main id="soundboard">
+      <!-- ホストから配信されたパッドがここに挿入されます -->
+    </main>
+
+    <!-- マスターエフェクト (メインと同じknob。操作はホストへ送信) -->
+    <div id="master-effect-bar"></div>
+
+    <!-- リモコンでは波形・レベルメーターは表示しない (ホストから実データが届かないため) -->
+
+    <!-- Custom Alert/Confirm Modals -->
+    <div id="custom-modal-overlay" class="modal-overlay">
+      <div
+        id="custom-modal-content"
+        class="modal-content"
+        style="width: 400px; max-width: 90%"
+      >
+        <h3
+          id="custom-modal-title"
+          class="modal-title"
+          style="font-size: 1.2em; margin-bottom: 15px"
+        ></h3>
+        <div
+          id="custom-modal-body"
+          class="modal-body"
+          style="
+            margin-bottom: 0;
+            padding-bottom: 15px;
+            font-size: 1em;
+            line-height: 1.5;
+          "
+        >
+          <p id="custom-modal-message"></p>
+        </div>
+        <div
+          id="custom-modal-footer"
+          class="modal-footer"
+          style="justify-content: flex-end; gap: 10px"
+        >
+          <button id="custom-modal-cancel-btn">キャンセル</button>
+          <button id="custom-modal-ok-btn">OK</button>
+        </div>
+      </div>
     </div>
+
+    <div id="scene-settings-modal" class="modal-overlay">
+      <div class="modal-content">
+        <button
+          id="modal-close-btn"
+          class="modal-close-btn"
+          aria-label="閉じる"
+        >
+          ×
+        </button>
+        <h2 class="modal-title">シーン設定</h2>
+        <div class="modal-body">
+          <ul id="modal-scene-list" class="modal-scene-list">
+            <!-- ホストのシーンリストがここに挿入されます -->
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <div class="settings-toggles">
+            <div class="interaction-mode-setting">
+              <label>操作モード:</label>
+              <div class="performance-mode-selector">
+                <input
+                  type="radio"
+                  id="interaction-click"
+                  name="interaction-mode"
+                  value="click"
+                />
+                <label
+                  for="interaction-click"
+                  title="クリック優先: タップで最速操作し、並べ替えを無効化"
+                  >クリック</label
+                >
+                <input
+                  type="radio"
+                  id="interaction-drag"
+                  name="interaction-mode"
+                  value="drag"
+                />
+                <label
+                  for="interaction-drag"
+                  title="ドラッグ編集: パッドの並べ替えを有効化 (ホストに送信)"
+                  >ドラッグ</label
+                >
+              </div>
+            </div>
+            <div class="theme-setting">
+              <span>テーマ:</span>
+              <label class="switch" aria-label="ライト/ダークモード切り替え">
+                <input type="checkbox" id="dark-mode-toggle" />
+                <span class="slider round"></span>
+                <span class="mode-icon"><i class="fas fa-sun"></i></span>
+                <span class="mode-icon"><i class="fas fa-moon"></i></span>
+              </label>
+            </div>
+            <div class="pad-size-setting">
+              <label for="pad-size-slider"
+                >パッドサイズ: <span id="pad-size-value">160</span>px</label
+              >
+              <input
+                type="range"
+                id="pad-size-slider"
+                min="80"
+                max="320"
+                step="1"
+                value="160"
+              />
+            </div>
+            <div class="keyboard-layout-setting">
+              <label for="keyboard-layout-select">キーボード配列:</label>
+              <select id="keyboard-layout-select" title="キーボードビューの配列を切り替えます"></select>
+            </div>
+          </div>
+          <div class="add-scene-btn-wrapper">
+            <button id="modal-add-scene-btn">
+              <i class="fas fa-plus-square"></i> 新しいシーンを追加
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- リモート接続パネル (ルームID確認・変更) -->
+    <div id="remote-overlay" hidden>
+      <div class="remote-panel">
+        <div class="remote-header">
+          <span class="remote-title"><i class="fas fa-tower-broadcast"></i> リモコン</span>
+          <span class="remote-status"><span class="remote-dot"></span><span id="remote-status-text">未接続</span></span>
+          <span id="remote-meta" class="remote-meta"></span>
+          <button id="remote-close-btn" class="remote-close-btn" aria-label="閉じる">×</button>
+        </div>
+        <div id="remote-body" class="remote-body"></div>
+      </div>
+    </div>
+
+    <!-- ルーム接続オーバーレイ (未接続時に表示) -->
+    <div id="remote-connect-overlay">
+      <div class="remote-panel">
+        <div class="remote-header">
+          <span class="remote-title"><i class="fas fa-tower-broadcast"></i> リモコン</span>
+          <span class="remote-status"><span class="remote-dot is-off"></span><span id="remote-connect-status">未接続</span></span>
+        </div>
+        <div class="remote-body">
+          <div class="remote-host">
+            <p class="remote-hint">ホスト側のシーン設定に表示されているルームIDを入力してください。</p>
+            <form id="remote-connect-form" class="remote-connect-form">
+              <input
+                type="text"
+                id="remote-room-input"
+                class="remote-room-input"
+                placeholder="ルームID"
+                maxlength="10"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                aria-label="ルームID"
+              />
+              <button type="submit" class="remote-btn-danger remote-connect-btn">
+                <i class="fas fa-plug"></i> 接続
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/modules/remote_controller.js"></script>
   </body>
 </html>

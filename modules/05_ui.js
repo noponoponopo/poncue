@@ -2,7 +2,6 @@
 
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
-import { saveSetting } from './07_scenes.js';
 import { normalizeEffectSettings } from './09_effects.js';
 import { setKeyboardKeyPlaying } from './11_keyboard_view.js';
 import { FADE_EASING_TYPES, TRIGGER_MODES, MAX_FILE_SIZE_MB } from './01_config.js';
@@ -934,9 +933,9 @@ export function toggleDarkMode() {
     const body = document.body;
     const isCurrentlyDark = body.classList.toggle('dark-mode');
     const newModePreference = isCurrentlyDark ? 'enabled' : 'disabled';
-    saveSetting('darkMode', newModePreference);
     console.log(`Dark mode toggled by user. New preference: ${newModePreference}`);
     setupCanvasResize();
+    return newModePreference;
 }
 
 

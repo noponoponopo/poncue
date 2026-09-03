@@ -2985,214 +2985,7 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* --- コントローラー: シーンチップ --- */
-
-    .remote-scenes {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding: 2px;
-      flex: 0 0 auto;
-      scrollbar-width: thin;
-    }
-
-    .remote-scene-chip {
-      flex: 0 0 auto;
-      padding: 8px 16px;
-      font-size: 0.9em;
-      font-weight: 600;
-      color: var(--text-color);
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 999px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background-color 0.15s, border-color 0.15s;
-    }
-
-    .remote-scene-chip:hover {
-      border-color: var(--primary-color);
-    }
-
-    .remote-scene-chip.active {
-      background: var(--primary-color);
-      border-color: var(--primary-color);
-      color: #fff;
-    }
-
-    /* --- コントローラー: パッド --- */
-
-    .remote-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
-      gap: 12px;
-      flex: 0 0 auto;
-    }
-
-    .remote-pad {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      min-height: 104px;
-      padding: 14px 10px;
-      text-align: center;
-      color: var(--text-color);
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 14px;
-      cursor: pointer;
-      overflow: hidden;
-      touch-action: none;
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      transition: transform 0.06s, border-color 0.15s, background-color 0.15s;
-    }
-
-    .remote-pad:hover {
-      border-color: var(--primary-color);
-    }
-
-    .remote-pad:active,
-    .remote-pad.pressing {
-      transform: scale(0.96);
-    }
-
-    .remote-pad-icon {
-      font-size: 1.1em;
-      color: var(--secondary-color);
-      transition: color 0.15s;
-    }
-
-    .remote-pad-name {
-      font-size: 0.86em;
-      font-weight: 600;
-      line-height: 1.35;
-      word-break: break-word;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    .remote-pad-key {
-      position: absolute;
-      top: 7px;
-      right: 8px;
-      font-size: 0.62em;
-      font-weight: 600;
-      color: var(--secondary-color);
-      background: var(--control-bg);
-      border-radius: 5px;
-      padding: 2px 6px;
-    }
-
-    .remote-pad-mode {
-      position: absolute;
-      top: 7px;
-      left: 8px;
-      font-size: 0.58em;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      color: var(--secondary-color);
-      background: var(--control-bg);
-      border-radius: 5px;
-      padding: 2px 6px;
-    }
-
-    .remote-pad.loop-on::after {
-      content: 'LOOP';
-      position: absolute;
-      bottom: 7px;
-      right: 8px;
-      font-size: 0.55em;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      color: var(--success-color);
-    }
-
-    .remote-pad-layers {
-      position: absolute;
-      bottom: 7px;
-      left: 8px;
-      font-size: 0.62em;
-      font-weight: 700;
-      color: #fff;
-      background: var(--info-color);
-      border-radius: 5px;
-      padding: 2px 6px;
-    }
-
-    /* パッド色 (ホストで設定した色を反映) */
-    .remote-pad.has-color {
-      background: color-mix(in srgb, var(--pad-color) 22%, var(--card-bg));
-      border-color: color-mix(in srgb, var(--pad-color) 45%, var(--border-color));
-    }
-
-    .remote-pad.has-color .remote-pad-icon {
-      color: var(--pad-color);
-    }
-
-    /* 再生中: 左端にアクセントバー + パルス */
-    .remote-pad.playing {
-      border-color: var(--primary-color);
-      background: color-mix(in srgb, var(--primary-color) 14%, var(--card-bg));
-    }
-
-    .remote-pad.has-color.playing {
-      border-color: var(--pad-color);
-      background: color-mix(in srgb, var(--pad-color) 32%, var(--card-bg));
-    }
-
-    .remote-pad.playing::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 4px;
-      background: var(--primary-color);
-      animation: remote-pulse 1s ease-in-out infinite;
-    }
-
-    .remote-pad.has-color.playing::before {
-      background: var(--pad-color);
-    }
-
-    @keyframes remote-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.35; }
-    }
-
-    .remote-pad.paused {
-      border-color: var(--warning-color);
-      background: color-mix(in srgb, var(--warning-color) 14%, var(--card-bg));
-    }
-
-    .remote-pad.muted {
-      opacity: 0.5;
-    }
-
-    /* --- コントローラー: 下部操作バー --- */
-
-    .remote-footer {
-      position: sticky;
-      bottom: 0;
-      margin-top: auto;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      padding: 12px;
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 14px;
-      box-shadow: var(--shadow);
-      flex: 0 0 auto;
-    }
+    /* --- 接続フォーム・ボタン (ルーム接続オーバーレイ/ホストパネル共通) --- */
 
     .remote-btn-danger {
       display: inline-flex;
@@ -3227,30 +3020,6 @@
       background: var(--control-hover-bg);
     }
 
-    .remote-vol {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex: 1 1 180px;
-      min-width: 160px;
-      color: var(--secondary-color);
-      font-size: 0.85em;
-      cursor: pointer;
-    }
-
-    .remote-vol input[type="range"] {
-      flex: 1;
-      min-width: 0;
-      accent-color: var(--primary-color);
-    }
-
-    .remote-vol-value {
-      min-width: 3.2em;
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      color: var(--text-color);
-    }
-
     @media (max-width: 600px) {
       .remote-panel {
         padding: 10px;
@@ -3261,36 +3030,30 @@
         padding: 8px 10px;
         gap: 8px;
       }
-
-      .remote-grid {
-        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-        gap: 8px;
-      }
-
-      .remote-pad {
-        min-height: 84px;
-      }
-
       .remote-room-card {
         flex-direction: column;
         padding: 16px;
       }
+    }
 
-      .remote-footer .remote-btn-danger,
-      .remote-footer .remote-btn-secondary {
-        padding: 12px 14px;
-        font-size: 0.9em;
+    /* --- /remote/ リモコンページ (メインと同じ画面を流用) --- */
+
+    /* 波形・メーターエリアは無いため、マスターエフェクトバーは画面最下部に張り付く */
+    body.remote-page {
+      --meter-area-height: 0px;
+      --waveform-area-height: 0px;
+    }
+
+    /* モバイルでknobクラスターを横スクロールしやすく */
+    @media (max-width: 900px) {
+      body.remote-page #master-effect-bar {
+        justify-content: flex-start;
       }
     }
 
-    /* --- /remote/ 専用リモコンページ --- */
-
-    body.remote-page {
-      display: flex;
-      flex-direction: column;
-      height: 100dvh;
-      margin: 0;
-      overflow: hidden;
+    /* ホストの音声データ解析が必要な操作 (LUFSノーマライズ/無音トリム) はリモコンでは非表示 */
+    body.remote-page .effect-action-row {
+      display: none !important;
     }
 
     .remote-connect-form {
@@ -3333,23 +3096,3 @@
       user-select: all;
     }
 
-    /* リモコンパッドのプログレスバー (メイン基板と同じ見た目) */
-    .remote-pad-progress {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: 5px;
-      background: var(--progress-bg);
-    }
-
-    .remote-pad-progress-value {
-      display: block;
-      height: 100%;
-      width: 0%;
-      background: var(--primary-color);
-    }
-
-    .remote-pad.has-color.playing .remote-pad-progress-value {
-      background: var(--pad-color);
-    }

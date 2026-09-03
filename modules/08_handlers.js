@@ -137,7 +137,7 @@ export function setupEventListeners() {
     });
     
     // App Settings Toggles
-    dom.darkModeToggle?.addEventListener('change', toggleDarkMode);
+    dom.darkModeToggle?.addEventListener('change', () => saveSetting('darkMode', toggleDarkMode()));
     dom.perfHighRadio?.addEventListener('change', handlePerformanceModeChange);
     dom.perfLowRadio?.addEventListener('change', handlePerformanceModeChange);
     dom.interactionClickRadio?.addEventListener('change', handleInteractionModeChange);
