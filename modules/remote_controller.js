@@ -338,6 +338,14 @@ function createRemotePad(pad) {
     name.textContent = pad.n || '無題';
     btn.appendChild(name);
 
+    // メイン基板と同じプログレスバー (ホスト配信の進捗%を反映)
+    const progress = document.createElement('span');
+    progress.className = 'remote-pad-progress';
+    const progressValue = document.createElement('span');
+    progressValue.className = 'remote-pad-progress-value';
+    progress.appendChild(progressValue);
+    btn.appendChild(progress);
+
     if (pad.k) {
         const key = document.createElement('span');
         key.className = 'remote-pad-key';
@@ -386,6 +394,8 @@ function updateControllerActivity() {
         el.classList.toggle('playing', !!info && !info.p);
         el.classList.toggle('paused', !!info?.p);
         el.classList.toggle('muted', !!info?.u);
+        const progressValue = el.querySelector('.remote-pad-progress-value');
+        if (progressValue) progressValue.style.width = `${info?.g ?? 0}%`;
         const layers = info?.l ?? 0;
         let badge = el.querySelector('.remote-pad-layers');
         if (layers > 1) {

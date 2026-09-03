@@ -182,14 +182,41 @@ function collectHostState() {
         c: s.color || undefined,
     }));
 
+    // 進捗% (メイン基板のプログレスバーと同じ計算)。リモコンのバー表示に使う
+    const trimById = new Map();
+    for (const s of scene?.sounds ?? []) {
+        trimById.set(s.id, {
+            trimStart: Number.isFinite(s.trimStart) ? s.trimStart : 0,
+            trimEnd: Number.isFinite(s.trimEnd) ? s.trimEnd : s.duration,
+            loop: Boolean(s.loop),
+        });
+    }
+    const progressPercentFor = (soundId, position) => {
+        const b = trimById.get(soundId);
+        if (!b || !Number.isFinite(position)) return undefined;
+        const duration = b.trimEnd - b.trimStart;
+        if (!(duration > 0)) return undefined;
+        const elapsed = position - b.trimStart;
+        const current = b.loop
+            ? ((elapsed % duration) + duration) % duration
+            : Math.min(duration, Math.max(0, elapsed));
+        return Math.min(100, Math.max(0, (current / duration) * 100));
+    };
+
     const ac = {};
     for (const [id, audio] of Object.entries(state.activeAudios)) {
         if (audio?.isFadingOut) continue;
         const layers = state.sustainLayers[id]?.length ?? 0;
         ac[id] = { u: audio?.muted ? 1 : 0, l: layers > 1 ? layers : 0 };
+        const progress = Math.round(Number.isFinite(audio?.progressPercent)
+            ? audio.progressPercent
+            : (progressPercentFor(id, audio?.playbackPosition) ?? 0));
+        if (progress > 0) ac[id].g = progress;
     }
-    for (const id of Object.keys(state.pausedSounds)) {
+    for (const [id, paused] of Object.entries(state.pausedSounds)) {
         if (!ac[id]) ac[id] = { p: 1 };
+        const progress = Math.round(progressPercentFor(id, paused?.position) ?? 0);
+        if (progress > 0) ac[id].g = progress;
     }
 
     return {
