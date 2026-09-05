@@ -3,7 +3,7 @@
 import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
-import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
+import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, showSceneDropdown, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
 import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, analyzeAndApplySilenceTrim, clearSilenceTrim, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect, addAudioBlobToScene,
@@ -138,6 +138,17 @@ export function setupEventListeners() {
     
     // App Settings Toggles
     dom.darkModeToggle?.addEventListener('change', () => saveSetting('darkMode', toggleDarkMode()));
+
+    const headerTitle = document.querySelector('header h1');
+    headerTitle?.addEventListener('click', () => {
+        showSceneDropdown(headerTitle, {
+            scenes: Object.values(state.scenes),
+            currentSceneId: state.currentSceneId,
+            onSelect: (sceneId) => {
+                if (sceneId !== state.currentSceneId) selectScene(sceneId);
+            },
+        });
+    });
     dom.perfHighRadio?.addEventListener('change', handlePerformanceModeChange);
     dom.perfLowRadio?.addEventListener('change', handlePerformanceModeChange);
     dom.interactionClickRadio?.addEventListener('change', handleInteractionModeChange);

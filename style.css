@@ -202,6 +202,91 @@
       text-overflow: ellipsis;
       flex-grow: 1;
       min-width: 0;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    header h1::after {
+      font-family: 'Font Awesome 6 Free';
+      font-weight: 900;
+      content: '\f078'; /* chevron-down */
+      font-size: 0.45em;
+      color: var(--secondary-color);
+      flex-shrink: 0;
+    }
+
+    header h1:hover i {
+      opacity: 0.75;
+    }
+
+    /* シーン切替プルダウン (ヘッダーのシーン名クリックで開く) */
+    .scene-dropdown {
+      position: fixed;
+      z-index: 1600; /* ヘッダー(1000)・シーン設定より上、カスタムモーダル(2000)より下 */
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 220px;
+      max-width: min(340px, calc(100vw - 16px));
+      max-height: 60vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 6px;
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .scene-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      font: inherit;
+      text-align: left;
+      color: var(--text-color);
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .scene-dropdown-item:hover {
+      background-color: var(--control-hover-bg);
+    }
+
+    .scene-dropdown-item.active {
+      background-color: color-mix(in srgb, var(--primary-color) 14%, transparent);
+    }
+
+    .scene-dropdown-color {
+      flex-shrink: 0;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background-color: var(--scene-color, var(--secondary-color));
+      border: 1px solid var(--border-color);
+    }
+
+    .scene-dropdown-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .scene-dropdown-item .fa-check {
+      color: var(--primary-color);
+      font-size: 0.85em;
+    }
+
+    .scene-dropdown-empty {
+      padding: 12px;
+      color: var(--secondary-color);
+      text-align: center;
     }
 
     .controls {

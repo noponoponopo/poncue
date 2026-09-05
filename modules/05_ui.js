@@ -1517,3 +1517,94 @@ export function removeGhostElement() {
     }
     updateState({ ghostElement: null });
 }
+
+// --- シーン切替プルダウン ---
+// ヘッダー左上のシーン名クリックで開く簡易切替メニュー。
+// メイン基板 (/) とリモコン (/remote/) の両方から使う。
+let sceneDropdownEl = null;
+let sceneDropdownCleanup = null;
+
+function closeSceneDropdown() {
+    sceneDropdownCleanup?.();
+    sceneDropdownCleanup = null;
+}
+
+function cleanupSceneDropdown() {
+    sceneDropdownEl?.remove();
+    sceneDropdownEl = null;
+    if (sceneDropdownCleanup) {
+        document.removeEventListener('pointerdown', sceneDropdownCleanup.onOutside, { capture: true });
+        // Escapeはアプリ側の keydown (document, 発火順) より先に処理するため window capture で受ける
+        window.removeEventListener('keydown', sceneDropdownCleanup.onKey, { capture: true });
+        window.removeEventListener('resize', closeSceneDropdown);
+        window.removeEventListener('scroll', closeSceneDropdown, { capture: true });
+        sceneDropdownCleanup = null;
+    }
+}
+
+export function showSceneDropdown(anchorEl, { scenes, currentSceneId, onSelect }) {
+    if (!anchorEl) return;
+    cleanupSceneDropdown();
+
+    const menu = document.createElement('div');
+    menu.className = 'scene-dropdown';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', 'シーン切り替え');
+
+    const sorted = [...scenes].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    let activeItem = null;
+    for (const scene of sorted) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.setAttribute('role', 'option');
+        const isActive = scene.id === currentSceneId;
+        item.className = 'scene-dropdown-item' + (isActive ? ' active' : '');
+        if (scene.color) item.style.setProperty('--scene-color', scene.color);
+        item.innerHTML = `<span class="scene-dropdown-color" aria-hidden="true"></span>` +
+            `<span class="scene-dropdown-name">${escapeHtml(scene.name)}</span>` +
+            (isActive ? '<i class="fas fa-check" aria-hidden="true"></i>' : '');
+        item.addEventListener('click', () => {
+            cleanupSceneDropdown();
+            if (!isActive) onSelect?.(scene.id);
+        });
+        if (isActive) activeItem = item;
+        menu.appendChild(item);
+    }
+
+    if (sorted.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'scene-dropdown-empty';
+        empty.textContent = 'シーンがありません';
+        menu.appendChild(empty);
+    }
+
+    document.body.appendChild(menu);
+    sceneDropdownEl = menu;
+
+    const rect = anchorEl.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const margin = 6;
+    let top = rect.bottom + margin;
+    if (top + menuRect.height > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - menuRect.height - margin);
+    }
+    menu.style.left = `${Math.max(8, rect.left)}px`;
+    menu.style.top = `${top}px`;
+    activeItem?.scrollIntoView({ block: 'nearest' });
+
+    // 外側クリックで閉じる (中のクリックは無視)。Escapeでは他ハンドラ(全停止等)より先に閉じるだけ
+    const onOutside = (e) => {
+        if (e.target instanceof Node && menu.contains(e.target)) return;
+        cleanupSceneDropdown();
+    };
+    const onKey = (e) => {
+        if (e.key !== 'Escape') return;
+        e.stopImmediatePropagation();
+        cleanupSceneDropdown();
+    };
+    document.addEventListener('pointerdown', onOutside, { capture: true });
+    window.addEventListener('keydown', onKey, { capture: true });
+    window.addEventListener('resize', closeSceneDropdown);
+    window.addEventListener('scroll', closeSceneDropdown, { capture: true });
+    sceneDropdownCleanup = Object.assign(() => cleanupSceneDropdown(), { onOutside, onKey });
+}

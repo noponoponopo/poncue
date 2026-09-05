@@ -14,7 +14,7 @@ import {
 import { dom, initDom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import {
-    showConfirm, showPrompt, showSoundSettingsModal, hideModal,
+    showConfirm, showPrompt, showSoundSettingsModal, hideModal, showSceneDropdown,
     createMasterEffectKnobs, createMasterVolumeKnob, createMasterLimiterKnob,
     initDarkMode, toggleDarkMode,
     updateDraggableState, clearDragStyles, clearDragOverStyles, escapeHtml
@@ -934,6 +934,16 @@ function setupEventListeners() {
         hideModal();
     });
 
+    const headerTitle = document.querySelector('header h1');
+    headerTitle?.addEventListener('click', () => {
+        showSceneDropdown(headerTitle, {
+            scenes: Object.values(state.scenes),
+            currentSceneId: state.currentSceneId,
+            onSelect: (sceneId) => {
+                if (sceneId !== state.currentSceneId) send({ t: 'sc', id: sceneId });
+            },
+        });
+    });
     // シーン設定モーダル
     dom.sceneSettingsBtn?.addEventListener('click', openSceneSettingsModal);
     dom.modalCloseBtn?.addEventListener('click', closeSceneSettingsModal);
