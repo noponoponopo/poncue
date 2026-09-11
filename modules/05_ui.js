@@ -1026,6 +1026,52 @@ export function createMasterMeterElement() {
     dom.levelMeterArea.insertBefore(meterPair, dom.levelMeterArea.firstChild);
 }
 
+// knobのダブルクリック/ダブルタップ検出。
+// dblclick イベントはモバイルのダブルタップ (特にiOS) で発火しないため、
+// ドラッグを伴わない素早い2回の pointerup 間隔で自前判定する。
+// 対象要素には touch-action: none 系のCSSが必要 (通常のknobには適用済み)。
+function onKnobDoubleTap(element, handler, thresholdMs = 400) {
+    let lastTapAt = 0;
+    let activePointerId = null;
+    element.addEventListener('pointerdown', (e) => {
+        if (activePointerId !== null) return; // 2本目以降の指は無視
+        activePointerId = e.pointerId;
+        const startY = e.clientY;
+        let dragged = false;
+        const cleanup = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onCancel);
+        };
+        const onMove = (ev) => {
+            if (ev.pointerId !== activePointerId) return;
+            if (Math.abs(ev.clientY - startY) > 3) dragged = true;
+        };
+        const onUp = (ev) => {
+            if (ev.pointerId !== activePointerId) return;
+            cleanup();
+            activePointerId = null;
+            if (dragged) { lastTapAt = 0; return; }
+            const now = performance.now();
+            if (now - lastTapAt <= thresholdMs) {
+                lastTapAt = 0;
+                handler();
+            } else {
+                lastTapAt = now;
+            }
+        };
+        const onCancel = (ev) => {
+            if (ev.pointerId !== activePointerId) return;
+            cleanup();
+            activePointerId = null;
+            lastTapAt = 0;
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+    });
+}
+
 export function createMasterLimiterKnob(value, onChange) {
     if (!dom.masterLimiterControl) return;
     const min = -12;
@@ -1110,8 +1156,8 @@ export function createMasterVolumeKnob(value, onChange) {
         window.addEventListener('pointerup', handleUp, { once: true });
     });
 
-    // ダブルクリックで100%(1.0)にリセット — センター位置
-    knob.addEventListener('dblclick', () => {
+    // ダブルクリック/ダブルタップで100%(1.0)にリセット — センター位置
+    onKnobDoubleTap(knob, () => {
         render(1);
         onChange(1, true);
     });
@@ -1271,7 +1317,7 @@ export function createMasterEffectKnobs(allValues, onChange) {
             };
 
             knobGroup.addEventListener('pointerdown', onPointerDown);
-            knobGroup.addEventListener('dblclick', onDoubleClick);
+            onKnobDoubleTap(knobGroup, onDoubleClick);
             cluster.appendChild(knobGroup);
         }
 
@@ -1314,7 +1360,7 @@ export function updateMasterLimiterKnob() {
 // モーダル内スライダーやその他のUIで使用する汎用knob生成関数。
 // 仕様:
 //   min, max, step: 値域とステップ
-//   default: ダブルクリック時のリセット値(省略時はmin)
+//   default: ダブルクリック/ダブルタップ時のリセット値(省略時はmin)
 //   unit: フォーマット種別('dB','%','s','ms',':1','pan','x','LUFS','dBFS' または関数(v)=>string)
 //   label: knob下に表示するラベル(省略可)
 //   dragPixels: 縦ドラッグ感度(省略時は範囲から推測)
@@ -1405,7 +1451,7 @@ export function createKnob(spec) {
         window.addEventListener('pointerup', onUp);
     });
 
-    knob.addEventListener('dblclick', () => {
+    onKnobDoubleTap(knob, () => {
         setValue(defaultValue, true);
     });
 
