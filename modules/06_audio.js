@@ -2,7 +2,7 @@
 
 import { state, setAudioContext, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
-import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize } from './05_ui.js';
+import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize, updateSoundCacheIndicator } from './05_ui.js';
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
 import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS, AUDIO_MEMORY_BUDGET_BYTES } from './01_config.js';
 import { dbRequest } from './04_db.js';
@@ -620,6 +620,7 @@ export function cacheDecodedBuffer(cacheKey, audioBuffer) {
     state.decodedAudioBuffers[cacheKey] = audioBuffer;
     bufferLruOrder.delete(cacheKey);
     bufferLruOrder.set(cacheKey, performance.now());
+    updateSoundCacheIndicator(cacheKey.split(':')[0], true);
     evictDecodedBuffersOverBudget();
 }
 
@@ -636,6 +637,7 @@ function evictDecodedBuffersOverBudget() {
         if (isBufferKeyPinned(cacheKey)) continue;
         bufferLruOrder.delete(cacheKey);
         delete state.decodedAudioBuffers[cacheKey];
+        updateSoundCacheIndicator(cacheKey.split(':')[0], false);
         // 逆再生バッファと波形ピークの元バッファ参照も一緒に手放す (ピーク配列自体は小さいので保持)
         delete state.reversedAudioBuffers[cacheKey];
         const peaksCache = state.waveformPeaksCache[cacheKey];
@@ -1963,6 +1965,25 @@ export async function getAudioBufferForSound(soundId, audioId, expectedGeneratio
     }
 }
 
+// Shift+クリックでの明示的キャッシュ。未デコードならデコードして LRU の最新位置に置く。
+// 既にキャッシュ済みなら参照時刻だけ更新する (LRU の先頭送り)。
+export async function cacheSoundNow(soundId, audioId) {
+    if (!state.audioContext || state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) return false;
+    if (state.decodedAudioBuffers[soundId]) {
+        noteBufferUse(soundId);
+        return true;
+    }
+    try {
+        const audioRecord = await dbRequest('audio_files', 'readonly', 'get', audioId);
+        const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+        if (!blob) return false;
+        cacheDecodedBuffer(soundId, await decodeBlobToAudioBuffer(blob));
+        return true;
+    } catch (error) {
+        console.error(`Failed to explicitly cache sound ${soundId}:`, error);
+        return false;
+    }
+}
 /**
  * ITU-R BS.1770方式のK-weightingとゲーティングで統合ラウドネスを測定する。
  * HIGH_PERFORMANCE はキャッシュの AudioBuffer を使用、LOW_MEMORY は都度デコード。

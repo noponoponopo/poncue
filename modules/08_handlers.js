@@ -4,7 +4,7 @@ import { dom } from './02_dom.js';
 import { state, updateState } from './03_state.js';
 import { dbRequest } from './04_db.js';
 import { showConfirm, showAlert, showPrompt, showSoundSettingsModal, showRollSettingsModal, hideModal, toggleDarkMode, showSceneDropdown, updateDraggableState, clearDragStyles, clearDragOverStyles, createGhostElement, removeGhostElement, createMasterMeterElement, createMasterEffectKnobs, createMasterLimiterKnob, createMasterVolumeKnob, escapeHtml, setupCanvasResize, updateButtonUI, updateSustainLayerBadge, refreshOptAffordance } from './05_ui.js';
-import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, analyzeAndApplySilenceTrim, clearSilenceTrim, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback } from './06_audio.js';
+import { initAudioContext, resumeAudioContext, playSound, stopSound, stopAllSounds, forceStopSound, pauseSound, resumeSound, togglePauseAllSounds, isSoundPaused, updatePauseAllButton, triggerWaveformUpdate, seekSound, updateActiveSoundLoop, updateActiveSoundEffects, updateActiveSoundPan, updateActiveSoundSpeed, normalizeSoundVolume, analyzeAndApplySilenceTrim, clearSilenceTrim, startMasterMeter, setMasterParam, setMasterLimiterThreshold, supportsAudioOutputSelection, listAudioOutputDevices, setAudioOutputDevice, chooseAudioOutputDevice, startSustainLayer, getSustainLayerCount, setSoundMuted, startRollPlayback, endRollPlayback, cacheSoundNow } from './06_audio.js';
 import {
     selectScene, saveSetting, saveCurrentSceneSounds, handleAudioFileSelect, addAudioBlobToScene,
     removeSound, handleImportFileSelect, populateSceneModalList, generateUniqueId, markSceneDeleted,
@@ -436,8 +436,8 @@ function handlePerformanceModeChange(event) {
         message = '低メモリモードに設定しました。';
     }
     showAlert(message, 'パフォーマンスモード変更');
-    // ここでモードに応じた追加の処理を呼び出す
-    // 例: オーディオバッファの再読み込み、波形表示の精度変更など
+    // キャッシュインジケータの表示がモード依存のため、パッドを再描画する
+    renderers.renderSoundboard();
 }
 
 function populateKeyboardLayoutOptions() {
@@ -1476,6 +1476,12 @@ function createSoundButton(sound) {
         buttonWrapper.classList.add('has-color');
     }
     if (sound.error) buttonWrapper.classList.add('error');
+    // 未キャッシュ表示 (ダウンロードアイコン)。ロールはパート単位のため対象外。
+    if (sound.type !== 'roll'
+        && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY
+        && !state.decodedAudioBuffers[sound.id]) {
+        buttonWrapper.classList.add('not-cached');
+    }
 
     let settingsButtonContent = '<i class="fas fa-cog"></i>';
     const assignedShortcut = Object.keys(state.shortcuts).find(key => state.shortcuts[key] === sound.id);
@@ -1505,6 +1511,7 @@ function createSoundButton(sound) {
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
         <span class="trigger-indicator">${triggerIndicatorText}</span>
+        <i class="fas fa-download cache-indicator" title="未キャッシュ（Shift+クリックで読み込む）"></i>
         <div class="button-content">
             <i class="${isRoll ? 'fas fa-drum' : 'fas fa-play'} sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>
@@ -1529,6 +1536,14 @@ function createSoundButton(sound) {
 
     buttonWrapper.addEventListener('pointerdown', e => {
         if (isControlTarget(e.target)) return;
+        // Shift+クリック: 再生せずにその音源をキャッシュする (LRU の最新位置へ)。
+        if (e.shiftKey && e.button === 0 && sound.type !== 'roll'
+            && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+            e.preventDefault();
+            _toggleHandled.delete(sound.id);
+            cacheSoundNow(sound.id, sound.audioId);
+            return;
+        }
         if (isHoldTrigger && !state.isSortableEnabled && e.button === 0) {
             e.preventDefault();
             const inputId = `pointer:${e.pointerId}`;

@@ -1526,6 +1526,16 @@ export function updateSustainLayerBadge(soundId, layerCount) {
     indicator.textContent = voices > 1 ? `LAYER×${voices}` : 'LAYER';
 }
 
+// パッドのキャッシュ状態インジケータを更新する。
+// 未キャッシュ ( decodedAudioBuffers に無い) パッドにダウンロードアイコンを表示する。
+export function updateSoundCacheIndicator(soundId, cached) {
+    const button = dom.soundboard?.querySelector(`.sound-button[data-id="${soundId}"]`);
+    if (!button) return;
+    const sound = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
+    if (!sound || sound.type === 'roll') return; // ロールはパート単位で管理するため対象外
+    button.classList.toggle('not-cached', !cached);
+}
+
 export function resetProgressBar(soundButtonElement) {
     if (!soundButtonElement) return;
     soundButtonElement.style.setProperty('--progress', '0%');

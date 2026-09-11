@@ -1893,6 +1893,23 @@
       display: inline-block;
     }
 
+    /* 未キャッシュインジケータ (ダウンロードアイコン)。設定ボタン (左上) の下に置く */
+    .cache-indicator {
+      position: absolute;
+      top: calc(var(--button-min-size) * var(--settings-button-top-ratio) + 34px);
+      left: 12px;
+      color: var(--secondary-color);
+      font-size: calc(var(--button-min-size) * 0.085);
+      line-height: 1;
+      z-index: 5;
+      display: none;
+      pointer-events: none;
+    }
+
+    .sound-button.not-cached .cache-indicator {
+      display: inline-block;
+    }
+
     .trigger-indicator {
       position: absolute;
       top: 8px;
