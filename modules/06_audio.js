@@ -616,6 +616,15 @@ function noteBufferUse(cacheKey) {
     bufferLruOrder.set(cacheKey, performance.now());
 }
 
+// 現在キャッシュされている AudioBuffer の合計バイト数。
+export function getDecodedCacheBytes() {
+    let totalBytes = 0;
+    for (const buffer of Object.values(state.decodedAudioBuffers)) {
+        totalBytes += estimateAudioBufferBytes(buffer);
+    }
+    return totalBytes;
+}
+
 export function cacheDecodedBuffer(cacheKey, audioBuffer) {
     state.decodedAudioBuffers[cacheKey] = audioBuffer;
     bufferLruOrder.delete(cacheKey);
@@ -630,11 +639,28 @@ function evictDecodedBuffersOverBudget() {
         totalBytes += estimateAudioBufferBytes(buffer);
     }
     if (totalBytes <= AUDIO_MEMORY_BUDGET_BYTES) return;
+    const currentSoundIds = getCurrentSceneSoundIds();
+    // 1パス目: 現在のシーン以外のバッファを古い順に解放する。
+    // これがないと、シーン再訪時の再ウォームアップが「再デコードした分」と
+    // 「同じシーンの古いバッファ」の入れ替えを繰り返し、全復旧できなくなる。
+    totalBytes = evictBuffersPass(totalBytes, cacheKey => !currentSoundIds.has(cacheKey.split(':')[0]));
+    // 2パス目: それでも超過している場合 (現在シーン単体が予算超過) は問わず解放する。
+    if (totalBytes > AUDIO_MEMORY_BUDGET_BYTES) {
+        evictBuffersPass(totalBytes, () => true);
+    }
+}
+
+function getCurrentSceneSoundIds() {
+    const scene = state.scenes[state.currentSceneId];
+    return new Set((scene?.sounds || []).map(sound => sound.id));
+}
+
+function evictBuffersPass(totalBytes, isEligible) {
     for (const cacheKey of [...bufferLruOrder.keys()]) {
         if (totalBytes <= AUDIO_MEMORY_BUDGET_BYTES) break;
         const buffer = state.decodedAudioBuffers[cacheKey];
         if (!buffer) { bufferLruOrder.delete(cacheKey); continue; } // 既に削除済みの古い順序エントリ
-        if (isBufferKeyPinned(cacheKey)) continue;
+        if (isBufferKeyPinned(cacheKey) || !isEligible(cacheKey)) continue;
         bufferLruOrder.delete(cacheKey);
         delete state.decodedAudioBuffers[cacheKey];
         updateSoundCacheIndicator(cacheKey.split(':')[0], false);
@@ -644,6 +670,7 @@ function evictDecodedBuffersOverBudget() {
         if (peaksCache?.buffer === buffer) peaksCache.buffer = null;
         totalBytes -= estimateAudioBufferBytes(buffer);
     }
+    return totalBytes;
 }
 
 async function decodeBlobToAudioBuffer(blob) {

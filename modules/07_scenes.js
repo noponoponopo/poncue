@@ -3,9 +3,9 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferForSound, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey, cacheDecodedBuffer } from './06_audio.js';
+import { initAudioContext, getAudioBufferForSound, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey, cacheDecodedBuffer, getDecodedCacheBytes } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS, AUDIO_DECODE_CONCURRENCY } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS, AUDIO_DECODE_CONCURRENCY, AUDIO_MEMORY_BUDGET_BYTES } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -559,6 +559,9 @@ function warmUpSceneDecodes(sceneId, sceneGeneration) {
     let nextTask = 0;
     return Promise.all(Array.from({ length: Math.min(AUDIO_DECODE_CONCURRENCY, tasks.length) }, async () => {
         while (nextTask < tasks.length && sceneGeneration === state.sceneGeneration) {
+            // 予算が飽和したら追加の事前デコードを止める (デコード→自分の古いバッファを解放→の消耗を防ぐ)。
+            // 足りない分はクリック時の遅延デコードで賄われる。
+            if (getDecodedCacheBytes() >= AUDIO_MEMORY_BUDGET_BYTES) break;
             await tasks[nextTask++]();
         }
     }));
