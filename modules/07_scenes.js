@@ -634,7 +634,10 @@ export async function handleAudioFileSelect(event) {
         const scene = state.scenes[state.currentSceneId];
         scene.sounds.push(...addedSounds);
         await saveCurrentSceneSounds("handleAudioFileSelect");
-        await selectScene(state.currentSceneId);
+        renderers.renderSoundboard();
+        if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+            void warmUpSceneDecodes(state.currentSceneId, state.sceneGeneration);
+        }
     }
 
     if (failedSounds.length > 0 && state.showErrorPopups) {
