@@ -3,7 +3,7 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferForSound, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey, clearDecodedBufferCache, cacheDecodedBuffer } from './06_audio.js';
+import { initAudioContext, getAudioBufferForSound, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey, cacheDecodedBuffer } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
 import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS, AUDIO_DECODE_CONCURRENCY } from './01_config.js';
 
@@ -504,8 +504,6 @@ export async function selectScene(sceneId) {
     const sceneGeneration = state.sceneGeneration + 1;
     updateState({ sceneGeneration });
     stopAllSounds(false);
-    updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {}, waveformPeaksCache: {} });
-    clearDecodedBufferCache();
     triggerWaveformUpdate();
 
     if (!state.scenes[sceneId]) {
@@ -520,38 +518,50 @@ export async function selectScene(sceneId) {
     }
 
     updateState({ currentSceneId: sceneId });
-    
-    if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
-        const scene = state.scenes[sceneId];
-        const tasks = (scene?.sounds || []).map(sound => sound.type === 'roll'
-            ? () => preloadRollParts(sound, sceneGeneration)
-            : (sound.audioId && !state.decodedAudioBuffers[sound.id]
-                ? async () => {
-                    const audioBuffer = await getAudioBufferForSound(sound.id, sound.audioId, sceneGeneration);
-                    if (!audioBuffer) sound.error = 'Audio decode failed';
-                }
-                : null)).filter(Boolean);
-        let nextTask = 0;
-        await Promise.all(Array.from({ length: Math.min(AUDIO_DECODE_CONCURRENCY, tasks.length) }, async () => {
-            while (nextTask < tasks.length && sceneGeneration === state.sceneGeneration) {
-                await tasks[nextTask++]();
-            }
-        }));
-        if (sceneGeneration !== state.sceneGeneration || state.currentSceneId !== sceneId) return;
-    }
+
+    // パッドは即座に描画する。デコード済みでない音源は初回クリック時に遅延デコードされる。
     updateState({ shortcuts: state.scenes[sceneId]?.shortcuts ?? {} });
 
     const sceneColor = state.scenes[sceneId]?.color;
     const iconStyle = sceneColor ? ` style="color: ${sceneColor};"` : '';
     const h1 = document.querySelector('header h1');
     if (h1) h1.innerHTML = `<i class="fas fa-headphones-alt"${iconStyle}></i> ${escapeHtml(state.scenes[sceneId]?.name || 'シーンなし')}`;
-    
+
     renderers.renderSoundboard();
-    
+
     if (dom.sceneSettingsModal?.classList.contains('active')) {
         populateSceneModalList();
     }
     await saveSetting('currentSceneId', sceneId);
+
+    if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+        // 事前デコードは描画を待たせず後ろで進める。シーンが切り替わったら世代チェックで停止する。
+        void warmUpSceneDecodes(sceneId, sceneGeneration);
+    }
+}
+
+// シーンの全音源を制限付き並列で事前デコードする。
+// キャッシュ済みの音源はスキップされるため、再訪時は実質即終了する。
+function warmUpSceneDecodes(sceneId, sceneGeneration) {
+    const scene = state.scenes[sceneId];
+    const tasks = (scene?.sounds || []).map(sound => sound.type === 'roll'
+        ? () => preloadRollParts(sound, sceneGeneration)
+        : (sound.audioId && !state.decodedAudioBuffers[sound.id]
+            ? async () => {
+                const audioBuffer = await getAudioBufferForSound(sound.id, sound.audioId, sceneGeneration);
+                if (audioBuffer) {
+                    delete sound.error;
+                } else {
+                    sound.error = 'Audio decode failed';
+                }
+            }
+            : null)).filter(Boolean);
+    let nextTask = 0;
+    return Promise.all(Array.from({ length: Math.min(AUDIO_DECODE_CONCURRENCY, tasks.length) }, async () => {
+        while (nextTask < tasks.length && sceneGeneration === state.sceneGeneration) {
+            await tasks[nextTask++]();
+        }
+    }));
 }
 
 // --- サウンド管理 ---

@@ -644,11 +644,6 @@ function evictDecodedBuffersOverBudget() {
     }
 }
 
-// シーン切替時にキャッシュ全体を破棄する (decodedAudioBuffers の再作成に合わせる)。
-export function clearDecodedBufferCache() {
-    bufferLruOrder.clear();
-}
-
 async function decodeBlobToAudioBuffer(blob) {
     const arrayBuffer = await blob.arrayBuffer();
     return state.audioContext.decodeAudioData(arrayBuffer);
