@@ -115,6 +115,12 @@ export function createRemoteLink({ role, room, onMessage, onOpen, onJoin, onStat
             if (document.visibilityState === 'hidden') return; // バックグラウンド中の誤切断を防ぐ
             const ws = state.ws;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (state.clients <= 1) {
+                // 相手がいない間は po が返らないのが正常。死活判定を発火させず、
+                // 一人ルームでの無意味な切断/再接続ループを防ぐ。
+                state.lastPongAt = Date.now();
+                return;
+            }
             if (state.lastPongAt && Date.now() - state.lastPongAt > REMOTE_DEAD_AFTER_MS) {
                 // 応答なし → 自ら切って onclose 経由で再接続させる
                 try { ws.close(4000, 'heartbeat-timeout'); } catch (_) { /* noop */ }

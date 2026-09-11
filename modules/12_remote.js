@@ -25,7 +25,7 @@ import {
     updateActiveSoundLoop, updateActiveSoundPan, updateActiveSoundEffects,
     updateActiveSoundSpeed, setMasterParam, setMasterLimiterThreshold
 } from './06_audio.js';
-import { updateMasterVolumeKnob, escapeHtml } from './05_ui.js';
+import { updateMasterVolumeKnob, updateMasterEffectKnobs, updateMasterLimiterKnob, escapeHtml } from './05_ui.js';
 import { getMasterRecordingStatus } from './11_recording.js';
 import { handleSoundButtonClick, startHoldPlayback, endHoldPlayback, startRetriggerPlayback } from './08_handlers.js';
 import { createRemoteLink, randomId } from './remote_link.js';
@@ -185,6 +185,11 @@ function handleCommand(msg) {
             if (!sound || sound.type === 'roll') return;
             sound.loop = !sound.loop;
             updateActiveSoundLoop(sound.id, sound.loop);
+            // メイン側パッドの LOOP 表記も toggleLoop (08_handlers) と同じく更新する
+            const padEl = findPadElement(sound.id);
+            const loopBtn = padEl?.querySelector('.loop-button');
+            loopBtn?.classList.toggle('active', sound.loop);
+            padEl?.classList.toggle('loop-on', sound.loop);
             debouncedSaveCurrentSceneSounds();
             return;
         }
@@ -211,6 +216,9 @@ function handleCommand(msg) {
             return;
         case 'mx': // マスターエフェクト (k = setMasterParam と同じドットキー)
             applyMasterParam(String(msg.k ?? ''), msg.v, Boolean(msg.save));
+            // メイン側のknob表示もホスト state の値へ同期する (リモコン操作の見える化)
+            updateMasterEffectKnobs();
+            updateMasterLimiterKnob();
             return;
         case 'sc-add': // シーン追加
             addRemoteScene(String(msg.n ?? ''));
@@ -266,6 +274,13 @@ function applySoundVolume(soundId, value, save) {
     const activeAudio = state.activeAudios[soundId];
     if (activeAudio?.individualGain && !activeAudio.isFadingOut && !activeAudio.muted && state.audioContext) {
         activeAudio.individualGain.gain.setTargetAtTime(vol, state.audioContext.currentTime, 0.01);
+    }
+    // メイン側パッドのスライダー表示も同期する
+    const padEl = findPadElement(soundId);
+    const slider = padEl?.querySelector('input[type="range"]');
+    if (slider) {
+        slider.value = String(vol);
+        slider.title = `音量: ${Math.round(vol * 100)}%`;
     }
     if (save) saveCurrentSceneSounds(`remoteVolume-${soundId}`);
     else debouncedSaveCurrentSceneSounds();

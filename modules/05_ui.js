@@ -1134,69 +1134,71 @@ export function removeMeterElement(soundId) {
     }
 }
 
+// マスターエフェクトknobの共通spec/表示ユーティリティ。
+// createMasterEffectKnobs (生成) と updateMasterEffectKnobs (リモート反映の再描画) で共用する。
+const MASTER_EFFECT_GROUPS = [
+    {
+        name: 'EQ',
+        params: [
+            { key: 'eq.low',  label: 'LOW',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
+            { key: 'eq.mid',  label: 'MID',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
+            { key: 'eq.high', label: 'HIGH', min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 }
+        ]
+    },
+    {
+        name: 'COMP',
+        params: [
+            { key: 'comp.threshold', label: 'THRESH', min: -60, max: 0, step: 1, unit: 'dB', default: 0 },
+            { key: 'comp.ratio',     label: 'RATIO',  min: 1,   max: 20, step: 0.5, unit: ':1', default: 1 }
+        ]
+    },
+    {
+        name: 'DELAY',
+        params: [
+            { key: 'delay.time',  label: 'TIME', min: 0, max: 2, step: 0.01, unit: 's', dragPixels: 600, default: 0.18 },
+            { key: 'delay.level', label: 'MIX',  min: 0, max: 1, step: 0.01, unit: '%', default: 0 }
+        ]
+    },
+    {
+        name: 'PAN',
+        params: [
+            { key: 'pan.value', label: 'PAN', min: -1, max: 1, step: 0.01, unit: 'pan', dragPixels: 300, default: 0 }
+        ]
+    },
+    {
+        name: 'DIST',
+        params: [
+            { key: 'distortion.amount', label: 'AMOUNT', min: 0, max: 1, step: 0.01, unit: '%' }
+        ]
+    },
+    {
+        name: 'REVERB',
+        params: [
+            { key: 'reverb.decay', label: 'DECAY', min: 0.1, max: 10, step: 0.1,  unit: 's', dragPixels: 600 },
+            { key: 'reverb.wet',   label: 'MIX',   min: 0,   max: 1,  step: 0.01, unit: '%' }
+        ]
+    }
+];
+
+const masterEffectFormatVal = (v, spec) => {
+    if (spec.unit === 'pan') return formatPanValue(v);
+    if (spec.unit === '%') return `${Math.round(v * 100)}%`;
+    if (spec.unit === ':1') return `${v.toFixed(1)}:1`;
+    if (spec.unit === 'dB') return `${v > 0 ? '+' : ''}${v} dB`;
+    return `${v.toFixed(2)}${spec.unit}`;
+};
+
+const masterEffectRotationFor = (v, spec) => {
+    const range = spec.max - spec.min;
+    if (range === 0) return 0;
+    return ((v - spec.min) / range) * 270 - 135;
+};
+
 export function createMasterEffectKnobs(allValues, onChange) {
     if (!dom.masterEffectBar) return;
     dom.masterEffectBar.innerHTML = '';
 
-    const groups = [
-        {
-            name: 'EQ',
-            params: [
-                { key: 'eq.low',  label: 'LOW',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
-                { key: 'eq.mid',  label: 'MID',  min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 },
-                { key: 'eq.high', label: 'HIGH', min: -12, max: 12, step: 0.5, unit: 'dB', default: 0 }
-            ]
-        },
-        {
-            name: 'COMP',
-            params: [
-                { key: 'comp.threshold', label: 'THRESH', min: -60, max: 0, step: 1, unit: 'dB', default: 0 },
-                { key: 'comp.ratio',     label: 'RATIO',  min: 1,   max: 20, step: 0.5, unit: ':1', default: 1 }
-            ]
-        },
-        {
-            name: 'DELAY',
-            params: [
-                { key: 'delay.time',  label: 'TIME', min: 0, max: 2, step: 0.01, unit: 's', dragPixels: 600, default: 0.18 },
-                { key: 'delay.level', label: 'MIX',  min: 0, max: 1, step: 0.01, unit: '%', default: 0 }
-            ]
-        },
-        {
-            name: 'PAN',
-            params: [
-                { key: 'pan.value', label: 'PAN', min: -1, max: 1, step: 0.01, unit: 'pan', dragPixels: 300, default: 0 }
-            ]
-        },
-        {
-            name: 'DIST',
-            params: [
-                { key: 'distortion.amount', label: 'AMOUNT', min: 0, max: 1, step: 0.01, unit: '%' }
-            ]
-        },
-        {
-            name: 'REVERB',
-            params: [
-                { key: 'reverb.decay', label: 'DECAY', min: 0.1, max: 10, step: 0.1,  unit: 's', dragPixels: 600 },
-                { key: 'reverb.wet',   label: 'MIX',   min: 0,   max: 1,  step: 0.01, unit: '%' }
-            ]
-        }
-    ];
-
-    const formatVal = (v, spec) => {
-        if (spec.unit === 'pan') return formatPanValue(v);
-        if (spec.unit === '%') return `${Math.round(v * 100)}%`;
-        if (spec.unit === ':1') return `${v.toFixed(1)}:1`;
-        if (spec.unit === 'dB') return `${v > 0 ? '+' : ''}${v} dB`;
-        return `${v.toFixed(2)}${spec.unit}`;
-    };
-
-    const rotationFor = (v, spec) => {
-        const range = spec.max - spec.min;
-        if (range === 0) return 0;
-        return ((v - spec.min) / range) * 270 - 135;
-    };
-
-    for (const group of groups) {
+    for (const group of MASTER_EFFECT_GROUPS) {
         const cluster = document.createElement('div');
         cluster.classList.add('knob-cluster');
 
@@ -1221,11 +1223,11 @@ export function createMasterEffectKnobs(allValues, onChange) {
             const indicator = document.createElement('div');
             indicator.classList.add('knob-indicator');
             knob.appendChild(indicator);
-            knob.style.setProperty('--knob-rotation', `${rotationFor(value, spec)}deg`);
+            knob.style.setProperty('--knob-rotation', `${masterEffectRotationFor(value, spec)}deg`);
 
             const valLabel = document.createElement('span');
             valLabel.classList.add('knob-value');
-            valLabel.textContent = formatVal(value, spec);
+            valLabel.textContent = masterEffectFormatVal(value, spec);
 
             const nameLabel = document.createElement('span');
             nameLabel.classList.add('knob-name');
@@ -1248,8 +1250,8 @@ export function createMasterEffectKnobs(allValues, onChange) {
                     raw = Math.min(spec.max, Math.max(spec.min, raw));
                     const stepped = Math.round(raw / spec.step) * spec.step;
 
-                    knob.style.setProperty('--knob-rotation', `${rotationFor(stepped, spec)}deg`);
-                    valLabel.textContent = formatVal(stepped, spec);
+                    knob.style.setProperty('--knob-rotation', `${masterEffectRotationFor(stepped, spec)}deg`);
+                    valLabel.textContent = masterEffectFormatVal(stepped, spec);
                     onChange(spec.key, stepped);
                 };
                 const onWindowUp = () => {
@@ -1263,8 +1265,8 @@ export function createMasterEffectKnobs(allValues, onChange) {
             // Double-click to reset to default value
             const onDoubleClick = () => {
                 const def = spec.default ?? 0;
-                knob.style.setProperty('--knob-rotation', `${rotationFor(def, spec)}deg`);
-                valLabel.textContent = formatVal(def, spec);
+                knob.style.setProperty('--knob-rotation', `${masterEffectRotationFor(def, spec)}deg`);
+                valLabel.textContent = masterEffectFormatVal(def, spec);
                 onChange(spec.key, def);
             };
 
@@ -1275,6 +1277,37 @@ export function createMasterEffectKnobs(allValues, onChange) {
 
         dom.masterEffectBar.appendChild(cluster);
     }
+}
+
+// マスター効果knobの表示を state の現在値に同期する。
+// リモコンからの mx コマンド等、外部で値が変わった際にメイン画面のknobへ反映するために使う。
+export function updateMasterEffectKnobs() {
+    if (!dom.masterEffectBar) return;
+    for (const knobGroup of dom.masterEffectBar.querySelectorAll('.knob-group[data-param]')) {
+        const key = knobGroup.dataset.param;
+        const spec = MASTER_EFFECT_GROUPS.flatMap(g => g.params).find(p => p.key === key);
+        if (!spec) continue;
+        const [groupName, param] = key.split('.');
+        const stateKey = `master${groupName[0].toUpperCase()}${groupName.slice(1)}`;
+        const value = state[stateKey]?.[param] ?? 0;
+        const knob = knobGroup.querySelector('.knob');
+        const valLabel = knobGroup.querySelector('.knob-value');
+        if (knob) knob.style.setProperty('--knob-rotation', `${masterEffectRotationFor(value, spec)}deg`);
+        if (valLabel) valLabel.textContent = masterEffectFormatVal(value, spec);
+    }
+}
+
+// マスターリミッターknobの表示を state の現在値に同期する (updateMasterVolumeKnob のリミッター版)。
+export function updateMasterLimiterKnob() {
+    if (!dom.masterLimiterControl) return;
+    const knob = dom.masterLimiterControl.querySelector('.knob');
+    const valueLabel = dom.masterLimiterControl.querySelector('.knob-value');
+    if (!knob || !valueLabel) return;
+    const min = -12;
+    const max = 0;
+    const value = Math.min(max, Math.max(min, Number(state.masterLimiter?.threshold) || 0));
+    knob.style.setProperty('--knob-rotation', `${((value - min) / (max - min)) * 270 - 135}deg`);
+    valueLabel.textContent = `${value} dB`;
 }
 
 // --- Generic Knob Builder ---

@@ -3171,6 +3171,22 @@
     body.remote-page .effect-action-row {
       display: none !important;
     }
+    /* パッド上での長押し (hold系トリガー) を安定させる。
+       ホールド系は押下〜離上を pointer イベントで追うため、
+       スクロールや長押しコールアウトによる pointercancel を防ぐ。
+       通常パッドは manipulation で画面スクロールを妨げない。 */
+    body.remote-page .sound-button {
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    body.remote-page .sound-button.trigger-momentary,
+    body.remote-page .sound-button.trigger-pauseHold,
+    body.remote-page .sound-button.trigger-muteHold,
+    body.remote-page .sound-button.trigger-roll {
+      touch-action: none;
+    }
 
     .remote-connect-form {
       display: flex;

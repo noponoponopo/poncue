@@ -169,15 +169,21 @@ export function applyMasterEffectNodesFromState() {
     setMasterParam('reverb.wet', state.masterReverb?.wet ?? 0);
 }
 
+// resume待ちの打ち切り時間。ジェスチャなしで呼ばれた resume() は
+// ユーザー操作があるまで解けない (rejectもしない) ため、これがないと
+// リモートコマンド経由の再生処理が永遠に await で固まる。
+const RESUME_RACE_TIMEOUT_MS = 500;
+
 export function resumeAudioContext() {
     if (state.audioContext && state.audioContext.state === 'suspended') {
-        return state.audioContext.resume().then(() => resumeToneAudio()).then(() => {
-            document.body.removeEventListener('click', resumeAudioContext, { capture: true });
-            document.body.removeEventListener('touchend', resumeAudioContext, { capture: true });
-        }).catch(e => { /* Error resuming AudioContext */ });
+        // resume/Tone.start の完了と短いタイムアウトを競合させる。
+        // ジェスチャ内の呼び出し (ローカル操作) は即時解決、リモート経由でも
+        // 呼び出し側が応答しない resume に引きずられて固まらない。
+        const resumed = state.audioContext.resume().then(() => resumeToneAudio());
+        const timeout = new Promise(resolve => setTimeout(resolve, RESUME_RACE_TIMEOUT_MS));
+        return Promise.race([resumed, timeout])
+            .catch(() => { /* Error resuming AudioContext */ });
     } else {
-        document.body.removeEventListener('click', resumeAudioContext, { capture: true });
-        document.body.removeEventListener('touchend', resumeAudioContext, { capture: true });
         return Promise.resolve();
     }
 }

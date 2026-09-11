@@ -76,9 +76,19 @@ export function setupEventListeners() {
     });
 
     // Audio resume
-    document.body.addEventListener('click', resumeAudioContext, { capture: true, once: true });
-    document.body.addEventListener('touchend', resumeAudioContext, { capture: true, once: true });
+    // once:true だと「AudioContext が無い段階での最初のクリック」で消費され、
+    // 後からリモート操作などで生成された AudioContext が suspended のまま取り残される。
+    // 常駐リスナーにして、ジェスチャがある度に生成+再開を試みる (既に running なら no-op)。
+    const ensureAudioUnlocked = () => {
+        // initAudioContext は「既存かつ suspended」のときも false を返すため、
+        // 戻り値に関わらず必ず resume も試みる (running なら resume は no-op)。
+        initAudioContext()
+            .then(() => resumeAudioContext())
+            .catch(() => { /* 初期化失敗時は playSound 側のエラー表示に任せる */ });
+    };
 
+    document.body.addEventListener('click', ensureAudioUnlocked, { capture: true });
+    document.body.addEventListener('touchend', ensureAudioUnlocked, { capture: true });
     // Header & Main Controls
     dom.addSoundBtn?.addEventListener('click', () => { resumeAudioContext(); dom.fileInput.click(); });
     dom.addRollBtn?.addEventListener('click', () => { resumeAudioContext(); handleRollSettings(null); });
@@ -1141,11 +1151,22 @@ function releaseAllHoldInputs() {
     heldSoundIds.forEach(soundId => releaseHoldPlayback(soundId));
 }
 
+let _audioSuspendedAlertAt = 0; // 直前に「オーディオ停止中」警告を出した時刻 (連発防止)
+
 async function handleSoundButtonClick(soundId, soundButtonElement) {
     const clickTime = performance.now(); // Capture timestamp at click
     if (!state.audioContext) { if (!(await initAudioContext())) { showAlert("オーディオ機能の初期化に失敗。", "エラー"); return; } }
     await resumeAudioContext();
-    if (state.audioContext.state !== 'running') { showAlert("オーディオの準備ができていません。画面をクリック後、再度お試しください。", "通知"); return; }
+    if (state.audioContext.state !== 'running') {
+        // リモート操作経由ではホスト画面をユーザーが見ていない可能性が高く、同じ警告の連発は無意味。
+        // 一定間隔で一度だけ通知し、ホスト側のジェスチャ (常駐の ensureAudioUnlocked) で復帰を待つ。
+        const now = Date.now();
+        if (now - _audioSuspendedAlertAt > 5000) {
+            _audioSuspendedAlertAt = now;
+            showAlert("オーディオが停止しています。ホスト側の画面を一度クリック/タップすると復帰します。", "通知");
+        }
+        return;
+    }
 
     const soundData = state.scenes[state.currentSceneId]?.sounds.find(s => s.id === soundId);
     if (soundData?.error) {
