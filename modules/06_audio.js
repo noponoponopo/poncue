@@ -4,7 +4,7 @@ import { state, setAudioContext, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { showAlert, createMeterElement, removeMeterElement, updateButtonUI, updateSustainLayerBadge, resetProgressBar, setupCanvasResize } from './05_ui.js';
 import { renderFallbackUI, disableAppControls } from './07_scenes.js';
-import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS } from './01_config.js';
+import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS, AUDIO_MEMORY_BUDGET_BYTES } from './01_config.js';
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings, setEffectsContext, ensureWorkletModule, createMasterChain, disposeMasterChain, applyMasterChainSettings, applyMasterChainDelay, applyMasterChainReverb, applyMasterChainLimiter } from './09_effects.js';
 import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
@@ -591,6 +591,69 @@ async function setMediaElementPosition(audioElement, position) {
     if (!Number.isFinite(position)) return;
     audioElement.currentTime = Math.max(0, position);
 }
+
+// --- デコード済み AudioBuffer キャッシュ (LRU + メモリ予算) ---
+// decodedAudioBuffers が唯一の真実。bufferLruOrder は解放順のための補助で、
+// 実体が消えたキーは逐次掃除する。
+const bufferLruOrder = new Map(); // cacheKey → lastUsedAt(ms)。挿入順 = 古い順。
+
+function estimateAudioBufferBytes(buffer) {
+    if (!buffer) return 0;
+    return buffer.length * buffer.numberOfChannels * 4; // float32
+}
+
+// 再生中・一時停止中のサウンドのバッファは解放しない。ロールのパートキーは soundId 接頭辞で判定する。
+function isBufferKeyPinned(cacheKey) {
+    const soundId = cacheKey.split(':')[0];
+    return Boolean(state.activeAudios[soundId]
+        || state.pausedSounds[soundId]
+        || state.sustainLayers[soundId]?.length);
+}
+
+function noteBufferUse(cacheKey) {
+    if (!(cacheKey in state.decodedAudioBuffers)) return;
+    bufferLruOrder.delete(cacheKey);
+    bufferLruOrder.set(cacheKey, performance.now());
+}
+
+export function cacheDecodedBuffer(cacheKey, audioBuffer) {
+    state.decodedAudioBuffers[cacheKey] = audioBuffer;
+    bufferLruOrder.delete(cacheKey);
+    bufferLruOrder.set(cacheKey, performance.now());
+    evictDecodedBuffersOverBudget();
+}
+
+function evictDecodedBuffersOverBudget() {
+    let totalBytes = 0;
+    for (const buffer of Object.values(state.decodedAudioBuffers)) {
+        totalBytes += estimateAudioBufferBytes(buffer);
+    }
+    if (totalBytes <= AUDIO_MEMORY_BUDGET_BYTES) return;
+    for (const cacheKey of [...bufferLruOrder.keys()]) {
+        if (totalBytes <= AUDIO_MEMORY_BUDGET_BYTES) break;
+        const buffer = state.decodedAudioBuffers[cacheKey];
+        if (!buffer) { bufferLruOrder.delete(cacheKey); continue; } // 既に削除済みの古い順序エントリ
+        if (isBufferKeyPinned(cacheKey)) continue;
+        bufferLruOrder.delete(cacheKey);
+        delete state.decodedAudioBuffers[cacheKey];
+        // 逆再生バッファと波形ピークの元バッファ参照も一緒に手放す (ピーク配列自体は小さいので保持)
+        delete state.reversedAudioBuffers[cacheKey];
+        const peaksCache = state.waveformPeaksCache[cacheKey];
+        if (peaksCache?.buffer === buffer) peaksCache.buffer = null;
+        totalBytes -= estimateAudioBufferBytes(buffer);
+    }
+}
+
+// シーン切替時にキャッシュ全体を破棄する (decodedAudioBuffers の再作成に合わせる)。
+export function clearDecodedBufferCache() {
+    bufferLruOrder.clear();
+}
+
+async function decodeBlobToAudioBuffer(blob) {
+    const arrayBuffer = await blob.arrayBuffer();
+    return state.audioContext.decodeAudioData(arrayBuffer);
+}
+
 async function createSoundSourceNodes(soundData, expectedGeneration = state.sceneGeneration) {
     const wantsReverse = !!soundData.reverse;
     // reverse の場合は LOW_MEMORY でも BufferSource を使用（反転バッファが必要なため）
@@ -625,19 +688,21 @@ async function createSoundSourceNodes(soundData, expectedGeneration = state.scen
         return { sourceNode, audioElement, objectUrl, audioBuffer: null, waveformPeaks };
     }
 
-    // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）
+    // BufferSource 経路（HIGH_PERFORMANCE 常時、または reverse 時）。
+    // 事前デコード済みなら即座に使う。無ければここで初回デコードする（遅延デコード）。
+    // これにより事前デコードを待たずにパッドを押せる。
     let baseBuffer = state.decodedAudioBuffers[soundData.id];
-    if (!baseBuffer && wantsReverse) {
-        // LOW_MEMORY + reverse: blob からデコードしてキャッシュ
+    if (baseBuffer) {
+        noteBufferUse(soundData.id);
+    } else {
         const audioRecord = await dbRequest('audio_files', 'readonly', 'get', soundData.audioId);
         const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
         if (!blob) return { error: `サウンド「${soundData.name}」の音声データが見つかりません。` };
         try {
-            const arrayBuffer = await blob.arrayBuffer();
-            baseBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
-            if (expectedGeneration === state.sceneGeneration) state.decodedAudioBuffers[soundData.id] = baseBuffer;
+            baseBuffer = await decodeBlobToAudioBuffer(blob);
+            if (expectedGeneration === state.sceneGeneration) cacheDecodedBuffer(soundData.id, baseBuffer);
         } catch (decodeError) {
-            console.error("Error decoding audio for reverse:", decodeError);
+            console.error("Error decoding audio:", decodeError);
         }
     }
 
@@ -645,7 +710,7 @@ async function createSoundSourceNodes(soundData, expectedGeneration = state.scen
         ? getReversedAudioBuffer(soundData.id, baseBuffer)
         : baseBuffer;
 
-    if (!audioBuffer) return { error: `サウンド「${soundData.name}」の音声データがキャッシュされていません。` };
+    if (!audioBuffer) return { error: `サウンド「${soundData.name}」の音声データを読み込めませんでした。` };
 
     const playbackRate = Math.max(0.25, Math.min(4, soundData.playbackRate ?? 1));
     // ピッチ保持は速度変更時のみ意味を持ち、該当時だけ粒合成を使う。
@@ -967,15 +1032,17 @@ export function rollPartCacheKey(soundId, part) {
 async function getRollPartBuffer(cacheKey, audioId, soundName, expectedGeneration = state.sceneGeneration) {
     if (!audioId || !state.audioContext) return null;
     if (expectedGeneration !== state.sceneGeneration) return null;
-    if (state.decodedAudioBuffers[cacheKey]) return state.decodedAudioBuffers[cacheKey];
+    if (state.decodedAudioBuffers[cacheKey]) {
+        noteBufferUse(cacheKey);
+        return state.decodedAudioBuffers[cacheKey];
+    }
     try {
         const audioRecord = await dbRequest('audio_files', 'readonly', 'get', audioId);
         const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
         if (!blob) return null;
-        const arrayBuffer = await blob.arrayBuffer();
-        const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        const audioBuffer = await decodeBlobToAudioBuffer(blob);
         if (expectedGeneration === state.sceneGeneration) {
-            state.decodedAudioBuffers[cacheKey] = audioBuffer;
+            cacheDecodedBuffer(cacheKey, audioBuffer);
         }
         return audioBuffer;
     } catch (error) {
@@ -1877,18 +1944,23 @@ export function getReversedAudioBuffer(soundId, originalBuffer) {
     return reversed;
 }
 
-export async function getAudioBufferFromDataUrl(soundId, dataUrl, expectedGeneration = null) {
+// シーン選択時の事前デコード用。DBのblobから直接デコードしてキャッシュする。
+export async function getAudioBufferForSound(soundId, audioId, expectedGeneration = null) {
     if (!state.audioContext) return null;
     if (state.performanceMode === PERFORMANCE_MODE.LOW_MEMORY) return null;
     if (expectedGeneration !== null && expectedGeneration !== state.sceneGeneration) return null;
-    if (state.decodedAudioBuffers[soundId]) return state.decodedAudioBuffers[soundId];
+    if (state.decodedAudioBuffers[soundId]) {
+        noteBufferUse(soundId);
+        return state.decodedAudioBuffers[soundId];
+    }
 
     try {
-        const fetchResponse = await fetch(dataUrl);
-        const arrayBuffer = await fetchResponse.arrayBuffer();
-        const audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        const audioRecord = await dbRequest('audio_files', 'readonly', 'get', audioId);
+        const blob = audioRecord instanceof Blob ? audioRecord : audioRecord?.blob;
+        if (!blob) return null;
+        const audioBuffer = await decodeBlobToAudioBuffer(blob);
         if (expectedGeneration === null || expectedGeneration === state.sceneGeneration) {
-            state.decodedAudioBuffers[soundId] = audioBuffer;
+            cacheDecodedBuffer(soundId, audioBuffer);
         }
         return audioBuffer;
     } catch (error) {

@@ -82,6 +82,7 @@ export async function dbRequest(storeName, mode, operation, data = null) {
             switch (operation) {
                 case 'get': request = store.get(data); break;
                 case 'getAll': request = store.getAll(); break;
+                case 'getAllKeys': request = store.getAllKeys(); break;
                 case 'put': request = store.put(data); break;
                 case 'delete': request = store.delete(data); break;
                 case 'clear': request = store.clear(); break;

@@ -10,6 +10,15 @@
 `AudioBufferSourceNode` で再生し、速度とピッチを同時に変える。速度変更時に
 `preservePitch` が有効な音源だけ `Tone.GrainPlayer` をフォールバックに使う。
 
+decode は IndexedDB の blob から直接行う (base64 dataUrl は経由しない)。
+シーン選択時の事前デコードは同時実行数を `AUDIO_DECODE_CONCURRENCY` (3) に絞り、
+完了していないパッドは初回再生時に遅延デコードされる。
+`decodedAudioBuffers` は合計 `AUDIO_MEMORY_BUDGET_BYTES` (2GB) の予算内で管理し、
+超過時は再生中・一時停止中 (pinned) を除いて LRU 順に解放する。解放時に
+逆再生バッファと波形ピークの元バッファ参照も併せて手放す。
+エクスポートも dataUrl を介さず blob を直接 ZIP に書き込む (巨大シーンで
+base64 文字列が文字列長上限を超えて例外になるのを避けるため)。
+
 ```text
 AudioBufferSourceNode / GrainPlayer
   -> StereoPannerNode

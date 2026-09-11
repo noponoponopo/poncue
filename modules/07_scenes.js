@@ -3,9 +3,9 @@
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
-import { initAudioContext, getAudioBufferFromDataUrl, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey } from './06_audio.js';
+import { initAudioContext, getAudioBufferForSound, stopAllSounds, triggerWaveformUpdate, setMasterLimiterThreshold, applyMasterEffectNodesFromState, setAudioOutputDevice, preloadRollParts, rollPartCacheKey, clearDecodedBufferCache, cacheDecodedBuffer } from './06_audio.js';
 import { showAlert, showConfirm, initDarkMode, updateDraggableState, hideModal, escapeHtml, updateMasterVolumeKnob } from './05_ui.js';
-import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS } from './01_config.js';
+import { MAX_FILE_SIZE_MB, SETTINGS_STORE_NAME, SCENES_STORE_NAME, AUDIO_FILES_STORE_NAME, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, FADE_EASING_TYPES, DEFAULT_FADE_EASING, TRIGGER_MODES, DEFAULT_TRIGGER_MODE, DEFAULT_KEYBOARD_LAYOUT, KEYBOARD_LAYOUTS, AUDIO_DECODE_CONCURRENCY } from './01_config.js';
 
 // --- レンダリング関数を保持するオブジェクト ---
 export const renderers = {
@@ -18,15 +18,6 @@ export function markSceneDeleted(sceneId) {
 }
 
 // --- ヘルパー関数 ---
-function blobToDataURL(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(blob);
-    });
-}
-
 function dataURLtoBlob(dataurl) {
     if (!dataurl || typeof dataurl !== 'string') return null;
     try {
@@ -220,13 +211,10 @@ export async function initializeApp() {
             }
         }
 
-        const validAudioIds = new Set();
-        for (const audioId of referencedAudioIds) {
-            const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
-            if (audioRecord?.blob instanceof Blob && audioRecord.blob.size > 0) {
-                validAudioIds.add(audioId);
-            }
-        }
+        // 存在確認はキーだけで行う。blob本体を読むと起動時間が音声データ量に比例してしまう。
+        // レコードは put の原子性により key+blob が必ず揃って書き込まれるため、
+        // キーの存在確認で十分。blob破損などの詳細チェックは再生時のエラー処理に任せる。
+        const validAudioIds = new Set(await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'getAllKeys'));
 
         const isSoundAudioValid = (sound) => {
             if (sound.type === 'roll') {
@@ -512,59 +500,12 @@ export async function loadScenesFromDB() {
     }
 }
 
-async function getSceneWithPopulatedDataUrls(sceneId, force = false) {
-    const scene = state.scenes[sceneId];
-    if (!scene) return null;
-
-    const sceneCopy = JSON.parse(JSON.stringify(scene));
-    
-    const audioFetchPromises = sceneCopy.sounds.map(async (sound) => {
-        // Populate dataUrl if forced (for export) or if in high-perf mode.
-        if ((force || state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) && sound.audioId && !sound.dataUrl) {
-            try {
-                const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', sound.audioId);
-                if (audioRecord && audioRecord.blob) {
-                    sound.dataUrl = await blobToDataURL(audioRecord.blob);
-                } else {
-                    sound.error = 'Audio data missing';
-                }
-            } catch (err) {
-                sound.error = 'Audio load failed';
-            }
-        }
-        // ドラムロールのパートはエクスポート時のみdataUrl化する（再生時はblobから直接デコードする）
-        if (force && sound.type === 'roll' && sound.rollParts) {
-            sound.rollPartDataUrls = {};
-            const loadPartDataUrl = async (audioId) => {
-                if (!audioId) return null;
-                try {
-                    const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
-                    if (audioRecord && audioRecord.blob) {
-                        return await blobToDataURL(audioRecord.blob);
-                    }
-                } catch (err) {
-                    console.error(`Failed to load roll part of ${sound.name}:`, err);
-                }
-                return null;
-            };
-            sound.rollPartDataUrls.intro = await loadPartDataUrl(sound.rollParts.intro);
-            sound.rollPartDataUrls.loops = await Promise.all(
-                (sound.rollParts.loops || []).map(loopAudioId => loadPartDataUrl(loopAudioId))
-            );
-            sound.rollPartDataUrls.end = await loadPartDataUrl(sound.rollParts.end);
-            sound.rollPartDataUrls.finish = await loadPartDataUrl(sound.rollParts.finish);
-        }
-    });
-
-    await Promise.all(audioFetchPromises);
-    return sceneCopy;
-}
-
 export async function selectScene(sceneId) {
     const sceneGeneration = state.sceneGeneration + 1;
     updateState({ sceneGeneration });
     stopAllSounds(false);
     updateState({ decodedAudioBuffers: {}, reversedAudioBuffers: {}, waveformPeaksCache: {} });
+    clearDecodedBufferCache();
     triggerWaveformUpdate();
 
     if (!state.scenes[sceneId]) {
@@ -580,22 +521,22 @@ export async function selectScene(sceneId) {
 
     updateState({ currentSceneId: sceneId });
     
-    const sceneWithData = await getSceneWithPopulatedDataUrls(sceneId);
-    if (sceneGeneration !== state.sceneGeneration || state.currentSceneId !== sceneId) return;
-    if (sceneWithData) {
-        state.scenes[sceneId] = sceneWithData;
-        if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) { // Only pre-decode if not in low memory mode
-            await Promise.all(sceneWithData.sounds.map(async sound => {
-                if (sound.type === 'roll') {
-                    // ロールはパート単位で事前デコードする
-                    await preloadRollParts(sound, sceneGeneration);
-                    return;
+    if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
+        const scene = state.scenes[sceneId];
+        const tasks = (scene?.sounds || []).map(sound => sound.type === 'roll'
+            ? () => preloadRollParts(sound, sceneGeneration)
+            : (sound.audioId && !state.decodedAudioBuffers[sound.id]
+                ? async () => {
+                    const audioBuffer = await getAudioBufferForSound(sound.id, sound.audioId, sceneGeneration);
+                    if (!audioBuffer) sound.error = 'Audio decode failed';
                 }
-                if (!sound.dataUrl) return;
-                const audioBuffer = await getAudioBufferFromDataUrl(sound.id, sound.dataUrl, sceneGeneration);
-                if (!audioBuffer) sound.error = 'Audio decode failed';
-            }));
-        }
+                : null)).filter(Boolean);
+        let nextTask = 0;
+        await Promise.all(Array.from({ length: Math.min(AUDIO_DECODE_CONCURRENCY, tasks.length) }, async () => {
+            while (nextTask < tasks.length && sceneGeneration === state.sceneGeneration) {
+                await tasks[nextTask++]();
+            }
+        }));
         if (sceneGeneration !== state.sceneGeneration || state.currentSceneId !== sceneId) return;
     }
     updateState({ shortcuts: state.scenes[sceneId]?.shortcuts ?? {} });
@@ -983,7 +924,7 @@ export async function addAudioBlobToScene(blob, name, sceneId = state.currentSce
 
     if (sceneId === state.currentSceneId) {
         if (state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
-            state.decodedAudioBuffers[newSound.id] = audioBuffer;
+            cacheDecodedBuffer(newSound.id, audioBuffer);
         }
         renderers.renderSoundboard();
     }
@@ -1057,12 +998,17 @@ export async function saveCurrentSceneSounds(triggeredBy = "unknown", sceneId = 
     const scene = state.scenes[sceneId];
     if (!scene) return;
 
-    const sceneToSave = JSON.parse(JSON.stringify(scene));
-    sceneToSave.sounds.forEach(sound => {
-        delete sound.dataUrl;
-        delete sound.error;
-        delete sound.rollPartDataUrls; // エクスポート用の一時フィールドは保存しない
-    });
+    // シャローコピーで一時フィールドを除いて保存する。
+    // IndexedDB の put は structured clone で保存時点のスナップショットを取るため共有参照で安全。
+    const TRANSIENT_SOUND_FIELDS = ['dataUrl', 'error', 'rollPartDataUrls'];
+    const sceneToSave = {
+        ...scene,
+        sounds: scene.sounds.map(sound => {
+            const copy = { ...sound };
+            for (const field of TRANSIENT_SOUND_FIELDS) delete copy[field];
+            return copy;
+        })
+    };
 
     await dbRequest(SCENES_STORE_NAME, 'readwrite', 'put', sceneToSave);
 }
@@ -1086,8 +1032,9 @@ export async function exportSceneAsZip(sceneId) {
         return;
     }
 
-    // Force population of data URLs for export
-    const scene = await getSceneWithPopulatedDataUrls(sceneId, true);
+    // dataUrl (base64) を介さず IndexedDB の blob を直接 ZIP に書き込む。
+    // sceneMeta は dataUrl を含まないメタデータのみのディープコピー (音質設定等の小さなデータ)。
+    const scene = state.scenes[sceneId];
     if (!scene) {
         showAlert("エクスポート対象のシーンが見つかりません。");
         return;
@@ -1098,40 +1045,46 @@ export async function exportSceneAsZip(sceneId) {
     const sceneMeta = JSON.parse(JSON.stringify(scene));
     const audioFiles = [];
 
-    sceneMeta.sounds.forEach((sound, index) => {
-        if (sound.dataUrl) {
-            const blob = dataURLtoBlob(sound.dataUrl);
-            if (blob) {
-                const fileExtension = blob.type.split('/')[1] || 'mp3';
-                const fileName = `audio/${sound.id}.${fileExtension}`;
-                sound.fileName = fileName;
-                audioFiles.push({ fileName, blob });
-                delete sound.dataUrl;
-                delete sound.audioId;
-            }
-        }
+    const loadAudioBlob = async (audioId) => {
+        if (!audioId) return null;
+        const audioRecord = await dbRequest(AUDIO_FILES_STORE_NAME, 'readonly', 'get', audioId);
+        return audioRecord instanceof Blob ? audioRecord : audioRecord?.blob || null;
+    };
+
+    for (const sound of sceneMeta.sounds) {
         // ドラムロールのパート音声も個別ファイルとして書き出す
-        if (sound.type === 'roll' && sound.rollPartDataUrls) {
+        if (sound.type === 'roll' && sound.rollParts) {
             sound.rollPartFiles = {};
-            const writePartFile = (partLabel, partDataUrl) => {
-                if (!partDataUrl) return null;
-                const blob = dataURLtoBlob(partDataUrl);
+            const writePartFile = async (partLabel, partAudioId) => {
+                const blob = await loadAudioBlob(partAudioId);
                 if (!blob) return null;
                 const fileExtension = blob.type.split('/')[1] || 'mp3';
                 const fileName = `audio/${sound.id}-${partLabel}.${fileExtension}`;
                 audioFiles.push({ fileName, blob });
                 return fileName;
             };
-            sound.rollPartFiles.intro = writePartFile('intro', sound.rollPartDataUrls.intro);
-            sound.rollPartFiles.loops = (sound.rollPartDataUrls.loops || []).map((loopDataUrl, loopIndex) =>
-                writePartFile(`loop${loopIndex}`, loopDataUrl)
-            );
-            sound.rollPartFiles.end = writePartFile('end', sound.rollPartDataUrls.end);
-            sound.rollPartFiles.finish = writePartFile('finish', sound.rollPartDataUrls.finish);
-            delete sound.rollPartDataUrls;
+            sound.rollPartFiles.intro = await writePartFile('intro', sound.rollParts.intro);
+            sound.rollPartFiles.loops = [];
+            for (let loopIndex = 0; loopIndex < (sound.rollParts.loops || []).length; loopIndex++) {
+                const fileName = await writePartFile(`loop${loopIndex}`, sound.rollParts.loops[loopIndex]);
+                if (fileName) sound.rollPartFiles.loops.push(fileName);
+            }
+            sound.rollPartFiles.end = await writePartFile('end', sound.rollParts.end);
+            sound.rollPartFiles.finish = await writePartFile('finish', sound.rollParts.finish);
             delete sound.rollParts;
+            continue;
         }
-    });
+        if (sound.audioId) {
+            const blob = await loadAudioBlob(sound.audioId);
+            if (blob) {
+                const fileExtension = blob.type.split('/')[1] || 'mp3';
+                const fileName = `audio/${sound.id}.${fileExtension}`;
+                sound.fileName = fileName;
+                audioFiles.push({ fileName, blob });
+                delete sound.audioId;
+            }
+        }
+    }
 
     zip.file("scene.json", JSON.stringify(sceneMeta, null, 2));
     audioFiles.forEach(file => {

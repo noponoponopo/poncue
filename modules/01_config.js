@@ -98,6 +98,15 @@ export const DEFAULT_EFFECT_SETTINGS = {
     }
 };
 
+// 音声デコードの同時実行数。シーン選択時の事前デコードをここに絞る。
+// 巨大WAVを一括decodeすると巨大アロケーションが同時に発生してGCが追いつかなくなる。
+// 事前デコードが終わっていないパッドは初回再生時に遅延デコードされるため欠落は出ない。
+export const AUDIO_DECODE_CONCURRENCY = 3;
+
+// デコード済みAudioBufferの合計メモリ予算(バイト)。超過すると未使用のバッファからLRU順に解放する。
+// AudioBufferは length × channels × 4byte (float32)。3分のステレオWAV 1曲で約64MB相当。
+export const AUDIO_MEMORY_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
+
 // --- リモート操作 (cfws: ws.nopo.dev 経由の WebSocket 中継) ---
 export const REMOTE_WS_BASE = 'wss://ws.nopo.dev';
 export const REMOTE_SERVICE = 'poncue';
