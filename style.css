@@ -386,7 +386,11 @@
       background-color: var(--primary-color);
       color: white;
       border: none;
-      padding: 8px 16px;
+      padding: 0;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       font-size: 0.9em;
@@ -415,7 +419,10 @@
       background: none;
       border: 1px solid var(--warning-color);
       color: var(--warning-color);
-      padding: 7px 14px;
+      padding: 0;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       font-size: 0.9em;
@@ -440,7 +447,11 @@
       background-color: var(--danger-color);
       color: white;
       border: none;
-      padding: 8px 16px;
+      padding: 0;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       font-size: 0.9em;
@@ -463,7 +474,10 @@
       background: transparent;
       color: var(--danger-color);
       border: 1px solid var(--danger-color);
-      padding: 7px 14px;
+      padding: 0;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       font-size: 0.9em;
@@ -471,7 +485,6 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      min-width: 76px;
       justify-content: center;
     }
 
@@ -658,7 +671,10 @@
       color: var(--secondary-color);
       font-size: 0.9em;
       font-weight: 500;
-      padding: 6px 14px;
+      padding: 0;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       transition: color var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed), box-shadow var(--transition-speed);
@@ -692,7 +708,10 @@
       color: var(--secondary-color);
       font-size: 0.9em;
       font-weight: 500;
-      padding: 6px 14px;
+      padding: 0;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       transition: color var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed);
@@ -718,7 +737,10 @@
       color: var(--secondary-color);
       font-size: 0.9em;
       font-weight: 500;
-      padding: 6px 12px;
+      padding: 0;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       border-radius: var(--border-radius);
       cursor: pointer;
       display: inline-flex;
@@ -2537,13 +2559,10 @@
       }
 
       button#add-sound-btn {
-        padding: 8px 15px;
         font-size: 0.9em;
       }
 
       #scene-settings-btn {
-        width: 32px;
-        height: 32px;
         font-size: 1em;
       }
 
@@ -2606,31 +2625,11 @@
       button#add-sound-btn,
       #pause-all-btn,
       button#stop-all-btn,
-      #show-mode-btn,
-      #add-roll-btn {
-        padding: 10px;
-        min-width: 38px;
-      }
-
-      button#record-btn {
-        min-width: 68px;
-        padding: 9px 8px;
-      }
-
-      button#add-sound-btn span,
-      #pause-all-btn span,
-      button#stop-all-btn span,
-      #show-mode-btn span,
-      #add-roll-btn span,
-      #keyboard-view-btn span {
-        display: none;
-      }
-
-      button#add-sound-btn,
-      button#stop-all-btn,
+      button#record-btn,
       #show-mode-btn,
       #add-roll-btn,
       #keyboard-view-btn,
+      #remote-btn,
       #scene-settings-btn {
         flex: 0 0 38px;
         width: 38px;
@@ -2641,6 +2640,10 @@
       #scene-settings-btn {
         order: 2;
         font-size: 1.2em;
+        margin-left: 0;
+      }
+
+      #remote-btn {
         margin-left: 0;
       }
 
@@ -2883,8 +2886,36 @@
       50% { opacity: 0.25; }
     }
 
+    #remote-btn {
+      position: relative;
+      background: none;
+      border: 1px solid var(--border-color);
+      color: var(--secondary-color);
+      font-size: 1.1em;
+      padding: 0;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: color var(--transition-speed), background-color var(--transition-speed), border-color var(--transition-speed);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      margin-left: 5px;
+    }
+
+    #remote-btn:hover {
+      background-color: var(--control-hover-bg);
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+    }
+
     #remote-btn .remote-dot {
-      margin-left: 4px;
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      margin-left: 0;
     }
 
     /* --- オーバーレイパネル全体 --- */
