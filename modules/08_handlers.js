@@ -1540,7 +1540,8 @@ function createSoundButton(sound) {
         if (e.shiftKey && e.button === 0 && sound.type !== 'roll'
             && state.performanceMode !== PERFORMANCE_MODE.LOW_MEMORY) {
             e.preventDefault();
-            _toggleHandled.delete(sound.id);
+            // 後続の click イベントを消費させる (未処理のままだと click 側で再生が走る)
+            _toggleHandled.add(sound.id);
             cacheSoundNow(sound.id, sound.audioId);
             return;
         }
