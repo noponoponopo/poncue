@@ -894,6 +894,7 @@
       max-width: 90%;
       width: 500px;
       max-height: 90vh;
+      max-height: 90dvh; /* モバイルのアドレスバー等で viewport が狭まる場合に備える */
       display: flex;
       flex-direction: column;
       position: relative;
@@ -1016,12 +1017,14 @@
       color: var(--primary-color);
       border-bottom: 1px solid var(--border-color);
       padding-bottom: 10px;
+      flex-shrink: 0; /* タイトルは縮めず、スクロールは modal-body に集約する */
     }
 
     .modal-body {
       overflow-y: auto;
       margin-bottom: 20px;
       flex-grow: 1;
+      min-height: 0; /* flex アイテムの自動最小サイズを無効化し、はみ出した分をここでスクロールさせる */
     }
 
     /* --- Effect Settings Modal --- */
@@ -1580,8 +1583,14 @@
       padding-top: 15px;
       margin-top: auto;
       align-items: center;
-      /* 設定項目が増えてもモーダル内に収まるようにスクロールする */
-      min-height: 0;
+      flex-shrink: 0; /* 内容が長いときもボタンは縮めない (縮みは modal-body が吸収する) */
+    }
+
+    /* シーン設定モーダルのフッターは設定トグル本体を含むため、極端に低い画面では
+       フッター自身を上限付きでスクロールさせる (通常の高さでは効かない) */
+    #scene-settings-modal .modal-footer {
+      max-height: 55vh;
+      max-height: 55dvh;
       overflow-y: auto;
     }
 
@@ -2724,6 +2733,7 @@
         width: 95%;
         padding: 20px;
         max-height: 92vh;
+        max-height: 92dvh; /* モバイルのアドレスバー等で viewport が狭まる場合に備える */
       }
 
       .modal-title {
