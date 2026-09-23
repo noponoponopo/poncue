@@ -440,6 +440,8 @@ function createRemoteSoundButton(sound) {
     const settingsContent = shortcutText
         ? (shortcutText.length > 7 ? '...' + shortcutText.slice(-5) : shortcutText)
         : '<i class="fas fa-cog"></i>';
+    // 本番モードでは設定ボタンごと隠れるため、同じ位置に非操作のバッジで割り当てキーを残す
+    const shortcutBadgeHtml = shortcutText ? `<span class="shortcut-badge">${escapeHtml(settingsContent)}</span>` : '';
 
     const span = trimmedSpan(sound);
     const TRIGGER_INDICATOR_TEXTS = { momentary: 'HOLD', retrigger: 'RETRIG', sustain: 'LAYER', pause: 'PAUSE', pauseHold: 'HOLD+PAUSE', mute: 'MUTE', muteHold: 'HOLD+MUTE', roll: 'ROLL' };
@@ -447,6 +449,7 @@ function createRemoteSoundButton(sound) {
     el.innerHTML = `
         <span class="loop-indicator">LOOP</span>
         <span class="trigger-indicator">${TRIGGER_INDICATOR_TEXTS[triggerMode] ?? ''}</span>
+        ${shortcutBadgeHtml}
         <div class="button-content">
             <i class="${sound.type === 'roll' ? 'fas fa-drum' : 'fas fa-play'} sound-icon"></i>
             <span class="sound-name">${escapeHtml(sound.name)}</span>
@@ -594,6 +597,7 @@ async function openSoundSettings(soundId) {
             sp: s.newPlaybackSpeed,
             pp: s.preservePitch,
             fx: s.newEffects,
+            tr: s.newTrimRange ? { s: s.newTrimRange.start, e: s.newTrimRange.end } : null,
         },
     });
     // 保存結果はホストの状態エコーで画面に反映されるためアラートは出さない

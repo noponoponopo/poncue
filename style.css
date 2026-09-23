@@ -1333,6 +1333,53 @@
       cursor: pointer;
     }
 
+    /* 再生区間(開始/終了秒)。リモコンからも編集できるよう effect-action-row
+       (リモコンで非表示) とは別クラスにしている */
+    .trim-range-box {
+      margin-bottom: 8px;
+      padding: 8px 6px;
+      background: var(--control-bg);
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+
+    .trim-range-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .trim-range-input {
+      width: 84px;
+      padding: 4px 6px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 0.85em;
+      font-variant-numeric: tabular-nums;
+      box-sizing: border-box;
+    }
+
+    .trim-range-sep,
+    .trim-range-unit {
+      font-size: 0.75em;
+      color: var(--secondary-color);
+      flex-shrink: 0;
+    }
+
+    .trim-range-controls .effect-color-clear-btn {
+      justify-self: auto;
+      margin-left: auto;
+    }
+
+    .trim-range-result {
+      display: block;
+      font-size: 0.75em;
+      color: var(--text-color);
+    }
+
     /* --- ドラムロール設定モーダル --- */
     /* 他のeffect-param-rowと同じ64pxラベル列で左端を揃え、ボタン列を右に置く */
     .roll-part-row {
@@ -2223,6 +2270,29 @@
 
     .settings-button i {
         font-size: 1.1em; /* Adjust icon size */
+    }
+
+    /* 本番モード用ショートカット表示。設定ボタンは本番モードで非表示になるため、
+       同じ位置に操作ではないバッジを置いて割り当てキーを見失わないようにする */
+    .shortcut-badge {
+      position: absolute;
+      top: calc(var(--button-min-size) * var(--settings-button-top-ratio));
+      left: 8px;
+      color: var(--secondary-color);
+      font-size: calc(var(--button-min-size) * var(--settings-button-font-size-ratio));
+      font-weight: bold;
+      line-height: 1;
+      max-width: calc(100% - 16px);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      z-index: 5;
+      display: none;
+      pointer-events: none;
+    }
+
+    body.show-mode .sound-button .shortcut-badge {
+      display: inline-block;
     }
 
     /* --- Show Mode: hide editing UI, keep playback & volume --- */
