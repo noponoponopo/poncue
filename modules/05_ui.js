@@ -167,6 +167,11 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         const initialColor = (typeof sound.color === 'string' && sound.color) ? sound.color : '#808080';
         const reverse = !!sound.reverse;
         const initialSpeed = Number.isFinite(sound.playbackRate) ? sound.playbackRate : 1;
+        // 再生区間(開始/終了秒)。未設定時は 0〜音源の長さ (全体) を表す。
+        const fullDuration = Number.isFinite(sound.duration) && sound.duration > 0 ? sound.duration : 0;
+        const formatTrimSeconds = value => Number.isFinite(value) ? String(Math.round(value * 1000) / 1000) : '';
+        const initialTrimStart = Number.isFinite(sound.trimStart) ? sound.trimStart : 0;
+        const initialTrimEnd = Number.isFinite(sound.trimEnd) ? sound.trimEnd : fullDuration;
 
         dom.customModalMessage.innerHTML = `
             <div class="effect-section">
@@ -206,6 +211,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                 <div class="effect-param-row effect-checkbox-row">
                     <span class="effect-param-label">ピッチ</span>
                     <label><input type="checkbox" id="preserve-pitch-input" ${sound.preservePitch ? 'checked' : ''}> 速度変更時も保持</label>
+                </div>
+                <div class="trim-range-box">
+                    <div class="trim-range-controls">
+                        <span class="effect-param-label">再生区間</span>
+                        <input type="number" id="trim-start-input" class="trim-range-input" min="0" max="${fullDuration > 0 ? formatTrimSeconds(fullDuration) : ''}" step="0.001" inputmode="decimal" value="${formatTrimSeconds(initialTrimStart)}" title="再生開始位置（秒）">
+                        <span class="trim-range-sep">–</span>
+                        <input type="number" id="trim-end-input" class="trim-range-input" min="0" max="${fullDuration > 0 ? formatTrimSeconds(fullDuration) : ''}" step="0.001" inputmode="decimal" value="${formatTrimSeconds(initialTrimEnd)}" title="再生終了位置（秒）。ループ時はここから開始位置へ戻る">
+                        <span class="trim-range-unit">秒</span>
+                        <button type="button" id="trim-range-clear-btn" class="modal-input effect-color-clear-btn">解除</button>
+                    </div>
+                    <span id="trim-range-result" class="trim-range-result" role="status"></span>
                 </div>
                 <div class="effect-action-row">
                     <div class="effect-knob-slot" data-knob="normalize-target"></div>
@@ -287,6 +303,10 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         const trimSilenceBtn = dom.customModalMessage.querySelector('#trim-silence-btn');
         const trimResetBtn = dom.customModalMessage.querySelector('#trim-reset-btn');
         const trimResult = dom.customModalMessage.querySelector('#trim-result');
+        const trimStartInput = dom.customModalMessage.querySelector('#trim-start-input');
+        const trimEndInput = dom.customModalMessage.querySelector('#trim-end-input');
+        const trimRangeClearBtn = dom.customModalMessage.querySelector('#trim-range-clear-btn');
+        const trimRangeResult = dom.customModalMessage.querySelector('#trim-range-result');
         const effectEnabledInput = dom.customModalMessage.querySelector('#effect-enabled-input');
         const eqEnabledInput = dom.customModalMessage.querySelector('#eq-enabled-input');
         const delayEnabledInput = dom.customModalMessage.querySelector('#delay-enabled-input');
@@ -490,6 +510,9 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                 } else {
                     trimResult.textContent = `前 ${result.removedStart.toFixed(2)}s / 後 ${result.removedEnd.toFixed(2)}s を除外（再生 ${result.duration.toFixed(2)}s）`;
                     trimResetBtn.disabled = false;
+                    // 手動の再生区間入力にも反映する（保存時に古い値で上書きさせない）
+                    trimStartInput.value = formatTrimSeconds(result.trimStart);
+                    trimEndInput.value = formatTrimSeconds(result.trimEnd);
                 }
             } finally {
                 trimSilenceBtn.disabled = false;
@@ -500,6 +523,17 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             if (!await callbacks.onResetTrim?.()) return;
             trimResetBtn.disabled = true;
             trimResult.textContent = 'トリムを解除しました';
+            resetTrimRangeInputs();
+        };
+
+        // 再生区間(開始/終了秒)の入力を既定(0〜全体)へ戻す。
+        const resetTrimRangeInputs = () => {
+            trimStartInput.value = '0';
+            trimEndInput.value = formatTrimSeconds(fullDuration);
+        };
+        const handleTrimRangeClear = () => {
+            resetTrimRangeInputs();
+            trimRangeResult.textContent = '';
         };
 
         // --- 保存時にknob値から最終エフェクト設定を構築 ---
@@ -534,6 +568,7 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
         normalizeBtn.addEventListener('click', handleNormalize);
         trimSilenceBtn.addEventListener('click', handleTrimSilence);
         trimResetBtn.addEventListener('click', handleTrimReset);
+        trimRangeClearBtn.addEventListener('click', handleTrimRangeClear);
         effectEnabledInput.addEventListener('change', updateEffectSectionState);
 
         dom.customModalOkBtn.textContent = '保存';
@@ -551,10 +586,36 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
             normalizeBtn.removeEventListener('click', handleNormalize);
             trimSilenceBtn.removeEventListener('click', handleTrimSilence);
             trimResetBtn.removeEventListener('click', handleTrimReset);
+            trimRangeClearBtn.removeEventListener('click', handleTrimRangeClear);
             effectEnabledInput.removeEventListener('change', updateEffectSectionState);
         };
 
         dom.customModalOkBtn.onclick = () => {
+            // 再生区間(開始/終了秒)。既定(0〜全体)なら未設定 (null) として返す。
+            // 不正値のときはモーダルを開いたまま通知する。
+            // (OKボタンの共通リスナー handleModalOk は confirmResolve が無いと
+            // 動かないため、ここで return すればモーダルは開いたままになる)
+            const TRIM_EPSILON = 0.005;
+            const parseTrimInput = raw => {
+                const value = parseFloat(raw);
+                return Number.isFinite(value) ? value : null;
+            };
+            const startValue = parseTrimInput(trimStartInput.value);
+            const endValue = parseTrimInput(trimEndInput.value);
+            const startIsDefault = startValue === null || startValue <= 0;
+            const endIsDefault = endValue === null || (fullDuration > 0 && endValue >= fullDuration - TRIM_EPSILON);
+            let newTrimRange = null;
+            if (!startIsDefault || !endIsDefault) {
+                const start = startIsDefault ? 0 : startValue;
+                const end = endIsDefault ? fullDuration : endValue;
+                if (!fullDuration || start < 0 || end <= start + TRIM_EPSILON || end > fullDuration + TRIM_EPSILON) {
+                    trimRangeResult.textContent = fullDuration > 0
+                        ? `再生区間が不正です: 0 ≤ 開始 < 終了 ≤ 音源の長さ (${formatTrimSeconds(fullDuration)}秒) で指定してください`
+                        : '音源の長さが不明のため再生区間は設定できません';
+                    return;
+                }
+                newTrimRange = { start, end: Math.min(end, fullDuration) };
+            }
             cleanup();
             dom.customModalOverlay.classList.remove('active');
             resolve({
@@ -565,7 +626,8 @@ export async function showSoundSettingsModal(soundId, currentShortcut = '', call
                 newReverse,
                 newPlaybackSpeed: speedKnob.getValue(),
                 preservePitch: preservePitchInput.checked,
-                newEffects: buildEffects()
+                newEffects: buildEffects(),
+                newTrimRange
             });
         };
 

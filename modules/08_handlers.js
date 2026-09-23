@@ -396,11 +396,15 @@ function handleFullscreenChange() {
 
 // --- Custom Modal Handlers ---
 function handleModalOk() {
-    if (state.confirmResolve) state.confirmResolve(true);
+    // confirm/prompt/showAlert 用。設定モーダルなど独自のOK処理 (onclick) を持つ
+    // モーダルでは confirmResolve が null のため、勝手に hideModal しない。
+    if (!state.confirmResolve) return;
+    state.confirmResolve(true);
     hideModal();
 }
 function handleModalCancel() {
-    if (state.confirmResolve) state.confirmResolve(false);
+    if (!state.confirmResolve) return;
+    state.confirmResolve(false);
     hideModal();
 }
 
@@ -841,7 +845,7 @@ async function handleSoundSettings(soundId) {
     });
 
     if (newSettings !== null) { // User clicked Save or cleared
-        const { newName, newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects } = newSettings;
+        const { newName, newShortcut, newTriggerMode, newColor, newFadeInDuration, newFadeOutDuration, newFadeInEasing, newFadeOutEasing, newPan, newReverse, newPlaybackSpeed, preservePitch, newEffects, newTrimRange } = newSettings;
 
         // 表示名の更新（空欄なら現状維持）
         if (typeof newName === 'string' && newName && newName !== sound.name) {
@@ -885,6 +889,25 @@ async function handleSoundSettings(soundId) {
         if (sound.reverse !== newReverse) {
             sound.reverse = newReverse;
             if (state.reversedAudioBuffers) delete state.reversedAudioBuffers[soundId];
+        }
+        // 再生区間(開始/終了秒)。既定(0〜全体)へ戻したときは設定を削除する。
+        // 実行中のボイスへは反映されないため、無音トリムと同じく停止してから書き込む。
+        // 入力値は小数3桁に丸めて表示しているため、既存値も丸めて比較する。
+        const round3 = value => Math.round(value * 1000) / 1000;
+        const trimChanged = newTrimRange
+            ? (Number.isFinite(sound.trimStart) ? round3(sound.trimStart) : 0) !== newTrimRange.start
+                || (Number.isFinite(sound.trimEnd) ? round3(sound.trimEnd) : round3(sound.duration ?? 0)) !== newTrimRange.end
+            : Number.isFinite(sound.trimStart) || Number.isFinite(sound.trimEnd);
+        if (trimChanged) {
+            forceStopSound(soundId);
+            if (newTrimRange) {
+                sound.trimStart = newTrimRange.start;
+                sound.trimEnd = newTrimRange.end;
+            } else {
+                delete sound.trimStart;
+                delete sound.trimEnd;
+                delete sound.trimThresholdDb;
+            }
         }
         if (Number.isFinite(newPlaybackSpeed)) {
             sound.playbackRate = Math.max(0.25, Math.min(4, newPlaybackSpeed));
@@ -1484,11 +1507,14 @@ function createSoundButton(sound) {
     }
 
     let settingsButtonContent = '<i class="fas fa-cog"></i>';
+    let shortcutBadgeHtml = '';
     const assignedShortcut = Object.keys(state.shortcuts).find(key => state.shortcuts[key] === sound.id);
 
     if (assignedShortcut) {
         let displayShortcut = assignedShortcut.replace('Control+', 'Ctrl+').replace('Meta+', 'Cmd+');
         settingsButtonContent = displayShortcut.length > 7 ? '...' + displayShortcut.slice(-5) : displayShortcut;
+        // 本番モードでは設定ボタンごと隠れるため、同じ位置に非操作のバッジで割り当てキーを残す
+        shortcutBadgeHtml = `<span class="shortcut-badge">${escapeHtml(settingsButtonContent)}</span>`;
     }
 
     const formatTime = (seconds) => {
@@ -1511,6 +1537,7 @@ function createSoundButton(sound) {
     buttonWrapper.innerHTML = `
         <span class="loop-indicator">LOOP</span>
         <span class="trigger-indicator">${triggerIndicatorText}</span>
+        ${shortcutBadgeHtml}
         <i class="fas fa-download cache-indicator" title="未キャッシュ（Shift+クリックで読み込む）"></i>
         <div class="button-content">
             <i class="${isRoll ? 'fas fa-drum' : 'fas fa-play'} sound-icon"></i>

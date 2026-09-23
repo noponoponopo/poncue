@@ -23,7 +23,7 @@ import { dbRequest } from './04_db.js';
 import {
     stopAllSounds, stopSound, seekSound, togglePauseAllSounds,
     updateActiveSoundLoop, updateActiveSoundPan, updateActiveSoundEffects,
-    updateActiveSoundSpeed, setMasterParam, setMasterLimiterThreshold
+    updateActiveSoundSpeed, setMasterParam, setMasterLimiterThreshold, forceStopSound
 } from './06_audio.js';
 import { updateMasterVolumeKnob, updateMasterEffectKnobs, updateMasterLimiterKnob, escapeHtml } from './05_ui.js';
 import { getMasterRecordingStatus } from './11_recording.js';
@@ -326,6 +326,7 @@ function applySoundSettings(soundId, patch) {
     if (Number.isFinite(patch.sp)) sound.playbackRate = clamp(patch.sp, 0.25, 4);
     if (patch.pp !== undefined) sound.preservePitch = !!patch.pp;
     if (patch.fx && typeof patch.fx === 'object') sound.effects = patch.fx;
+    if (patch.tr !== undefined) applyRemoteSoundTrim(sound, patch.tr);
     if (Number.isFinite(patch.p)) {
         sound.pan = clamp(patch.p, -1, 1);
         updateActiveSoundPan(soundId);
@@ -334,6 +335,35 @@ function applySoundSettings(soundId, patch) {
     updateActiveSoundEffects(soundId);
     saveCurrentSceneSounds(`remoteSoundSettings-${soundId}`);
     renderers.renderSoundboard();
+}
+
+// リモコンからの再生区間 (開始/終了秒)。ホスト側の実durationでクランプしてから適用する。
+// tr = { s: 開始秒, e: 終了秒 } | null (null は既定の全区間へ戻す)。
+function applyRemoteSoundTrim(sound, trim) {
+    if (sound.type === 'roll') return;
+    const duration = Number.isFinite(sound.duration) && sound.duration > 0 ? sound.duration : 0;
+    const rawStart = Number(trim?.s);
+    const rawEnd = Number(trim?.e);
+    if (!trim || !duration || !Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) {
+        if (Number.isFinite(sound.trimStart) || Number.isFinite(sound.trimEnd)) {
+            forceStopSound(sound.id);
+            delete sound.trimStart;
+            delete sound.trimEnd;
+            delete sound.trimThresholdDb;
+        }
+        return;
+    }
+    const start = clamp(rawStart, 0, duration);
+    const end = clamp(rawEnd, start + 0.005, duration);
+    if (end <= start) return;
+    // 入力値は小数3桁丸めで来るため、既存値も丸めて比較する (同じ値なら停止しない)
+    const round3 = value => Math.round(value * 1000) / 1000;
+    if ((Number.isFinite(sound.trimStart) ? round3(sound.trimStart) : 0) !== round3(start)
+        || (Number.isFinite(sound.trimEnd) ? round3(sound.trimEnd) : round3(duration)) !== round3(end)) {
+        forceStopSound(sound.id);
+        sound.trimStart = start;
+        sound.trimEnd = end;
+    }
 }
 
 function removeRemoteSound(soundId) {
@@ -439,9 +469,9 @@ function padFields(s, shortcut) {
     if (Number.isFinite(s.playbackRate) && s.playbackRate !== 1) pad.sp = Math.round(s.playbackRate * 100) / 100;
     if (s.preservePitch) pad.pp = 1;
     if (s.reverse) pad.rv = 1;
-    if (Number.isFinite(s.duration)) pad.d = Math.round(s.duration * 100) / 100;
-    if (Number.isFinite(s.trimStart)) pad.ts = Math.round(s.trimStart * 100) / 100;
-    if (Number.isFinite(s.trimEnd)) pad.te = Math.round(s.trimEnd * 100) / 100;
+    if (Number.isFinite(s.duration)) pad.d = Math.round(s.duration * 1000) / 1000;
+    if (Number.isFinite(s.trimStart)) pad.ts = Math.round(s.trimStart * 1000) / 1000;
+    if (Number.isFinite(s.trimEnd)) pad.te = Math.round(s.trimEnd * 1000) / 1000;
     if (s.effects && (s.effects.enabled || s.effects.eq?.enabled || s.effects.delay?.enabled
         || s.effects.compressor?.enabled || s.effects.distortion?.enabled
         || s.effects.reverb?.enabled || s.effects.limiter?.enabled)) pad.fx = s.effects;
