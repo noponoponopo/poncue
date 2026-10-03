@@ -71,17 +71,19 @@ IndexedDBのDB名は `ponndashiDB_v2` です。別ブラウザや別端末には
 
 ## PWAについて
 
-本番環境ではService Workerが登録され、ローカルファイルと一部の外部リソースをキャッシュします。Viteの開発モードでは、古いキャッシュによる誤動作を避けるため、既存のService Worker登録を解除します。
+- `public/manifest.json`：起動URL `/`、アイコンは既存の `favicon.svg`。
+- 初回オンライン読込後はオフライン再生可能。遠隔操作には通信が必要。インストール可否はブラウザ／OS依存。
+- 開発時はService Workerを無効化。PWA確認は `bun run build` → `bun run preview`。
 
 ## 音声出力先
 
 音声出力先の変更には、`AudioContext.setSinkId()` に対応した Chromium 系ブラウザと HTTPS 接続が必要です。未対応ブラウザではシステム既定の出力を使用します。選択中のデバイスが切断された場合も、システム既定へ自動的に戻ります。
 
-`manifest.json` は次のアイコンを参照しています。
+## 検証
 
-- `icons/icon-192x192.png`
-- `icons/icon-512x512.png`
-
+```sh
+bun run check && bun run build
+```
 
 ## 関連ドキュメント
 

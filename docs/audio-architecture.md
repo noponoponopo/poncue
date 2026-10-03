@@ -2,6 +2,12 @@
 
 このアプリは、音声の安定供給と操作への応答性を優先する。音質に関わる選択は、測定値を提示した上で決める。
 
+## AudioContext Initialization
+
+Firefoxで不足するリスナーのAudioParamだけ補完し、Tone.jsとDSPは同じネイティブAudioContextを使う。`suspended` は正常な待機状態。
+
+`standardized-audio-context@25.3.77` の内部プロパティ `_nativeAudioContext` を使用。依存更新時はFirefoxで通常再生とピッチ保持再生を確認する。
+
 ## Current Audio Path
 
 ### HIGH_PERFORMANCE
@@ -110,5 +116,5 @@ Compressor/Limiter は先読みを持たず、固定の補償遅延を追加し�
 modules/06_audio.js           playback, lifecycle, latency samples, UI integration
 modules/09_effects.js         Worklet rack, native Convolver wiring, master controls
 modules/worklets/pon-dsp.js   AudioWorklet DSP processors
-modules/10_tone_transport.js  Tone Transport, clock snapshot, cue scheduling
+modules/10_tone_transport.js  shared native context, Firefox listener compatibility, Tone Transport/clock/cues
 ```

@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "ポン出しWebアプリ",
+  "short_name": "ポン出し",
+  "description": "音声をシーンごとに管理・再生できるサウンドボード。",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#1e1e1e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    }
+  ]
+}

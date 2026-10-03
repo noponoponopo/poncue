@@ -11,6 +11,9 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-free": "6.4.0",
+    "jszip": "3.10.1",
+    "standardized-audio-context": "25.3.77",
     "tone": "^15.1.22"
   },
   "devDependencies": {

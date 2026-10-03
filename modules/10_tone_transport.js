@@ -1,18 +1,48 @@
 // modules/10_tone_transport.js
 
 import * as Tone from 'tone';
+import { AudioContext as CompatibleAudioContext } from 'standardized-audio-context';
 
 let attachedAudioContext = null;
+let attachedToneContext = null;
+let attachedCompatibilityContext = null;
 let scheduledCueIds = new Map();
 
-export function attachToneContext(audioContext) {
-    if (!audioContext || attachedAudioContext === audioContext) return;
-    Tone.setContext(audioContext, false);
+export function createToneAudioContext() {
+    const context = new CompatibleAudioContext({ latencyHint: 'interactive' });
+    attachedCompatibilityContext = context;
+    // Only bridge listener params; standardized nodes cannot connect to native DSP nodes.
+    const audioContext = context._nativeAudioContext;
+    if (!(audioContext instanceof (window.AudioContext || window.webkitAudioContext))) {
+        throw new Error('standardized-audio-context did not expose a native AudioContext.');
+    }
+    if (audioContext.listener.positionX === undefined) {
+        for (const key of ['positionX', 'positionY', 'positionZ', 'forwardX', 'forwardY', 'forwardZ', 'upX', 'upY', 'upZ']) {
+            Object.defineProperty(audioContext.listener, key, { value: context.listener[key] });
+        }
+    }
+    Tone.setContext(audioContext, true);
+    attachedToneContext = Tone.getContext();
     attachedAudioContext = audioContext;
 
     const transport = Tone.getTransport();
     transport.bpm.value = 120;
     transport.swing = 0;
+    return audioContext;
+}
+
+export async function disposeToneContext() {
+    const context = attachedToneContext;
+    const compatibilityContext = attachedCompatibilityContext;
+    attachedToneContext = null;
+    attachedCompatibilityContext = null;
+    attachedAudioContext = null;
+    scheduledCueIds.clear();
+    try {
+        await compatibilityContext?.close();
+    } finally {
+        context?.dispose();
+    }
 }
 
 export async function resumeToneAudio() {

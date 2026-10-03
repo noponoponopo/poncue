@@ -7,7 +7,7 @@ import { renderFallbackUI, disableAppControls } from './07_scenes.js';
 import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS, AUDIO_MEMORY_BUDGET_BYTES } from './01_config.js';
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings, setEffectsContext, ensureWorkletModule, createMasterChain, disposeMasterChain, applyMasterChainSettings, applyMasterChainDelay, applyMasterChainReverb, applyMasterChainLimiter } from './09_effects.js';
-import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
+import { createToneAudioContext, disposeToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
 import { setKeyboardKeyProgress } from './11_keyboard_view.js';
 import * as Tone from 'tone';
 
@@ -16,7 +16,7 @@ let _audioInitPromise = null;
 
 // 並行呼び出し時は同一の初期化Promiseを共有する(async化に伴い必須)。
 export function initAudioContext() {
-    if (state.audioContext) { return Promise.resolve(state.audioContext.state === 'running'); }
+    if (state.audioContext) { return Promise.resolve(state.audioContext.state !== 'closed'); }
     if (!_audioInitPromise) {
         _audioInitPromise = initAudioContextInner().then(result => {
             if (!result) _audioInitPromise = null;
@@ -38,11 +38,11 @@ async function initAudioContextInner() {
     let audioContext = null;
     let masterChain = null;
     try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+        audioContext = createToneAudioContext();
         if (!audioContext.audioWorklet || !window.AudioWorkletNode) {
             renderFallbackUI("このブラウザは AudioWorklet に対応していません。");
             disableAppControls();
-            try { await audioContext.close(); } catch (_) { /* ignore */ }
+            try { await disposeToneContext(); } catch (_) { /* ignore */ }
             setAudioContext(null, null, null, null);
             return false;
         }
@@ -81,7 +81,6 @@ async function initAudioContextInner() {
         masterChain.limit.connect(audioContext.destination);
         masterChain.limit.connect(recordingDestinationNode);
 
-        attachToneContext(audioContext);
         updateState({ masterChain, masterPanNode, recordingDestinationNode });
         setAudioContext(audioContext, masterGainNode, masterChain.limit, masterInputNode);
 
@@ -94,7 +93,7 @@ async function initAudioContextInner() {
         console.error('AudioContext initialization failed:', e);
         disposeMasterChain(masterChain);
         setEffectsContext(null);
-        try { await audioContext?.close(); } catch (_) { /* ignore */ }
+        try { await disposeToneContext(); } catch (_) { /* ignore */ }
         renderFallbackUI("Web Audio API の初期化に失敗しました。");
         disableAppControls();
         setAudioContext(null, null, null, null);
