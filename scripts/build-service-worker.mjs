@@ -7,7 +7,8 @@ const dist = join(root, 'dist');
 // Preserve /favicon.svg for the manifest.
 copyFileSync(join(root, 'favicon.svg'), join(dist, 'favicon.svg'));
 const files = readdirSync(dist, { recursive: true })
-    .filter(path => path !== 'service-worker.js' && statSync(join(dist, path)).isFile())
+    // Cloudflare consumes _redirects as configuration; it is not a fetchable asset.
+    .filter(path => !['service-worker.js', '_redirects'].includes(path) && statSync(join(dist, path)).isFile())
     .sort();
 const assets = files.map(path => `  './${path.replaceAll('\\', '/')}',`);
 
