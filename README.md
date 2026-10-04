@@ -82,7 +82,7 @@ IndexedDBのDB名は `ponndashiDB_v2` です。別ブラウザや別端末には
 ## 検証
 
 ```sh
-bun run check && bun run build
+bun run check && bun run test && bun run build
 ```
 
 ## 関連ドキュメント
