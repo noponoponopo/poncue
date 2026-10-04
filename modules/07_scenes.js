@@ -1,5 +1,6 @@
 // modules/07_scenes.js
 
+import JSZip from 'jszip';
 import { state, updateState } from './03_state.js';
 import { dom } from './02_dom.js';
 import { dbRequest, openDB } from './04_db.js';
@@ -1031,23 +1032,7 @@ export async function saveCurrentSceneSounds(triggeredBy = "unknown", sceneId = 
 
 // --- インポート・エクスポート ---
 
-async function waitForJSZip(retries = 5, delay = 100) {
-    for (let i = 0; i < retries; i++) {
-        if (typeof JSZip !== 'undefined') {
-            return true;
-        }
-        await new Promise(resolve => setTimeout(resolve, delay));
-    }
-    return false;
-}
-
 export async function exportSceneAsZip(sceneId) {
-    const jszipReady = await waitForJSZip();
-    if (!jszipReady) {
-        showAlert("エクスポート機能の読み込みに失敗しました。ページを再読み込みしてください。");
-        return;
-    }
-
     // dataUrl (base64) を介さず IndexedDB の blob を直接 ZIP に書き込む。
     // sceneMeta は dataUrl を含まないメタデータのみのディープコピー (音質設定等の小さなデータ)。
     const scene = state.scenes[sceneId];
@@ -1134,12 +1119,6 @@ export async function handleImportFileSelect(event) {
 }
 
 async function handleZipImport(file) {
-    const jszipReady = await waitForJSZip();
-    if (!jszipReady) {
-        showAlert("インポート機能の読み込みに失敗しました。ページを再読み込みしてください。");
-        return;
-    }
-
     const zip = await JSZip.loadAsync(file);
     const sceneJsonFile = zip.file("scene.json");
     if (!sceneJsonFile) {

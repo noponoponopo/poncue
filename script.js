@@ -12,12 +12,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Register service worker (skip in Vite dev to avoid stale cache)
     if ('serviceWorker' in navigator && !import.meta.env?.DEV) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('service-worker.js')
+            navigator.serviceWorker.register('/service-worker.js', { scope: '/', updateViaCache: 'none' })
                 .then(registration => {
                     console.log('ServiceWorker registration successful with scope: ', registration.scope);
                 })
                 .catch(err => {
-                    console.log('ServiceWorker registration failed: ', err);
+                    console.error('ServiceWorker registration failed: ', err);
                 });
         });
     } else if ('serviceWorker' in navigator) {

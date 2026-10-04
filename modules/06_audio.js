@@ -7,7 +7,7 @@ import { renderFallbackUI, disableAppControls } from './07_scenes.js';
 import { WAVEFORM_SECONDS_AHEAD, WAVEFORM_DOWNSAMPLE, PERFORMANCE_MODE, MIN_GAIN_RAMP_SECONDS, MIN_STOP_FADE_SECONDS, MUTE_FADE_SECONDS, ROLL_CROSSFADE_SECONDS, ROLL_SCHEDULER_INTERVAL_MS, ROLL_SCHEDULER_LOOKAHEAD_SECONDS, AUDIO_MEMORY_BUDGET_BYTES } from './01_config.js';
 import { dbRequest } from './04_db.js';
 import { applyEffectSettings, createEffectRack, disposeEffectRack, normalizeEffectSettings, setEffectsContext, ensureWorkletModule, createMasterChain, disposeMasterChain, applyMasterChainSettings, applyMasterChainDelay, applyMasterChainReverb, applyMasterChainLimiter } from './09_effects.js';
-import { attachToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
+import { createToneAudioContext, disposeToneContext, getToneClockSnapshot, resumeToneAudio } from './10_tone_transport.js';
 import { setKeyboardKeyProgress } from './11_keyboard_view.js';
 import * as Tone from 'tone';
 
@@ -16,7 +16,7 @@ let _audioInitPromise = null;
 
 // 並行呼び出し時は同一の初期化Promiseを共有する(async化に伴い必須)。
 export function initAudioContext() {
-    if (state.audioContext) { return Promise.resolve(state.audioContext.state === 'running'); }
+    if (state.audioContext) { return Promise.resolve(state.audioContext.state !== 'closed'); }
     if (!_audioInitPromise) {
         _audioInitPromise = initAudioContextInner().then(result => {
             if (!result) _audioInitPromise = null;
@@ -38,11 +38,11 @@ async function initAudioContextInner() {
     let audioContext = null;
     let masterChain = null;
     try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+        audioContext = createToneAudioContext();
         if (!audioContext.audioWorklet || !window.AudioWorkletNode) {
             renderFallbackUI("このブラウザは AudioWorklet に対応していません。");
             disableAppControls();
-            try { await audioContext.close(); } catch (_) { /* ignore */ }
+            try { await disposeToneContext(); } catch (_) { /* ignore */ }
             setAudioContext(null, null, null, null);
             return false;
         }
@@ -81,7 +81,6 @@ async function initAudioContextInner() {
         masterChain.limit.connect(audioContext.destination);
         masterChain.limit.connect(recordingDestinationNode);
 
-        attachToneContext(audioContext);
         updateState({ masterChain, masterPanNode, recordingDestinationNode });
         setAudioContext(audioContext, masterGainNode, masterChain.limit, masterInputNode);
 
@@ -94,7 +93,7 @@ async function initAudioContextInner() {
         console.error('AudioContext initialization failed:', e);
         disposeMasterChain(masterChain);
         setEffectsContext(null);
-        try { await audioContext?.close(); } catch (_) { /* ignore */ }
+        try { await disposeToneContext(); } catch (_) { /* ignore */ }
         renderFallbackUI("Web Audio API の初期化に失敗しました。");
         disableAppControls();
         setAudioContext(null, null, null, null);
@@ -421,12 +420,7 @@ function restartNativeSource(audioInfo, soundData, position) {
     sourceNode.loopEnd = audioInfo.trimEnd;
     sourceNode.playbackRate.value = audioInfo.playbackRate;
     sourceNode.connect(audioInfo.pannerNode);
-    const onEnd = () => {
-        const current = state.activeAudios[audioInfo.soundId];
-        if (current && !current.isFadingOut && !(sound?.loop)) {
-            cleanupAfterStop(audioInfo.soundId, null);
-        }
-    };
+    const onEnd = () => cleanupAfterNaturalEnd(audioInfo, sound, null);
     sourceNode.onended = onEnd;
     sourceNode.start(0, position);
     audioInfo.sourceNode = sourceNode;
@@ -467,12 +461,7 @@ function replaceBufferPlaybackSource(audioInfo, soundData, position, playbackRat
     sourceNode.loopStart = audioInfo.trimStart;
     sourceNode.loopEnd = audioInfo.trimEnd;
     sourceNode.connect(audioInfo.pannerNode);
-    const onEnd = () => {
-        const current = state.activeAudios[audioInfo.soundId];
-        if (current === audioInfo && !current.isFadingOut && !soundData.loop) {
-            cleanupAfterStop(audioInfo.soundId, null);
-        }
-    };
+    const onEnd = () => cleanupAfterNaturalEnd(audioInfo, soundData, null);
     if ('onended' in sourceNode) sourceNode.onended = onEnd;
     else sourceNode.onstop = onEnd;
     sourceNode.start(ctx.currentTime, position);
@@ -510,11 +499,18 @@ function scheduleNaturalFadeOut(soundId) {
 // 終端の自然フェードアウトをスケジュールする。playSound 本体と sustain レイヤーで共用。
 // voice は individualGain / fadeInEndTime / naturalFadeStartTime / 再生位置情報を持つオブジェクト。
 function scheduleNaturalFadeOutFor(voice, soundData) {
-    if (soundData.loop || voice.isRoll || voice.isFadingOut || !state.audioContext) return;
+    if (voice.isRoll || voice.isFadingOut || !state.audioContext) return;
 
     const now = state.audioContext.currentTime;
     const fadeWasInProgress = cancelNaturalFadeOut(voice, now);
     voice.naturalFadeStartTime = null;
+    if (soundData.loop) {
+        if (fadeWasInProgress) {
+            const targetVolume = Math.max(0.0001, voice.muted ? 0.0001 : soundData.volume ?? 1);
+            voice.individualGain.gain.setTargetAtTime(targetVolume, now, MIN_GAIN_RAMP_SECONDS / 3);
+        }
+        return;
+    }
     const fullDuration = voice.audioBuffer?.duration || voice.audioElement?.duration;
     const duration = Number.isFinite(voice.trimEnd) ? voice.trimEnd : fullDuration;
     const fadeDuration = Math.max(0, soundData.fadeOutDuration ?? 0);
@@ -875,12 +871,8 @@ export async function playSound(soundId, soundButtonElement, clickTime = null, s
             audioElement.addEventListener('timeupdate', trimTimeUpdateHandler);
         }
 
-        const onEnd = () => {
-            const currentAudioInfo = state.activeAudios[soundId];
-            if (currentAudioInfo && !currentAudioInfo.isFadingOut && !soundData.loop) {
-                cleanupAfterStop(soundId, soundButtonElement);
-            }
-        };
+        const audioInfo = state.activeAudios[soundId];
+        const onEnd = () => cleanupAfterNaturalEnd(audioInfo, soundData, soundButtonElement);
 
         if (audioElement) { // LOW_MEMORY
             audioElement.onended = onEnd;
@@ -1755,7 +1747,7 @@ export function seekSound(soundId, seekTime) {
 
 export function updateActiveSoundLoop(soundId, loop) {
     const audioInfo = state.activeAudios[soundId];
-    if (!audioInfo || audioInfo.isRoll || !state.audioContext) return; // ロールのループはパート構成で決まる
+    if (!audioInfo || audioInfo.isRoll || audioInfo.isFadingOut || !state.audioContext) return; // ロールのループはパート構成で決まる
 
     const now = state.audioContext.currentTime;
     const fullDuration = audioInfo.audioBuffer?.duration || audioInfo.audioElement?.duration;
@@ -1784,16 +1776,12 @@ export function updateActiveSoundLoop(soundId, loop) {
         audioInfo.sourceNode.restart(now, loopPosition);
         audioInfo.stopAfterLoop = false;
         audioInfo.loopStopTime = null;
-        audioInfo.playbackPosition = loopPosition;
-        audioInfo.playbackPositionContextTime = now;
         position = loopPosition;
-    } else if (isBufferSource && loop && audioInfo.stopAfterLoop) {
-        // ネイティブソースの終端停止予約は取消不能なため、ループ位置から再生成する。
+    } else if (isBufferSource && loop) {
+        // 通常再生の開始時にも終端停止が予約されるため、初回のループONでも再生成する。
         audioInfo.stopAfterLoop = false;
         audioInfo.loopStopTime = null;
         restartNativeSource(audioInfo, soundDataForLoopRestart(soundId), loopPosition);
-        audioInfo.playbackPosition = loopPosition;
-        audioInfo.playbackPositionContextTime = now;
         position = loopPosition;
     } else if (!loop && !isGrainPlayer) {
         if (Number.isFinite(duration) && duration > 0) {
@@ -1807,7 +1795,10 @@ export function updateActiveSoundLoop(soundId, loop) {
     } else {
         audioInfo.sourceNode.loopStart = trimStart;
         audioInfo.sourceNode.loopEnd = trimEnd;
-        audioInfo.sourceNode.loop = Boolean(loop);
+        // GrainPlayer は累積オフセットで終了判定するため、ループを維持して予約時刻に止める。
+        audioInfo.sourceNode.loop = Boolean(loop || (isGrainPlayer && audioInfo.stopAfterLoop));
+        audioInfo.playbackPosition = position;
+        audioInfo.playbackPositionContextTime = now;
     }
 
     if (duration > 0) {
@@ -1892,6 +1883,22 @@ export function updateActiveSoundSpeed(soundId) {
            scheduleNaturalFadeOut(soundId);
            scheduleTrimBoundary(soundId);
        }
+
+function cleanupAfterNaturalEnd(audioInfo, soundData, soundButtonElement) {
+    if (state.activeAudios[audioInfo.soundId] !== audioInfo || audioInfo.isFadingOut || soundData?.loop) return;
+
+    // GrainPlayer の onstop は先読みで届く。ノードの破棄は実際の停止時刻まで待つ。
+    const remaining = (audioInfo.loopStopTime ?? 0) - (state.audioContext?.currentTime ?? 0);
+    if (remaining > 0) {
+        clearTimeout(audioInfo.trimBoundaryTimeoutId);
+        audioInfo.trimBoundaryTimeoutId = setTimeout(
+            () => cleanupAfterNaturalEnd(audioInfo, soundData, soundButtonElement),
+            Math.max(1, remaining * 1000)
+        );
+        return;
+    }
+    cleanupAfterStop(audioInfo.soundId, soundButtonElement);
+}
 
 function cleanupAfterStop(soundId, soundButtonElement, resetProgress = true) {
     const audioInfo = state.activeAudios[soundId];
