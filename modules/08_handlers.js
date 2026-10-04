@@ -14,6 +14,7 @@ import {
 } from './07_scenes.js';
 import { LONG_PRESS_DURATION, PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE, TRIGGER_MODES, HOLD_TRIGGER_MODES, SCROLL_PREVENT_KEYS, DEFAULT_KEYBOARD_LAYOUT } from './01_config.js';
 import { renderKeyboardView, setKeyboardKeyPressed, getLayoutOptions, clearAllKeyboardKeyPressed } from './11_keyboard_view.js';
+import { normalizeKey } from './keyboard_shortcuts.js';
 import { downloadRecording, getMasterRecordingStatus, isMasterRecordingSupported, startMasterRecording, stopMasterRecording } from './11_recording.js';
 
 // --- Debounce Utility ---
@@ -984,26 +985,6 @@ async function handleRollSettings(soundId) {
     if (sound) {
         showAlert(`ドラムロール「${saved.name}」の設定を更新しました。`, '通知');
     }
-}
-
-function normalizeKey(e) {    const modifiers = [];
-    if (e.ctrlKey) modifiers.push('Control');
-    if (e.altKey) modifiers.push('Alt');
-    if (e.shiftKey) modifiers.push('Shift');
-    if (e.metaKey) modifiers.push('Meta');
-
-    let key = e.key;
-    if (key === ' ') key = 'Space';
-    if (key === '¥') key = 'Yen';
-    // Mac/Win で英数・かなの event.key が割れるため代表名に正規化
-    if (['English', 'Alphanumeric', 'Lang2', 'Eisu', 'RomanCharacters'].includes(key)) key = 'English';
-    if (['Kana', 'KanaMode', 'JapaneseKana', 'Lang1', 'Hiragana'].includes(key)) key = 'Kana';
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) key = key.replace('Arrow', '');
-    // 修飾キー単体の押下はショートカットとして扱わず、pressed 表示にも関与させない
-    if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return '';
-    if (key.length === 1 && key.match(/[a-z]/i)) key = key.toUpperCase();
-
-    return [...modifiers, key].filter(Boolean).join('+');
 }
 
 // ショートカット操作でブラウザ既定動作（ページスクロールやフォーカス中ボタンの活性クリック）

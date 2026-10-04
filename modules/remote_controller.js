@@ -24,6 +24,7 @@ import {
     setKeyboardKeyProgress, getLayoutOptions
 } from './11_keyboard_view.js';
 import { createRemoteLink } from './remote_link.js';
+import { createRemoteKeyboardHandlers } from './remote_keyboard.js';
 
 const ROOM_STORAGE_KEY = 'poncue_remote_controller'; // 旧リモコンページと共通
 const UI_STORAGE_KEY = 'poncue_remote_ui';
@@ -132,6 +133,7 @@ function watchInteractions() {
 
 // --- 接続 ---
 function connectRoom(room) {
+    keyboard.releaseAll();
     ctrl.room = room;
     storeRoom();
     ctrl.lastStructureJson = '';
@@ -156,6 +158,7 @@ function connectRoom(room) {
 }
 
 function disconnect() {
+    keyboard.releaseAll();
     ctrl.link?.close();
     ctrl.link = null;
     updateState({ scenes: {}, currentSceneId: null, shortcuts: {} });
@@ -915,7 +918,15 @@ function renderRoomPanel() {
 }
 
 // --- イベント接続 ---
+const keyboard = createRemoteKeyboardHandlers(send);
+
 function setupEventListeners() {
+    document.addEventListener('keydown', keyboard.handleKeyDown);
+    document.addEventListener('keyup', keyboard.handleKeyUp);
+    window.addEventListener('blur', keyboard.releaseAll);
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) keyboard.releaseAll();
+    });
     // ヘッダー操作
     dom.stopAllBtn?.addEventListener('click', () => send({ t: 'sa' }));
     dom.pauseAllBtn?.addEventListener('click', () => send({ t: 'pa' }));
