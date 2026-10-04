@@ -74,7 +74,8 @@ IndexedDBのDB名は `ponndashiDB_v2` です。別ブラウザや別端末には
 
 - `public/manifest.json`：起動URL `/`、アイコンは既存の `favicon.svg`。
 - 旧版PWAの起動URL `/assets/index.html` は、`public/_redirects` で `/` へ転送する。この設定ファイルは配信されないためService Workerのキャッシュ対象から除外する。
-- 初回オンライン読込後はオフライン再生可能。遠隔操作には通信が必要。インストール可否はブラウザ／OS依存。
+- Service Workerの初回キャッシュ完了後はオフライン再生可能。HTMLもキャッシュから読み込み、Wi-Fi復帰時の通信応答を待たない。遠隔操作には通信が必要。インストール可否はブラウザ／OS依存。
+- 更新版は開いているアプリ画面をすべて閉じた後の起動で有効になる。使用中の画面には強制適用しない。
 - 開発時はService Workerを無効化。PWA確認は `bun run build` → `bun run preview`。Cloudflareの転送確認には `bunx wrangler dev --config wrangler.preview.jsonc` を使う。
 
 ## 音声出力先

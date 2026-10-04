@@ -11,9 +11,8 @@ const urlsToCache = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      // All local app assets must be available before replacing the working SW.
+      // Precache a complete version; updates wait until existing app windows close.
       .then(cache => cache.addAll(urlsToCache.map(url => new Request(url, { cache: 'reload' }))))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -36,30 +35,21 @@ self.addEventListener('fetch', event => {
   // External fonts are optional; analytics and other third-party requests are not cached.
   if (url.origin !== self.location.origin && !['style', 'font'].includes(request.destination)) return;
 
-  event.respondWith(request.mode === 'navigate' ? networkFirst(request) : cacheFirst(request));
+  event.respondWith(cacheFirst(request));
 });
-
-async function networkFirst(request) {
-  const cache = await caches.open(CACHE_NAME);
-  try {
-    const response = await fetch(request);
-    if (response.ok && response.type === 'basic') {
-      await cache.put(request, response.clone()).catch(() => {});
-    }
-    return response;
-  } catch (error) {
-    const cached = await cache.match(request, { ignoreSearch: true });
-    if (cached) return cached;
-    const pathname = new URL(request.url).pathname;
-    const fallback = pathname === '/remote' || pathname.startsWith('/remote/') ? './remote/' : './';
-    return await cache.match(fallback) || Response.error();
-  }
-}
 
 async function cacheFirst(request) {
   const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request);
+  const isNavigation = request.mode === 'navigate';
+  const cached = await cache.match(request, { ignoreSearch: isNavigation });
   if (cached) return cached;
+  if (isNavigation) {
+    // Never wait for an unstable connection when the installed app shell is available.
+    const pathname = new URL(request.url).pathname;
+    const fallback = pathname === '/remote' || pathname.startsWith('/remote/') ? './remote/' : './';
+    const shell = await cache.match(fallback);
+    if (shell) return shell;
+  }
   try {
     const response = await fetch(request);
     if (response.ok && (response.type === 'basic' || response.type === 'cors')) {
