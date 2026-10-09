@@ -24,11 +24,8 @@ export const HOLD_TRIGGER_MODES = ['momentary', 'pauseHold', 'muteHold', 'roll']
 
 // ドラムロール: 起こり→ループ(複数パートを登録順に循環)→終わり→締め の4パート構成。
 // ループのみ必須（1つ以上）。それ以外は任意で、無いパートは飛ばして遷移する。
-// パート継ぎ目のクリックノイズ防止用の微小クロスフェード時間（秒）と、
-// チェーン先読みスケジューラのポーリング間隔・先読み時間。
+// パート継ぎ目のクリックノイズ防止用の微小クロスフェード時間（秒）。
 export const ROLL_CROSSFADE_SECONDS = 0.015;
-export const ROLL_SCHEDULER_INTERVAL_MS = 100;
-export const ROLL_SCHEDULER_LOOKAHEAD_SECONDS = 0.5;
 
 // ミュート切替時のゲインフェード時間（秒）。
 export const MUTE_FADE_SECONDS = 0.05;
